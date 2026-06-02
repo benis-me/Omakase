@@ -1,0 +1,395 @@
+/**
+ * A dependency-free code graph. It scans a project's source files and extracts
+ * module-level structure: imports (resolved to internal files or flagged as
+ * external), exports, and top-level symbols. From that it answers dependency
+ * and dependents queries, finds import cycles, and produces stats — enough for
+ * the orchestrator to reason about blast radius without a full type-checker.
+ *
+ * Extraction is regex-based (line/offset accurate), which is intentionally
+ * lightweight: it sees syntax, not semantics. Incremental `update` re-scans
+ * only changed files.
+ */
+import type { Dirent } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+
+export type CodeLanguage = 'typescript' | 'javascript' | 'json' | 'markdown' | 'other';
+
+export type SymbolKind =
+  | 'function'
+  | 'class'
+  | 'const'
+  | 'let'
+  | 'var'
+  | 'interface'
+  | 'type'
+  | 'enum';
+
+export interface CodeSymbol {
+  name: string;
+  kind: SymbolKind;
+  exported: boolean;
+  line: number;
+}
+
+export interface ImportEdge {
+  specifier: string;
+  /** Resolved internal file (posix relative path), or null if external/unresolved. */
+  to: string | null;
+  external: boolean;
+  specifiers: string[];
+  line: number;
+}
+
+export interface CodeNode {
+  path: string;
+  language: CodeLanguage;
+  loc: number;
+  imports: ImportEdge[];
+  exports: string[];
+  symbols: CodeSymbol[];
+}
+
+export interface CodeGraphSnapshot {
+  root: string;
+  nodes: CodeNode[];
+}
+
+export interface ScanOptions {
+  root: string;
+  include?: RegExp;
+  ignoreDirs?: ReadonlySet<string>;
+  maxFiles?: number;
+  maxFileBytes?: number;
+}
+
+const DEFAULT_INCLUDE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+const DEFAULT_IGNORE = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'coverage',
+  '.next',
+  '.omakase',
+]);
+
+function detectLanguage(file: string): CodeLanguage {
+  const ext = path.extname(file).toLowerCase();
+  if (['.ts', '.tsx', '.mts', '.cts'].includes(ext)) return 'typescript';
+  if (['.js', '.jsx', '.mjs', '.cjs'].includes(ext)) return 'javascript';
+  if (ext === '.json') return 'json';
+  if (ext === '.md') return 'markdown';
+  return 'other';
+}
+
+function lineAt(content: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index && i < content.length; i += 1) {
+    if (content[i] === '\n') line += 1;
+  }
+  return line;
+}
+
+function parseImportSpecifiers(clause: string): string[] {
+  const names: string[] = [];
+  const braces = /\{([^}]*)\}/.exec(clause);
+  if (braces) {
+    for (const part of braces[1]!.split(',')) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name) names.push(name);
+    }
+  }
+  const star = /\*\s+as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+  if (star) names.push(star[1]!);
+  const def = /^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause.replace(/\{[^}]*\}/, ''));
+  if (def && def[1] && def[1] !== 'type') names.push(def[1]);
+  return [...new Set(names)];
+}
+
+function parseImports(content: string): ImportEdge[] {
+  const edges: ImportEdge[] = [];
+  const seen = new Set<string>();
+  const push = (specifier: string, index: number, specifiers: string[] = []): void => {
+    const key = `${specifier}@${index}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({
+      specifier,
+      to: null,
+      external: !specifier.startsWith('.'),
+      specifiers,
+      line: lineAt(content, index),
+    });
+  };
+
+  const fromRe = /\b(?:import|export)\s+([^;]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+  for (let m = fromRe.exec(content); m; m = fromRe.exec(content)) {
+    push(m[2]!, m.index, parseImportSpecifiers(m[1]!));
+  }
+  const bareRe = /\bimport\s*['"]([^'"]+)['"]/g;
+  for (let m = bareRe.exec(content); m; m = bareRe.exec(content)) push(m[1]!, m.index);
+  const requireRe = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (let m = requireRe.exec(content); m; m = requireRe.exec(content)) push(m[1]!, m.index);
+  const dynamicRe = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (let m = dynamicRe.exec(content); m; m = dynamicRe.exec(content)) push(m[1]!, m.index);
+
+  return edges;
+}
+
+function parseExports(content: string): string[] {
+  const names = new Set<string>();
+  const declRe =
+    /\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+  for (let m = declRe.exec(content); m; m = declRe.exec(content)) names.add(m[1]!);
+  if (/\bexport\s+default\b/.test(content)) names.add('default');
+  const namedRe = /\bexport\s*\{([^}]*)\}/g;
+  for (let m = namedRe.exec(content); m; m = namedRe.exec(content)) {
+    for (const part of m[1]!.split(',')) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name && name !== 'type') names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function parseSymbols(content: string): CodeSymbol[] {
+  const symbols: CodeSymbol[] = [];
+  const re =
+    /(?:^|\n)([ \t]*)(export\s+)?(?:default\s+)?(?:async\s+)?(function|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+  for (let m = re.exec(content); m; m = re.exec(content)) {
+    // Only top-level declarations (no leading indentation).
+    if ((m[1] ?? '').length > 0) continue;
+    symbols.push({
+      name: m[4]!,
+      kind: m[3] as SymbolKind,
+      exported: Boolean(m[2]),
+      line: lineAt(content, m.index + (m[0].startsWith('\n') ? 1 : 0)),
+    });
+  }
+  return symbols;
+}
+
+function toPosixRelative(root: string, file: string): string {
+  return path.relative(root, file).split(path.sep).join('/');
+}
+
+export class CodeGraph {
+  readonly root: string;
+  private readonly nodes = new Map<string, CodeNode>();
+  private readonly options: Required<Omit<ScanOptions, 'root'>>;
+
+  constructor(root: string, options: Omit<ScanOptions, 'root'> = {}) {
+    this.root = root;
+    this.options = {
+      include: options.include ?? DEFAULT_INCLUDE,
+      ignoreDirs: options.ignoreDirs ?? DEFAULT_IGNORE,
+      maxFiles: options.maxFiles ?? 5000,
+      maxFileBytes: options.maxFileBytes ?? 1024 * 1024,
+    };
+  }
+
+  static async scan(options: ScanOptions): Promise<CodeGraph> {
+    const graph = new CodeGraph(options.root, options);
+    await graph.rescanAll();
+    return graph;
+  }
+
+  private async rescanAll(): Promise<void> {
+    this.nodes.clear();
+    const files = await this.collectFiles();
+    for (const file of files) {
+      const node = await this.parseFile(file);
+      if (node) this.nodes.set(node.path, node);
+    }
+    this.resolveEdges();
+  }
+
+  private async collectFiles(): Promise<string[]> {
+    const files: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      if (files.length >= this.options.maxFiles) return;
+      let entries: Dirent[];
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (files.length >= this.options.maxFiles) break;
+        if (entry.isDirectory()) {
+          if (this.options.ignoreDirs.has(entry.name)) continue;
+          if (entry.name.startsWith('.') && entry.name !== '.') continue;
+          await walk(path.join(dir, entry.name));
+        } else if (entry.isFile() && this.options.include.test(entry.name)) {
+          files.push(path.join(dir, entry.name));
+        }
+      }
+    };
+    await walk(this.root);
+    return files;
+  }
+
+  private async parseFile(absPath: string): Promise<CodeNode | null> {
+    try {
+      const stats = await stat(absPath);
+      if (!stats.isFile() || stats.size > this.options.maxFileBytes) return null;
+      const content = await readFile(absPath, 'utf8');
+      return {
+        path: toPosixRelative(this.root, absPath),
+        language: detectLanguage(absPath),
+        loc: content.split('\n').length,
+        imports: parseImports(content),
+        exports: parseExports(content),
+        symbols: parseSymbols(content),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveEdges(): void {
+    const known = new Set(this.nodes.keys());
+    const tryResolve = (fromPath: string, specifier: string): string | null => {
+      if (!specifier.startsWith('.')) return null;
+      const baseDir = path.posix.dirname(fromPath);
+      const joined = path.posix.normalize(path.posix.join(baseDir, specifier));
+      const candidates = [joined];
+      const exts = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+      for (const ext of exts) candidates.push(joined + ext);
+      for (const ext of exts) candidates.push(path.posix.join(joined, `index${ext}`));
+      if (joined.endsWith('.js')) {
+        candidates.push(joined.replace(/\.js$/, '.ts'), joined.replace(/\.js$/, '.tsx'));
+      }
+      return candidates.find((c) => known.has(c)) ?? null;
+    };
+    for (const node of this.nodes.values()) {
+      for (const edge of node.imports) {
+        edge.to = edge.external ? null : tryResolve(node.path, edge.specifier);
+      }
+    }
+  }
+
+  /** Incrementally re-scan changed files (relative or absolute paths). Removes vanished files. */
+  async update(changedPaths: string[]): Promise<void> {
+    for (const p of changedPaths) {
+      const abs = path.isAbsolute(p) ? p : path.join(this.root, p);
+      const rel = toPosixRelative(this.root, abs);
+      if (!this.options.include.test(abs)) continue;
+      const node = await this.parseFile(abs);
+      if (node) this.nodes.set(rel, node);
+      else this.nodes.delete(rel);
+    }
+    this.resolveEdges();
+  }
+
+  removeFile(relPath: string): boolean {
+    const deleted = this.nodes.delete(relPath);
+    if (deleted) this.resolveEdges();
+    return deleted;
+  }
+
+  node(relPath: string): CodeNode | undefined {
+    return this.nodes.get(relPath);
+  }
+
+  nodesList(): CodeNode[] {
+    return [...this.nodes.values()].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  get size(): number {
+    return this.nodes.size;
+  }
+
+  /** Internal files this file imports. */
+  dependencies(relPath: string): string[] {
+    const node = this.nodes.get(relPath);
+    if (!node) return [];
+    return [...new Set(node.imports.map((e) => e.to).filter((t): t is string => Boolean(t)))];
+  }
+
+  /** Internal files that import this file. */
+  dependents(relPath: string): string[] {
+    const out: string[] = [];
+    for (const node of this.nodes.values()) {
+      if (node.imports.some((e) => e.to === relPath)) out.push(node.path);
+    }
+    return out.sort();
+  }
+
+  externalDependencies(): string[] {
+    const set = new Set<string>();
+    for (const node of this.nodes.values()) {
+      for (const edge of node.imports) {
+        if (edge.external) set.add(edge.specifier);
+      }
+    }
+    return [...set].sort();
+  }
+
+  /** All distinct import cycles (each as a path of file ids). */
+  cycles(): string[][] {
+    const found: string[][] = [];
+    const seenKeys = new Set<string>();
+    const color = new Map<string, number>();
+    const stack: string[] = [];
+    for (const id of this.nodes.keys()) color.set(id, 0);
+
+    const visit = (id: string): void => {
+      color.set(id, 1);
+      stack.push(id);
+      for (const dep of this.dependencies(id)) {
+        const c = color.get(dep);
+        if (c === 1) {
+          const start = stack.indexOf(dep);
+          const cycle = stack.slice(start).concat(dep);
+          const key = [...cycle].sort().join('|');
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            found.push(cycle);
+          }
+        } else if (c === 0) {
+          visit(dep);
+        }
+      }
+      stack.pop();
+      color.set(id, 2);
+    };
+    for (const id of this.nodes.keys()) {
+      if (color.get(id) === 0) visit(id);
+    }
+    return found;
+  }
+
+  stats(): {
+    files: number;
+    internalEdges: number;
+    externalEdges: number;
+    symbols: number;
+    byLanguage: Record<string, number>;
+  } {
+    let internalEdges = 0;
+    let externalEdges = 0;
+    let symbols = 0;
+    const byLanguage: Record<string, number> = {};
+    for (const node of this.nodes.values()) {
+      symbols += node.symbols.length;
+      byLanguage[node.language] = (byLanguage[node.language] ?? 0) + 1;
+      for (const edge of node.imports) {
+        if (edge.external) externalEdges += 1;
+        else if (edge.to) internalEdges += 1;
+      }
+    }
+    return { files: this.nodes.size, internalEdges, externalEdges, symbols, byLanguage };
+  }
+
+  toJSON(): CodeGraphSnapshot {
+    return { root: this.root, nodes: this.nodesList() };
+  }
+
+  static fromJSON(snapshot: CodeGraphSnapshot, options: Omit<ScanOptions, 'root'> = {}): CodeGraph {
+    const graph = new CodeGraph(snapshot.root, options);
+    for (const node of snapshot.nodes) graph['nodes'].set(node.path, node);
+    return graph;
+  }
+}

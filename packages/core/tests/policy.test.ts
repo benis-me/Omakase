@@ -1,0 +1,95 @@
+import { describe, expect, it } from 'vitest';
+import type { DetectedAgent, RuntimeModelOption } from '@omakase/daemon';
+import { createModelPolicy } from '../src/modes/policy.js';
+
+function agent(
+  id: string,
+  opts: {
+    available?: boolean;
+    models?: RuntimeModelOption[];
+    reasoning?: RuntimeModelOption[];
+  } = {},
+): DetectedAgent {
+  return {
+    id,
+    name: id,
+    bin: id,
+    streamFormat: 'plain-text',
+    promptViaStdin: true,
+    supportsImagePaths: false,
+    supportsCustomModel: true,
+    reasoningOptions: opts.reasoning ?? [],
+    externalMcpInjection: undefined,
+    installUrl: undefined,
+    docsUrl: undefined,
+    available: opts.available ?? true,
+    path: '/bin/' + id,
+    version: '1.0',
+    models: opts.models ?? [{ id: 'default', label: 'Default' }],
+    modelsSource: 'fallback',
+    capabilities: {},
+    authStatus: 'ok',
+    authMessage: undefined,
+  };
+}
+
+const claude = agent('claude', {
+  models: [
+    { id: 'default', label: 'Default' },
+    { id: 'opus', label: 'Opus' },
+    { id: 'haiku', label: 'Haiku' },
+  ],
+  reasoning: [
+    { id: 'default', label: 'Default' },
+    { id: 'low', label: 'Low' },
+    { id: 'high', label: 'High' },
+    { id: 'xhigh', label: 'XHigh' },
+  ],
+});
+const gemini = agent('gemini');
+
+describe('createModelPolicy', () => {
+  it('max-power picks the strongest available agent at peak reasoning', () => {
+    const policy = createModelPolicy('max-power');
+    const a = policy.select('worker', { available: [gemini, claude] });
+    expect(a.agentId).toBe('claude');
+    expect(a.model).toBe('opus');
+    expect(a.reasoning).toBe('xhigh');
+  });
+
+  it('normal varies reasoning by role and prefers a cheap model for routing', () => {
+    const policy = createModelPolicy('normal');
+    const router = policy.select('router', { available: [claude] });
+    expect(router.agentId).toBe('claude');
+    expect(router.model).toBe('haiku');
+    expect(router.reasoning).toBe('low');
+
+    const planner = policy.select('planner', { available: [claude] });
+    expect(planner.reasoning).toBe('high');
+
+    const worker = policy.select('worker', { available: [claude] });
+    expect(worker.reasoning).toBeNull();
+  });
+
+  it('falls back to the builtin agent when nothing is installed', () => {
+    const policy = createModelPolicy('max-power');
+    const a = policy.select('worker', { available: [agent('claude', { available: false })] });
+    expect(a.agentId).toBe('builtin');
+  });
+
+  it('custom mode honours the configured role assignments', () => {
+    const policy = createModelPolicy('custom', {
+      custom: {
+        roles: {
+          worker: { agentId: 'codex', model: 'gpt-5', reasoning: 'high' },
+        },
+        default: { agentId: 'gemini' },
+      },
+    });
+    const worker = policy.select('worker', { available: [] });
+    expect(worker).toMatchObject({ agentId: 'codex', model: 'gpt-5', reasoning: 'high' });
+    // No explicit reviewer config → falls back to the default assignment.
+    const reviewer = policy.select('reviewer', { available: [] });
+    expect(reviewer.agentId).toBe('gemini');
+  });
+});
