@@ -21,6 +21,15 @@ importers:
         specifier: ^3.2.4
         version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
 
+  examples/local-project:
+    dependencies:
+      '@omakase/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@omakase/daemon':
+        specifier: workspace:*
+        version: link:../../packages/daemon
+
   packages/cli:
     dependencies:
       '@omakase/core':

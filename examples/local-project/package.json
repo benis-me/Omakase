@@ -1,0 +1,16 @@
+{
+  "name": "@omakase/example-local-project",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end Omakase demo: detect agents, scan a codegraph, and orchestrate a task offline.",
+  "scripts": {
+    "start": "tsx run.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "@omakase/daemon": "workspace:*"
+  }
+}
