@@ -12,6 +12,7 @@ import {
 import {
   MemoryRunStore,
   Orchestrator,
+  createModelPolicy,
   type OrchestrationRequest,
   type WorkMode,
 } from '@omakase/core';
@@ -84,6 +85,8 @@ Usage:
 
 Options:
   --mode <max-power|normal|custom>     Work mode (default: normal)
+  --agent <id>                         Force a specific agent for every role
+  --offline                            Force the built-in agent (no model calls)
   --cwd <path>                         Working directory (default: cwd)
   --json                               Machine-readable output (agents/run)
 `;
@@ -120,11 +123,23 @@ export function createCli(deps: CliDeps = {}): Cli {
     }
     const mode = resolveMode(options.mode);
     const runtime = createRuntime();
-    const orchestrator = createOrchestrator(runtime, mode);
+    // --offline / --agent <id> force every role onto one agent (the built-in by
+    // default), so a run completes with no model calls and no installed CLIs.
+    const agentOverride =
+      typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
+    const orchestrator = agentOverride
+      ? new Orchestrator({
+          runtime,
+          store: new MemoryRunStore(),
+          defaultMode: 'custom',
+          policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }),
+          ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+        })
+      : createOrchestrator(runtime, mode);
     const request: OrchestrationRequest = {
       prompt: task,
       cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
-      mode,
+      mode: agentOverride ? 'custom' : mode,
     };
     const handle = orchestrator.start(request);
     for await (const event of handle.events) {

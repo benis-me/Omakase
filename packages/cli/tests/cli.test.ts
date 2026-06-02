@@ -75,6 +75,13 @@ describe('omakase run', () => {
     expect(out()).toMatch(/run finished: succeeded/);
   });
 
+  it('forces the built-in agent with --offline (no model calls)', async () => {
+    const { cli, out } = harness();
+    const code = await cli.main(['run', 'summarize this project', '--offline', '--cwd', process.cwd()]);
+    expect(code).toBe(0);
+    expect(out()).toContain('Project summary');
+  });
+
   it('errors when no task is given', async () => {
     const { cli, err } = harness();
     const code = await cli.main(['run']);

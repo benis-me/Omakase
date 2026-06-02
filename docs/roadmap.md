@@ -45,8 +45,8 @@ where the edges are and what would deepen each layer.
 
 ### CLI/TUI
 - `omakase run` uses real installed agents by default (it will spend real model
-  calls). Use a project with no agents on PATH, or wire a custom runtime, for a
-  purely offline run.
+  calls). Pass `--offline` (or `--agent builtin`) to force the built-in agent
+  and run with no model calls.
 - The TUI auto-runs a task passed on the command line and exposes
   pause/resume/cancel/replan; it does not yet have an in-TUI text input for
   composing a brand-new task interactively.

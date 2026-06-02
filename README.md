@@ -36,8 +36,9 @@ pnpm -r build
 # List the agent CLIs detected on this machine
 pnpm --filter @omakase/cli omakase agents
 
-# Run a task (uses an installed agent if present, else the offline built-in)
-pnpm --filter @omakase/cli omakase run "summarize this project"
+# Run a task. By default it uses your strongest installed agent; add --offline
+# to force the built-in agent and run with no model calls.
+pnpm --filter @omakase/cli omakase run "summarize this project" --offline
 
 # Open the interactive TUI
 pnpm --filter @omakase/cli omakase tui "add input validation and write tests"
