@@ -78,6 +78,7 @@ export class MemoryRunStore implements RunStore {
 }
 
 export class FileRunStore implements RunStore {
+  private tmpSeq = 0;
   constructor(private readonly dir: string) {}
 
   private file(id: string): string {
@@ -86,11 +87,12 @@ export class FileRunStore implements RunStore {
 
   async save(record: RunRecord): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    // Write to a temp file then atomically rename into place, so a crash
+    // Write to a unique temp file then atomically rename into place, so a crash
     // mid-write can never truncate the canonical run file (checkpoints are
-    // frequent — once per task).
+    // frequent — once per task) and concurrent checkpoints don't collide.
     const target = this.file(record.id);
-    const tmp = `${target}.tmp`;
+    this.tmpSeq += 1;
+    const tmp = `${target}.${this.tmpSeq}.tmp`;
     await writeFile(tmp, JSON.stringify(record, null, 2), 'utf8');
     await rename(tmp, target);
   }

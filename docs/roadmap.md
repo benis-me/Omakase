@@ -33,12 +33,9 @@ where the edges are and what would deepen each layer.
   from free text (`APPROVE`/`REJECT`); the built-in reviewer auto-approves
   because it has no model to judge with. Structured review (per-criterion
   scoring) is a natural extension.
-- **Tasks run sequentially.** The loop executes ready tasks one at a time for
-  deterministic behaviour; bounded parallelism across independent ready tasks
-  is a clear win.
 - **Codegraph is syntactic.** Regex extraction sees imports/exports/symbols and
   resolves relative paths; it does not resolve `tsconfig` path aliases, types,
-  or call graphs. Good for blast-radius reasoning, not for refactaring proofs.
+  or call graphs. Good for blast-radius reasoning, not for refactoring proofs.
 - **24/7 operation** is modeled via the resumable supervisor (checkpoint +
   `resume`), not a long-lived process; a daemonized scheduler/heartbeat monitor
   on top of `RunStore` is future work.
@@ -56,17 +53,20 @@ where the edges are and what would deepen each layer.
 1. **Adapter conformance tests** that record real CLI output as fixtures and
    replay them through the parsers, keeping argv/stream mapping honest per
    release.
-2. **Bounded-parallel task execution** with a configurable concurrency cap.
-3. **Live MCP injection** implementing the three declared strategies.
-4. **Detection cache** with TTL + manual `refresh()`.
-5. **Structured review** (acceptance-criteria scoring tied to `SpecWorkflow`).
-6. **Codegraph depth**: tsconfig path-alias resolution, symbol-level edges, and
+2. **Live MCP injection** implementing the three declared strategies.
+3. **Structured review** (acceptance-criteria scoring tied to `SpecWorkflow`).
+4. **Codegraph depth**: tsconfig path-alias resolution, symbol-level edges, and
    a watch-mode that feeds incremental `update()` from a file watcher.
-7. **Supervisor daemon**: a long-running process that owns `RunStore`, restarts
+5. **Supervisor daemon**: a long-running process that owns `RunStore`, restarts
    interrupted runs, and exposes heartbeat/health.
-8. **Skill-aware planning**: let selected skills shape the plan, not just inject
+6. **Skill-aware planning**: let selected skills shape the plan, not just inject
    prompt context.
-9. **Cost/budget policy**: per-run token/cost budgets enforced by the policy and
+7. **Cost/budget policy**: per-run token/cost budgets enforced by the policy and
    surfaced in the TUI.
-10. **Persisted wiki/codegraph** under `.omakase/` so knowledge survives across
-    runs and processes.
+8. **Persisted wiki/codegraph** under `.omakase/` so knowledge survives across
+   runs and processes.
+
+**Shipped since first cut:** bounded-parallel task execution
+(`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
+`refreshDetection()`), `--offline`/`--agent` to force the built-in agent, atomic
+checkpoint writes, and the 14 fixes from the adversarial review.

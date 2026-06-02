@@ -99,7 +99,8 @@ export function createCli(deps: CliDeps = {}): Cli {
   const write = deps.write ?? ((t: string) => process.stdout.write(`${t}\n`));
   const error = deps.error ?? ((t: string) => process.stderr.write(`${t}\n`));
   const createRuntime =
-    deps.createRuntime ?? (() => createAgentRuntime({ fallbackToBuiltin: true }));
+    deps.createRuntime ??
+    (() => createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 }));
   const createOrchestrator =
     deps.createOrchestrator ??
     ((runtime: AgentRuntime, mode: WorkMode) =>

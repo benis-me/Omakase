@@ -240,6 +240,34 @@ describe('runtime: error + lifecycle handling', () => {
     expect(result.error).toContain('not installed');
   });
 
+  it('caches resolution across runs when a TTL is set, and refreshes on demand', async () => {
+    let versionProbes = 0;
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) {
+        versionProbes += 1;
+        return answerProbe(ctrl);
+      }
+      if (ctrl.request.args.includes('--help')) return answerProbe(ctrl);
+      ctrl.onStdinEnd(() => {
+        ctrl.emitStdoutJson({ type: 'result', subtype: 'success' });
+        ctrl.exit(0);
+      });
+    });
+    const runtime = createAgentRuntime({
+      registry: createRegistry(),
+      transport,
+      detection: { transport, env: { PATH: binDir }, includeWellKnownPathDirs: false, home },
+      detectionCacheTtlMs: 60_000,
+      now: () => 1000,
+    });
+    await runtime.runAgent({ agentId: 'claude', prompt: 'a' });
+    await runtime.runAgent({ agentId: 'claude', prompt: 'b' });
+    expect(versionProbes).toBe(1); // second run used the cache
+    runtime.refreshDetection();
+    await runtime.runAgent({ agentId: 'claude', prompt: 'c' });
+    expect(versionProbes).toBe(2); // cache cleared → re-probed
+  });
+
   it('cancels a run when the abort signal fires', async () => {
     const transport = createFakeTransport((ctrl) => {
       if (isProbe(ctrl)) return answerProbe(ctrl);

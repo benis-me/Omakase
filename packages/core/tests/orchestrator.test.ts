@@ -172,6 +172,35 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(reviewer?.status === 'failed' || reviewer?.status === 'blocked').toBe(true);
   });
 
+  it('runs independent ready tasks concurrently (bounded by maxConcurrency)', async () => {
+    // Workers block on a gate that only releases once BOTH have started — so
+    // the run can only complete if the two independent workers run in parallel.
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const exec = createScriptedAgent(async (input) => {
+      if (String(input.metadata?.role) === 'reviewer') return [{ type: 'text_delta', delta: 'APPROVE' }];
+      started += 1;
+      if (started >= 2) release();
+      await gate;
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({ ...baseOptions(runtime, new RulePlanner()), maxConcurrency: 2 });
+    const result = await orch.start({ prompt: '- task a\n- task b' }).result;
+    expect(started).toBe(2);
+    expect(result.status).toBe('succeeded');
+  });
+
+  it('still completes with maxConcurrency=1 (sequential)', async () => {
+    const runtime = scriptedRuntime((_i, role) => (role === 'reviewer' ? 'APPROVE' : 'done'));
+    const orch = new Orchestrator({ ...baseOptions(runtime, new RulePlanner()), maxConcurrency: 1 });
+    const result = await orch.start({ prompt: '- task a\n- task b' }).result;
+    expect(result.status).toBe('succeeded');
+  });
+
   it('supports cancel', async () => {
     const runtime = scriptedRuntime(() => 'done');
     const orch = new Orchestrator(baseOptions(runtime, new RulePlanner()));

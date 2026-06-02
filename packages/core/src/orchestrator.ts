@@ -74,6 +74,8 @@ export interface OrchestratorOptions {
   detectionOptions?: DetectionOptions;
   maxIterations?: number;
   maxAttemptsPerTask?: number;
+  /** Max independent ready tasks executed concurrently per iteration (default 4). */
+  maxConcurrency?: number;
   defaultMode?: WorkMode;
 }
 
@@ -127,6 +129,7 @@ class RunController implements RunHandle {
   private readonly detectionOptions: DetectionOptions | undefined;
   private readonly maxIterations: number;
   private readonly maxAttempts: number;
+  private readonly maxConcurrency: number;
 
   private readonly stream = createPushStream<OrchestratorEvent>();
   private readonly eventLog: OrchestratorEvent[] = [];
@@ -140,7 +143,7 @@ class RunController implements RunHandle {
   private paused = false;
   private cancelled = false;
   private pauseGate: Deferred | null = null;
-  private activeAbort: AbortController | null = null;
+  private readonly activeAborts = new Set<AbortController>();
   private checkpointSeq = 0;
   private readonly createdAt: number;
   private readonly resuming: boolean;
@@ -166,6 +169,7 @@ class RunController implements RunHandle {
     this.detectionOptions = options.detectionOptions;
     this.maxIterations = options.maxIterations ?? 50;
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
+    this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 4);
     this.resuming = Boolean(resumeFrom);
     this.createdAt = resumeFrom?.createdAt ?? this.clock();
 
@@ -212,7 +216,7 @@ class RunController implements RunHandle {
   cancel(): void {
     if (this.cancelled) return;
     this.cancelled = true;
-    this.activeAbort?.abort();
+    for (const abort of this.activeAborts) abort.abort();
     this.pauseGate?.resolve();
     this.pauseGate = null;
   }
@@ -391,15 +395,27 @@ class RunController implements RunHandle {
         break;
       }
 
-      for (const task of ready) {
+      await this.runBatch(ready);
+      iterations += 1;
+    }
+  }
+
+  /** Run the ready tasks of one iteration with bounded concurrency. */
+  private async runBatch(tasks: TaskNode[]): Promise<void> {
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < tasks.length && !this.cancelled) {
+        const task = tasks[next];
+        next += 1;
+        if (!task) break;
         await this.waitIfPaused();
         if (this.cancelled) break;
         await this.executeTask(task);
         await this.checkpoint();
-        if (this.cancelled) break;
       }
-      iterations += 1;
-    }
+    };
+    const lanes = Math.min(this.maxConcurrency, tasks.length);
+    await Promise.all(Array.from({ length: lanes }, () => worker()));
   }
 
   private async executeTask(task: TaskNode): Promise<void> {
@@ -417,7 +433,7 @@ class RunController implements RunHandle {
     };
 
     const abort = new AbortController();
-    this.activeAbort = abort;
+    this.activeAborts.add(abort);
     input.signal = abort.signal;
 
     await this.hooks
@@ -431,7 +447,7 @@ class RunController implements RunHandle {
         this.emit({ type: 'agent-event', role: task.role, taskId: task.id, assignment, event });
       }
     } finally {
-      this.activeAbort = null;
+      this.activeAborts.delete(abort);
     }
     const result: AgentRunResult = acc.result();
 
