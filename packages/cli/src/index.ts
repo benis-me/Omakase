@@ -1,18 +1,21 @@
-// @omakase/cli — public entrypoint.
-import { CORE_VERSION } from '@omakase/core';
+// @omakase/cli — public entrypoint + library surface.
+import { createCli } from './cli.js';
 
 export const CLI_VERSION = '0.1.0';
 
-/**
- * CLI entrypoint. The real command router is wired in the CLI slice; during
- * scaffolding this prints the resolved package versions so the bin launcher
- * and `pnpm --filter @omakase/cli omakase` path can be exercised end to end.
- */
+export { createCli, parseArgs } from './cli.js';
+export type { Cli, CliDeps, ParsedArgs } from './cli.js';
+export { formatAgentsTable, formatRunSummary } from './render.js';
+export {
+  initialRunView,
+  reduceRunView,
+  buildRunView,
+  formatEventLine,
+} from './view-model.js';
+export type { RunView, RunViewStatus, TaskView } from './view-model.js';
+
+/** Process entrypoint used by bin/omakase.mjs. Returns the desired exit code. */
 export async function main(argv: string[]): Promise<void> {
-  const [command] = argv;
-  if (command === '--version' || command === undefined) {
-    process.stdout.write(`omakase ${CLI_VERSION} (core ${CORE_VERSION})\n`);
-    return;
-  }
-  process.stdout.write(`omakase: unknown command "${command}"\n`);
+  const code = await createCli().main(argv);
+  if (code !== 0) process.exitCode = code;
 }

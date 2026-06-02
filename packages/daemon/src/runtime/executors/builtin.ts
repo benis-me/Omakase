@@ -163,6 +163,21 @@ export async function summarizeProject(root: string): Promise<string> {
  */
 export const localResponderAgent = createScriptedAgent(async (input) => {
   const events: AgentEvent[] = [];
+  const role = typeof input.metadata?.role === 'string' ? input.metadata.role : undefined;
+
+  // As a reviewer with no model available, the built-in agent cannot judge
+  // quality — it approves rather than blocking the run, and says so. Plug in a
+  // real agent for rigorous review.
+  if (role === 'reviewer') {
+    events.push({
+      type: 'text_delta',
+      delta:
+        'APPROVE — built-in reviewer cannot evaluate deeply without a model; approving to avoid blocking. Configure a real agent for rigorous review.',
+    });
+    events.push({ type: 'usage', usage: { inputTokens: input.prompt.length, outputTokens: 0 } });
+    return events;
+  }
+
   events.push({ type: 'thinking_start' });
   events.push({
     type: 'thinking_delta',

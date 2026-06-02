@@ -91,6 +91,14 @@ export class RuleRouter implements Router {
       signals.push(`length ${text.length}`);
     }
 
+    // Multiple coordinated clauses ("do X and Y and Z", comma-separated) signal
+    // several actions even without explicit step words.
+    const coordinations = countMatches(lower, /\band\b/g) + countMatches(text, /,/g);
+    if (coordinations >= 2) {
+      score += 2;
+      signals.push(`${coordinations} coordinated clauses`);
+    }
+
     if (BREADTH.test(lower)) {
       score += 1;
       signals.push('breadth (across/codebase)');
