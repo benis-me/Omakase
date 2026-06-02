@@ -301,6 +301,30 @@ async function safeProbe(
   }
 }
 
+export interface ResolvedRuntime {
+  bin: string;
+  capabilities: RuntimeCapabilityMap;
+}
+
+/**
+ * Lighter than {@link detectAgent}: resolve the binary and probe capabilities
+ * only (no model/auth probes), for use right before a run. Returns null if the
+ * agent is not installed or not invocable.
+ */
+export async function resolveRuntime(
+  def: RuntimeAgentDef,
+  options: DetectionOptions = {},
+): Promise<ResolvedRuntime | null> {
+  const ctx = resolveContext(options);
+  const resolution = resolveExecutable(def, ctx.resolveCtx);
+  if (!resolution.selectedPath) return null;
+  const env = probeEnv(def, ctx.env);
+  const version = await probeVersion(def, resolution.selectedPath, env, ctx);
+  if (!version.invocable) return null;
+  const capabilities = await probeCapabilities(def, resolution.selectedPath, env, ctx);
+  return { bin: resolution.selectedPath, capabilities };
+}
+
 /** Detect a single agent definition. */
 export async function detectAgent(
   def: RuntimeAgentDef,

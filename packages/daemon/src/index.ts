@@ -104,5 +104,40 @@ export {
   qwenAgentDef,
   copilotAgentDef,
 } from './runtimes/defs/index.js';
-export { detectAgent, detectAgents } from './runtimes/detection.js';
-export type { DetectionOptions } from './runtimes/detection.js';
+export { detectAgent, detectAgents, resolveRuntime } from './runtimes/detection.js';
+export type { DetectionOptions, ResolvedRuntime } from './runtimes/detection.js';
+
+// ── Stream parsers (per format) ──────────────────────────────────────────────
+export type { JsonEventMapper, JsonMapperState } from './runtime/parsers.js';
+export {
+  getJsonMapper,
+  claudeStreamJsonMapper,
+  codexJsonMapper,
+} from './runtime/parsers.js';
+export type { PiMapperState, PiMapResult } from './protocol/pi-rpc.js';
+export {
+  mapPiRpcEvent,
+  isExtensionUiRequest,
+  buildExtensionUiResponse,
+  buildPiPromptCommand,
+  buildPiAbortCommand,
+} from './protocol/pi-rpc.js';
+
+// ── Execution API ────────────────────────────────────────────────────────────
+export type { AgentRunInput, AgentExecutor, ExecutorContext } from './runtime/executor.js';
+export type { StreamDriver } from './runtime/stream.js';
+export { streamFromDriver, errorStream, deferStream } from './runtime/stream.js';
+export { spawnExecutor } from './runtime/executors/spawn.js';
+export { piRpcExecutor } from './runtime/executors/pi-rpc.js';
+export {
+  createScriptedAgent,
+  echoAgent,
+  localResponderAgent,
+  summarizeProject,
+} from './runtime/executors/builtin.js';
+export type { ScriptedHandler } from './runtime/executors/builtin.js';
+export {
+  createAgentRuntime,
+  BUILTIN_AGENT_ID,
+} from './runtime/runtime.js';
+export type { AgentRuntime, AgentRuntimeOptions } from './runtime/runtime.js';
