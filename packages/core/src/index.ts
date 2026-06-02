@@ -69,3 +69,44 @@ export type {
   CodeGraphSnapshot,
   ScanOptions,
 } from './knowledge/codegraph.js';
+
+// ── Inbox, supervisor, run events ────────────────────────────────────────────
+export { Inbox } from './inbox.js';
+export type { InboxItem, InboxItemKind, InboxAppendOptions, InboxOptions } from './inbox.js';
+export { MemoryRunStore, FileRunStore } from './supervisor/run-store.js';
+export type { RunStore, RunRecord } from './supervisor/run-store.js';
+export type {
+  OrchestratorEvent,
+  OrchestratorEventType,
+  RunStatus,
+  InboxItemSnapshot,
+} from './run-events.js';
+
+// ── Orchestrator ─────────────────────────────────────────────────────────────
+export { Orchestrator, parseReview } from './orchestrator.js';
+export type { OrchestratorOptions, RunHandle, RunResult } from './orchestrator.js';
+
+// ── Workflows: spec-driven + TDD ─────────────────────────────────────────────
+export { SpecWorkflow, SPEC_PHASES } from './workflows/spec.js';
+export type { SpecPhase, SpecState, SpecTransition, SpecWorkflowOptions } from './workflows/spec.js';
+export { TddLoop } from './workflows/tdd.js';
+export type { TddPhase, TddState, TestRun, TddOptions } from './workflows/tdd.js';
+
+// ── Self-improvement ─────────────────────────────────────────────────────────
+export {
+  createGitRunner,
+  readGitStatus,
+  assertSafeWorkspace,
+  WorkspaceDirtyError,
+  buildSelfImproveRequest,
+  summarizeChanges,
+  prepareSelfImprovement,
+  SELF_IMPROVE_PHASES,
+} from './self-improve.js';
+export type {
+  GitStatus,
+  GitRunner,
+  SelfImproveGuardOptions,
+  SelfImprovePhase,
+  PrepareSelfImprovementOptions,
+} from './self-improve.js';
