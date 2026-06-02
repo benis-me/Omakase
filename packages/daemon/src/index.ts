@@ -53,3 +53,56 @@ export type {
 export { createNodeTransport } from './runtime/transport.js';
 export type { PushStream } from './runtime/push-stream.js';
 export { createPushStream } from './runtime/push-stream.js';
+export type { ExecResult, ExecOptions } from './runtime/exec.js';
+export { execCollect } from './runtime/exec.js';
+
+// ── Runtime definitions, registry & detection ───────────────────────────────
+export type {
+  RuntimeAgentDef,
+  RuntimeModelOption,
+  RuntimeReasoningOption,
+  RuntimeModelSource,
+  RuntimeBuildOptions,
+  RuntimeContext,
+  RuntimeCapabilityMap,
+  RuntimeListModels,
+  RuntimeAuthHints,
+  ModelProbeRunner,
+  StreamFormat,
+  AuthStatus,
+  DetectedAgent,
+} from './runtimes/types.js';
+export {
+  DEFAULT_MODEL_OPTION,
+  STANDARD_REASONING_OPTIONS,
+  parseProviderTableModels,
+  parseLineSeparatedModels,
+  parseCodexDebugModels,
+  clampCodexReasoning,
+} from './runtimes/shared.js';
+export {
+  resolveExecutable,
+  resolveOnPath,
+  isExecutableFile,
+  computePathDirs,
+  wellKnownToolchainDirs,
+} from './runtimes/executables.js';
+export type {
+  ExecutableResolution,
+  ExecutableResolveContext,
+} from './runtimes/executables.js';
+export { RuntimeRegistry, createRegistry } from './runtimes/registry.js';
+export type { RegisterOptions, CreateRegistryOptions } from './runtimes/registry.js';
+export { BUILTIN_AGENT_DEFS } from './runtimes/defs/index.js';
+export {
+  claudeAgentDef,
+  codexAgentDef,
+  piAgentDef,
+  geminiAgentDef,
+  opencodeAgentDef,
+  cursorAgentDef,
+  qwenAgentDef,
+  copilotAgentDef,
+} from './runtimes/defs/index.js';
+export { detectAgent, detectAgents } from './runtimes/detection.js';
+export type { DetectionOptions } from './runtimes/detection.js';
