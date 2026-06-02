@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@omakase/daemon": ["../daemon/src/index.ts"],
+      "@omakase/daemon/testing": ["../daemon/src/testing/index.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

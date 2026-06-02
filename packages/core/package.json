@@ -1,0 +1,30 @@
+{
+  "name": "@omakase/core",
+  "version": "0.1.0",
+  "description": "Omakase orchestration core — router, plan graph, hooks, knowledge (wiki + codegraph), spec/TDD workflows, and a resumable Ralph-loop supervisor built on @omakase/daemon.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@omakase/daemon": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

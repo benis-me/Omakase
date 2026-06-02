@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["node", "react"],
+    "baseUrl": ".",
+    "paths": {
+      "@omakase/daemon/testing": ["../daemon/src/testing/index.ts"],
+      "@omakase/daemon": ["../daemon/src/index.ts"],
+      "@omakase/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

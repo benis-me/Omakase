@@ -1,0 +1,36 @@
+{
+  "name": "@omakase/cli",
+  "version": "0.1.0",
+  "description": "Omakase command-line + TUI entrypoint. Detect agents, run tasks, and drive the orchestrator interactively — all on top of @omakase/core.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "omakase": "./bin/omakase.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "omakase": "node bin/omakase.mjs",
+    "dev": "tsx src/dev.ts"
+  },
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "@omakase/daemon": "workspace:*",
+    "ink": "^5.1.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "ink-testing-library": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
