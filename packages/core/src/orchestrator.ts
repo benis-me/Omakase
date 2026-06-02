@@ -40,6 +40,11 @@ import type { RunRecord, RunStore } from './supervisor/run-store.js';
 import type { OrchestratorEvent, RunStatus } from './run-events.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
+export interface RunBudget {
+  maxTokens?: number;
+  maxCostUsd?: number;
+}
+
 export interface RunResult {
   id: string;
   status: RunStatus;
@@ -47,6 +52,8 @@ export interface RunResult {
   plan: RunRecord['plan'];
   wiki: RunRecord['wiki'];
   events: OrchestratorEvent[];
+  spentTokens: number;
+  spentCostUsd: number;
 }
 
 export interface RunHandle {
@@ -76,6 +83,8 @@ export interface OrchestratorOptions {
   maxAttemptsPerTask?: number;
   /** Max independent ready tasks executed concurrently per iteration (default 4). */
   maxConcurrency?: number;
+  /** Soft token/cost ceiling: stop scheduling new tasks once exceeded. */
+  budget?: RunBudget;
   defaultMode?: WorkMode;
 }
 
@@ -130,6 +139,10 @@ class RunController implements RunHandle {
   private readonly maxIterations: number;
   private readonly maxAttempts: number;
   private readonly maxConcurrency: number;
+  private readonly budget: RunBudget | undefined;
+  private spentTokens = 0;
+  private spentCostUsd = 0;
+  private budgetExhausted = false;
 
   private readonly stream = createPushStream<OrchestratorEvent>();
   private readonly eventLog: OrchestratorEvent[] = [];
@@ -170,6 +183,7 @@ class RunController implements RunHandle {
     this.maxIterations = options.maxIterations ?? 50;
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
     this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 4);
+    this.budget = options.budget;
     this.resuming = Boolean(resumeFrom);
     this.createdAt = resumeFrom?.createdAt ?? this.clock();
 
@@ -376,7 +390,7 @@ class RunController implements RunHandle {
 
   private async loop(): Promise<void> {
     let iterations = 0;
-    while (!this.cancelled && iterations < this.maxIterations) {
+    while (!this.cancelled && !this.budgetExhausted && iterations < this.maxIterations) {
       await this.waitIfPaused();
       if (this.cancelled) break;
 
@@ -404,7 +418,7 @@ class RunController implements RunHandle {
   private async runBatch(tasks: TaskNode[]): Promise<void> {
     let next = 0;
     const worker = async (): Promise<void> => {
-      while (next < tasks.length && !this.cancelled) {
+      while (next < tasks.length && !this.cancelled && !this.budgetExhausted) {
         const task = tasks[next];
         next += 1;
         if (!task) break;
@@ -450,6 +464,7 @@ class RunController implements RunHandle {
       this.activeAborts.delete(abort);
     }
     const result: AgentRunResult = acc.result();
+    this.accountUsage(result);
 
     await this.hooks
       .emit('afterAgentRun', { role: task.role, input, result, task })
@@ -509,6 +524,30 @@ class RunController implements RunHandle {
       this.graph.setStatus(task.id, 'pending');
     } else {
       this.graph.setStatus(task.id, 'failed');
+    }
+  }
+
+  /** Accumulate token/cost spend and trip the budget once a ceiling is hit. */
+  private accountUsage(result: AgentRunResult): void {
+    const usage = result.usage;
+    if (usage) {
+      this.spentTokens +=
+        usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+    }
+    if (typeof result.costUsd === 'number') this.spentCostUsd += result.costUsd;
+    if (this.budgetExhausted || !this.budget) return;
+    const overTokens =
+      this.budget.maxTokens != null && this.spentTokens >= this.budget.maxTokens;
+    const overCost =
+      this.budget.maxCostUsd != null && this.spentCostUsd >= this.budget.maxCostUsd;
+    if (overTokens || overCost) {
+      this.budgetExhausted = true;
+      this.emit({
+        type: 'budget-exhausted',
+        spentTokens: this.spentTokens,
+        spentCostUsd: this.spentCostUsd,
+        limit: { ...this.budget },
+      });
     }
   }
 
@@ -603,6 +642,8 @@ class RunController implements RunHandle {
       plan: this.graph.snapshot(),
       wiki: this.wiki.toJSON(),
       events: [...this.eventLog],
+      spentTokens: this.spentTokens,
+      spentCostUsd: this.spentCostUsd,
     };
   }
 }

@@ -57,6 +57,12 @@ export type OrchestratorEvent =
   | { type: 'review'; taskId: string; approved: boolean; notes: string }
   | { type: 'replanned'; reason: ReplanReason; snapshot: PlanGraphSnapshot }
   | { type: 'knowledge-updated'; wikiEntries: number; codegraphFiles: number | null }
+  | {
+      type: 'budget-exhausted';
+      spentTokens: number;
+      spentCostUsd: number;
+      limit: { maxTokens?: number; maxCostUsd?: number };
+    }
   | { type: 'user-input'; item: InboxItemSnapshot }
   | { type: 'paused' }
   | { type: 'resumed' }

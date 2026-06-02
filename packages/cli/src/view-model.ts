@@ -70,6 +70,8 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `↻ replanned (${event.reason})`;
     case 'knowledge-updated':
       return `  ⌕ knowledge: ${event.wikiEntries} wiki entries${event.codegraphFiles != null ? `, ${event.codegraphFiles} files` : ''}`;
+    case 'budget-exhausted':
+      return `⛔ budget exhausted: ${event.spentTokens} tokens, $${event.spentCostUsd.toFixed(2)} spent`;
     case 'user-input':
       return `✎ user input: ${event.item.text}`;
     case 'paused':

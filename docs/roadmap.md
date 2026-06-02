@@ -61,12 +61,12 @@ where the edges are and what would deepen each layer.
    interrupted runs, and exposes heartbeat/health.
 6. **Skill-aware planning**: let selected skills shape the plan, not just inject
    prompt context.
-7. **Cost/budget policy**: per-run token/cost budgets enforced by the policy and
-   surfaced in the TUI.
-8. **Persisted wiki/codegraph** under `.omakase/` so knowledge survives across
+7. **Persisted wiki/codegraph** under `.omakase/` so knowledge survives across
    runs and processes.
 
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
-`refreshDetection()`), `--offline`/`--agent` to force the built-in agent, atomic
-checkpoint writes, and the 14 fixes from the adversarial review.
+`refreshDetection()`), `--offline`/`--agent` to force the built-in agent, a
+token/cost budget (`budget` / `--max-tokens` / `--max-cost`, emits
+`budget-exhausted` and ends the run `incomplete`), atomic checkpoint writes, and
+the 14 fixes from the adversarial review.

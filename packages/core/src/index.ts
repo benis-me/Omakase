@@ -84,7 +84,7 @@ export type {
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export { Orchestrator, parseReview } from './orchestrator.js';
-export type { OrchestratorOptions, RunHandle, RunResult } from './orchestrator.js';
+export type { OrchestratorOptions, RunHandle, RunResult, RunBudget } from './orchestrator.js';
 
 // ── Workflows: spec-driven + TDD ─────────────────────────────────────────────
 export { SpecWorkflow, SPEC_PHASES } from './workflows/spec.js';

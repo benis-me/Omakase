@@ -87,6 +87,8 @@ Options:
   --mode <max-power|normal|custom>     Work mode (default: normal)
   --agent <id>                         Force a specific agent for every role
   --offline                            Force the built-in agent (no model calls)
+  --max-tokens <n>                     Stop the run after ~n tokens are spent
+  --max-cost <usd>                     Stop the run after ~usd is spent
   --cwd <path>                         Working directory (default: cwd)
   --json                               Machine-readable output (agents/run)
 `;
@@ -128,15 +130,23 @@ export function createCli(deps: CliDeps = {}): Cli {
     // default), so a run completes with no model calls and no installed CLIs.
     const agentOverride =
       typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
-    const orchestrator = agentOverride
-      ? new Orchestrator({
-          runtime,
-          store: new MemoryRunStore(),
-          defaultMode: 'custom',
-          policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }),
-          ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
-        })
-      : createOrchestrator(runtime, mode);
+    const budget: { maxTokens?: number; maxCostUsd?: number } = {};
+    if (typeof options['max-tokens'] === 'string') budget.maxTokens = Number(options['max-tokens']);
+    if (typeof options['max-cost'] === 'string') budget.maxCostUsd = Number(options['max-cost']);
+    const hasBudget = Boolean(budget.maxTokens || budget.maxCostUsd);
+    const orchestrator =
+      agentOverride || hasBudget
+        ? new Orchestrator({
+            runtime,
+            store: new MemoryRunStore(),
+            defaultMode: agentOverride ? 'custom' : mode,
+            ...(agentOverride
+              ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
+              : {}),
+            ...(hasBudget ? { budget } : {}),
+            ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+          })
+        : createOrchestrator(runtime, mode);
     const request: OrchestrationRequest = {
       prompt: task,
       cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
@@ -155,6 +165,9 @@ export function createCli(deps: CliDeps = {}): Cli {
     if (!options.json) {
       write('');
       write(formatRunSummary(buildRunView(result.events, mode)));
+      if (result.spentTokens > 0 || result.spentCostUsd > 0) {
+        write(`Spent: ${result.spentTokens} tokens, $${result.spentCostUsd.toFixed(4)}`);
+      }
       const answers = result.plan.tasks
         .filter((t) => t.role === 'worker' && t.result?.output)
         .map((t) => t.result!.output.trim())

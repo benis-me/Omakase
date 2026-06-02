@@ -201,6 +201,24 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(result.status).toBe('succeeded');
   });
 
+  it('stops scheduling new tasks when the token budget is exhausted', async () => {
+    const exec = createScriptedAgent(() => [
+      { type: 'text_delta', delta: 'done' },
+      { type: 'usage', usage: { inputTokens: 50, outputTokens: 50 } },
+    ]);
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      ...baseOptions(runtime, new RulePlanner()),
+      maxConcurrency: 1,
+      budget: { maxTokens: 150 },
+    });
+    const result = await orch.start({ prompt: '- task a\n- task b' }).result;
+    expect(result.events.some((e) => e.type === 'budget-exhausted')).toBe(true);
+    expect(result.spentTokens).toBeGreaterThanOrEqual(150);
+    expect(result.status).toBe('incomplete');
+    expect(result.plan.tasks.find((t) => t.role === 'reviewer')?.status).not.toBe('succeeded');
+  });
+
   it('supports cancel', async () => {
     const runtime = scriptedRuntime(() => 'done');
     const orch = new Orchestrator(baseOptions(runtime, new RulePlanner()));
