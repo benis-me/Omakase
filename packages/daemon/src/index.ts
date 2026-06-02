@@ -141,3 +141,26 @@ export {
   BUILTIN_AGENT_ID,
 } from './runtime/runtime.js';
 export type { AgentRuntime, AgentRuntimeOptions } from './runtime/runtime.js';
+
+// ── Skills ───────────────────────────────────────────────────────────────────
+export {
+  parseFrontmatter,
+} from './skills/frontmatter.js';
+export type {
+  FrontmatterData,
+  FrontmatterValue,
+  FrontmatterScalar,
+  ParsedFrontmatter,
+} from './skills/frontmatter.js';
+export {
+  listSkills,
+  findSkillById,
+  selectSkillsForPrompt,
+  renderSkillContext,
+} from './skills/skills.js';
+export type {
+  SkillInfo,
+  SkillRoot,
+  SkillSource,
+  SkillSelectionOptions,
+} from './skills/skills.js';
