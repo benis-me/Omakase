@@ -12,6 +12,7 @@ export interface LaunchTuiOptions {
   runtime: AgentRuntime;
   orchestrator: Orchestrator;
   task?: string;
+  cwd?: string;
   mode: WorkMode;
 }
 

@@ -16,6 +16,7 @@ export interface AppProps {
   runtime: AgentRuntime;
   orchestrator: Orchestrator;
   task?: string;
+  cwd?: string;
   mode: WorkMode;
 }
 
@@ -45,13 +46,13 @@ function taskIcon(status: TaskView['status']): string {
 function statusColor(status: RunView['status']): string {
   if (status === 'succeeded') return 'green';
   if (status === 'failed') return 'red';
-  if (status === 'cancelled') return 'yellow';
+  if (status === 'cancelled' || status === 'incomplete') return 'yellow';
   if (status === 'paused') return 'yellow';
   if (status === 'running') return 'cyan';
   return 'gray';
 }
 
-export function App({ runtime, orchestrator, task, mode: initialMode }: AppProps): React.ReactElement {
+export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
   const [agents, setAgents] = useState<DetectedAgent[]>([]);
@@ -69,7 +70,11 @@ export function App({ runtime, orchestrator, task, mode: initialMode }: AppProps
       .catch(() => undefined);
 
     if (task) {
-      const handle = orchestrator.start({ prompt: task, mode: initialMode });
+      const handle = orchestrator.start({
+        prompt: task,
+        mode: initialMode,
+        ...(cwd ? { cwd } : {}),
+      });
       handleRef.current = handle;
       void (async () => {
         try {
@@ -104,13 +109,20 @@ export function App({ runtime, orchestrator, task, mode: initialMode }: AppProps
       } else if (input === 'u') {
         handleRef.current?.appendUserInput('Reviewer note: keep going and harden edge cases.');
       } else if (input === 'm') {
-        setMode((current) => MODES[(MODES.indexOf(current) + 1) % MODES.length]!);
+        // A run's mode is fixed once it starts; only let the user pick a mode
+        // while idle (e.g. the TUI was opened without a task) so the header
+        // never claims a mode the orchestrator isn't actually using.
+        if (view.status === 'idle') {
+          setMode((current) => MODES[(MODES.indexOf(current) + 1) % MODES.length]!);
+        }
       }
     },
     { isActive: isRawModeSupported },
   );
 
   const availableCount = agents.filter((a) => a.available).length;
+  // Show the running mode once a run starts; the selectable mode only while idle.
+  const displayMode = view.status === 'idle' ? mode : view.mode;
 
   return (
     <Box flexDirection="column">
@@ -119,7 +131,7 @@ export function App({ runtime, orchestrator, task, mode: initialMode }: AppProps
           Omakase{' '}
         </Text>
         <Text>
-          mode=<Text color="cyan">{mode}</Text> · run=
+          mode=<Text color="cyan">{displayMode}</Text> · run=
           <Text color={statusColor(view.status)}>{view.status}</Text>
           {view.runId ? <Text dimColor> ({view.runId})</Text> : null}
         </Text>

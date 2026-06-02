@@ -61,7 +61,13 @@ export interface CliDeps {
   createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode) => Orchestrator;
   detectionOptions?: DetectionOptions;
   /** Launch the TUI; injected so headless tests don't import Ink. */
-  launchTui?: (opts: { task?: string; mode: WorkMode; runtime: AgentRuntime; orchestrator: Orchestrator }) => Promise<void>;
+  launchTui?: (opts: {
+    task?: string;
+    cwd?: string;
+    mode: WorkMode;
+    runtime: AgentRuntime;
+    orchestrator: Orchestrator;
+  }) => Promise<void>;
 }
 
 function resolveMode(value: unknown): WorkMode {
@@ -148,6 +154,7 @@ export function createCli(deps: CliDeps = {}): Cli {
 
   async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
     const mode = resolveMode(options.mode);
+    const cwd = typeof options.cwd === 'string' ? options.cwd : undefined;
     const runtime = createRuntime();
     const orchestrator = createOrchestrator(runtime, mode);
     const launch =
@@ -156,7 +163,7 @@ export function createCli(deps: CliDeps = {}): Cli {
         const { launchTui } = await import('./tui/index.js');
         await launchTui(opts);
       });
-    await launch({ task: task.trim() || undefined, mode, runtime, orchestrator });
+    await launch({ task: task.trim() || undefined, cwd, mode, runtime, orchestrator });
     return 0;
   }
 

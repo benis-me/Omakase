@@ -5,7 +5,7 @@
  * log. {@link MemoryRunStore} is for tests and ephemeral use; {@link FileRunStore}
  * writes one JSON file per run.
  */
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { PlanGraphSnapshot } from '../plan/plan-graph.js';
 import type { RouteDecision } from '../router/router.js';
@@ -35,6 +35,24 @@ export interface RunStore {
   load(id: string): Promise<RunRecord | null>;
   list(): Promise<string[]>;
   delete(id: string): Promise<void>;
+}
+
+/** Structural validation of a parsed run record before it is used to resume. */
+export function isValidRunRecord(value: unknown): value is RunRecord {
+  if (!value || typeof value !== 'object') return false;
+  const r = value as Partial<RunRecord>;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.status === 'string' &&
+    typeof r.request === 'object' &&
+    r.request !== null &&
+    typeof r.plan === 'object' &&
+    r.plan !== null &&
+    Array.isArray((r.plan as { tasks?: unknown }).tasks) &&
+    Array.isArray(r.inbox) &&
+    Array.isArray(r.events) &&
+    typeof r.checkpointSeq === 'number'
+  );
 }
 
 export class MemoryRunStore implements RunStore {
@@ -68,12 +86,21 @@ export class FileRunStore implements RunStore {
 
   async save(record: RunRecord): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    await writeFile(this.file(record.id), JSON.stringify(record, null, 2), 'utf8');
+    // Write to a temp file then atomically rename into place, so a crash
+    // mid-write can never truncate the canonical run file (checkpoints are
+    // frequent — once per task).
+    const target = this.file(record.id);
+    const tmp = `${target}.tmp`;
+    await writeFile(tmp, JSON.stringify(record, null, 2), 'utf8');
+    await rename(tmp, target);
   }
 
   async load(id: string): Promise<RunRecord | null> {
     try {
-      return JSON.parse(await readFile(this.file(id), 'utf8')) as RunRecord;
+      const parsed = JSON.parse(await readFile(this.file(id), 'utf8')) as unknown;
+      // Validate the shape before handing it to PlanGraph.fromSnapshot /
+      // Inbox.restore, so a partial/stale file fails cleanly rather than throwing.
+      return isValidRunRecord(parsed) ? parsed : null;
     } catch {
       return null;
     }

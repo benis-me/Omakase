@@ -327,36 +327,58 @@ export class CodeGraph {
     return [...set].sort();
   }
 
-  /** All distinct import cycles (each as a path of file ids). */
+  /**
+   * All distinct import cycles (each as a path of file ids). Uses an iterative
+   * DFS with an explicit work stack so a very deep dependency chain cannot
+   * overflow the JS call stack.
+   */
   cycles(): string[][] {
+    const WHITE = 0;
+    const GRAY = 1;
+    const BLACK = 2;
     const found: string[][] = [];
     const seenKeys = new Set<string>();
     const color = new Map<string, number>();
-    const stack: string[] = [];
-    for (const id of this.nodes.keys()) color.set(id, 0);
+    // Precompute dependencies once (instead of recomputing per visit).
+    const depsOf = new Map<string, string[]>();
+    for (const id of this.nodes.keys()) {
+      color.set(id, WHITE);
+      depsOf.set(id, this.dependencies(id));
+    }
 
-    const visit = (id: string): void => {
-      color.set(id, 1);
-      stack.push(id);
-      for (const dep of this.dependencies(id)) {
-        const c = color.get(dep);
-        if (c === 1) {
-          const start = stack.indexOf(dep);
-          const cycle = stack.slice(start).concat(dep);
-          const key = [...cycle].sort().join('|');
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            found.push(cycle);
+    for (const start of this.nodes.keys()) {
+      if (color.get(start) !== WHITE) continue;
+      const frames: Array<{ id: string; deps: string[]; index: number }> = [
+        { id: start, deps: depsOf.get(start) ?? [], index: 0 },
+      ];
+      const pathStack: string[] = [start];
+      color.set(start, GRAY);
+
+      while (frames.length > 0) {
+        const frame = frames[frames.length - 1]!;
+        if (frame.index < frame.deps.length) {
+          const dep = frame.deps[frame.index]!;
+          frame.index += 1;
+          const c = color.get(dep);
+          if (c === GRAY) {
+            const at = pathStack.indexOf(dep);
+            const cycle = pathStack.slice(at).concat(dep);
+            const key = [...cycle].sort().join('|');
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              found.push(cycle);
+            }
+          } else if (c === WHITE) {
+            color.set(dep, GRAY);
+            frames.push({ id: dep, deps: depsOf.get(dep) ?? [], index: 0 });
+            pathStack.push(dep);
           }
-        } else if (c === 0) {
-          visit(dep);
+        } else {
+          color.set(frame.id, BLACK);
+          frames.pop();
+          pathStack.pop();
         }
       }
-      stack.pop();
-      color.set(id, 2);
-    };
-    for (const id of this.nodes.keys()) {
-      if (color.get(id) === 0) visit(id);
     }
     return found;
   }

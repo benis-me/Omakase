@@ -69,10 +69,30 @@ function coerce(raw: string): FrontmatterScalar {
   return v;
 }
 
+/** Split on top-level commas only, respecting single/double quotes. */
+function splitTopLevel(inner: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (const ch of inner) {
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+    if (ch === ',' && !inSingle && !inDouble) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim().length > 0) parts.push(current);
+  return parts;
+}
+
 function parseInlineArray(raw: string): FrontmatterValue[] {
   const inner = raw.slice(1, -1).trim();
   if (inner === '') return [];
-  return inner.split(',').map((part) => coerce(part.trim()));
+  return splitTopLevel(inner).map((part) => coerce(part.trim()));
 }
 
 function parseMap(
@@ -109,7 +129,8 @@ function parseMap(
       map[key] = value;
       i = next;
     } else if (rest === '|' || rest === '>' || rest === '|-' || rest === '>-') {
-      const [block, next] = parseBlockScalar(lines, i + 1, indent);
+      const fold = rest.startsWith('>');
+      const [block, next] = parseBlockScalar(lines, i + 1, indent, fold);
       map[key] = block;
       i = next;
     } else if (rest.startsWith('[') && rest.endsWith(']')) {
@@ -183,6 +204,7 @@ function parseBlockScalar(
   lines: string[],
   start: number,
   parentIndent: number,
+  fold = false,
 ): [string, number] {
   const collected: string[] = [];
   let i = start;
@@ -202,5 +224,13 @@ function parseBlockScalar(
     i += 1;
   }
   while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop();
-  return [collected.join('\n'), i];
+  if (!fold) return [collected.join('\n'), i];
+  // YAML folded ('>'): join single newlines between non-empty lines into spaces;
+  // blank lines become hard line breaks.
+  let out = '';
+  for (const line of collected) {
+    if (line === '') out += '\n';
+    else out += (out.length > 0 && !out.endsWith('\n') ? ' ' : '') + line;
+  }
+  return [out, i];
 }

@@ -72,6 +72,7 @@ async function piRpcDriver(
   let nextRpcId = 1;
   const promptId = nextRpcId++;
   let ended = false;
+  let rejected = false;
 
   proc.writeStdin(buildPiPromptCommand(promptId, input.prompt));
 
@@ -85,7 +86,13 @@ async function piRpcDriver(
     const obj = raw as { type?: unknown; id?: unknown; success?: unknown; error?: unknown };
     if (obj.type === 'response') {
       if (obj.id === promptId && obj.success === false) {
+        // pi rejected the prompt. It is a persistent server and will neither
+        // emit agent_end nor exit, so we must end the turn ourselves or the
+        // stdout loop would block forever and leak the child.
         push({ type: 'error', message: `prompt rejected: ${String(obj.error ?? 'unknown')}` });
+        rejected = true;
+        ended = true;
+        proc.endStdin();
       }
       return;
     }
@@ -107,6 +114,7 @@ async function piRpcDriver(
 
     const exit = await proc.wait();
     if (timedOut) throw new AgentTimeoutError(input.timeoutMs!);
+    if (rejected) return 'error';
     if (ac.signal.aborted && !ended) return 'cancelled';
     if (!ended && exit.code !== 0 && exit.code !== null) {
       push({ type: 'error', message: `Pi exited with code ${exit.code}` });

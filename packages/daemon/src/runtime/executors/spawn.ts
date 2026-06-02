@@ -129,6 +129,10 @@ async function spawnDriver(
     }
     return 'completed';
   } catch (err) {
+    // Any abnormal exit from the read loop (e.g. a non-EPIPE stdin error that
+    // failed the stdout stream) must not orphan the child. Killing an already
+    // exited process is a no-op.
+    proc.kill('SIGTERM');
     if (err instanceof AgentTimeoutError) throw err;
     if (isAgentRuntimeError(err) && err.code === 'spawn_failed') {
       const errno = err.detail?.errno;

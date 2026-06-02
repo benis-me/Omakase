@@ -41,9 +41,16 @@ function parsePorcelainLine(line: string): string | null {
 
 export async function readGitStatus(cwd: string, run: GitRunner): Promise<GitStatus> {
   try {
+    // Distinguish "not a git repo" from "git failed". A genuine non-repo lets
+    // self-modify proceed; any other failure (held index.lock, perms, corruption)
+    // must fail closed — treat it as a dirty repo so we never clobber changes.
+    const inside = await run(['rev-parse', '--is-inside-work-tree'], cwd);
+    if (inside.code !== 0 || inside.stdout.trim() !== 'true') {
+      return { isRepo: false, clean: true, changedFiles: [], branch: null };
+    }
     const status = await run(['status', '--porcelain'], cwd);
     if (status.code !== 0) {
-      return { isRepo: false, clean: true, changedFiles: [], branch: null };
+      return { isRepo: true, clean: false, changedFiles: [], branch: null };
     }
     const changedFiles = status.stdout
       .split('\n')
@@ -58,7 +65,9 @@ export async function readGitStatus(cwd: string, run: GitRunner): Promise<GitSta
     }
     return { isRepo: true, clean: changedFiles.length === 0, changedFiles, branch };
   } catch {
-    return { isRepo: false, clean: true, changedFiles: [], branch: null };
+    // Could not run git at all (missing binary, spawn failure): we cannot
+    // verify safety, so fail closed.
+    return { isRepo: true, clean: false, changedFiles: [], branch: null };
   }
 }
 

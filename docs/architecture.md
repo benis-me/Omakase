@@ -25,7 +25,7 @@ run one and get a uniform stream of events back?*
 | Transport | `Transport`, `createNodeTransport`, `createFakeTransport` (testing) | The process seam. Production wraps `child_process.spawn`; the fake scripts stdout/stdin/exit for tests. |
 | Runtime defs | `RuntimeAgentDef`, `RuntimeRegistry`, `createRegistry`, 8 built-in adapters | Declarative descriptions of how to detect & drive each CLI; downstream code registers its own. |
 | Detection | `detectAgents`, `detectAgent`, `resolveRuntime` | Fault-isolated probing → `DetectedAgent[]` (availability, version, models, auth, capabilities). |
-| Execution | `createAgentRuntime`, `runAgent`, `streamAgentEvents` | Resolve an agent and stream `AgentEvent`s via the right executor. |
+| Execution | `createAgentRuntime` → `runtime.runAgent` / `runtime.streamAgentEvents` | Resolve an agent and stream `AgentEvent`s via the right executor. (The latter two are methods on the runtime, not standalone exports.) |
 | Executors | `spawnExecutor`, `piRpcExecutor`, `createScriptedAgent`, `localResponderAgent` | Spawn external CLIs, drive pi's RPC, or run deterministic in-process agents. |
 | Skills | `listSkills`, `selectSkillsForPrompt`, `renderSkillContext`, `parseFrontmatter` | Multi-root `SKILL.md` discovery + prompt-injection selection. |
 

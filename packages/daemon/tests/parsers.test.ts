@@ -109,6 +109,14 @@ describe('codexJsonMapper', () => {
     );
     expect(fold(events).text).toBe('done');
   });
+
+  it('does not duplicate text across item.started and item.completed', () => {
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(...codexJsonMapper({ type: 'item.started', item: { type: 'agent_message', text: 'hello' } }, state));
+    events.push(...codexJsonMapper({ type: 'item.completed', item: { type: 'agent_message', text: 'hello' } }, state));
+    expect(fold(events).text).toBe('hello');
+  });
 });
 
 describe('mapPiRpcEvent', () => {

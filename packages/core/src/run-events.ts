@@ -15,7 +15,9 @@ export type RunStatus =
   | 'paused'
   | 'succeeded'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  /** Made progress but not finished — e.g. the iteration cap was hit. Resumable. */
+  | 'incomplete';
 
 export interface InboxItemSnapshot {
   id: string;

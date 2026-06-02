@@ -92,6 +92,23 @@ describe('omakase run', () => {
   });
 });
 
+describe('omakase tui', () => {
+  it('forwards --cwd and --mode to the TUI launcher', async () => {
+    let captured: { task?: string; cwd?: string; mode?: string } = {};
+    const cli = createCli({
+      write: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      launchTui: async (opts) => {
+        captured = { task: opts.task, cwd: opts.cwd, mode: opts.mode };
+      },
+    });
+    const code = await cli.main(['tui', 'do a thing', '--cwd', '/some/dir', '--mode', 'max-power']);
+    expect(code).toBe(0);
+    expect(captured).toMatchObject({ task: 'do a thing', cwd: '/some/dir', mode: 'max-power' });
+  });
+});
+
 describe('omakase misc', () => {
   it('prints version', async () => {
     const { cli, out } = harness();

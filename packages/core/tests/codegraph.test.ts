@@ -65,4 +65,24 @@ describe('CodeGraph', () => {
     expect(restored.node('a.ts')?.exports).toEqual(['a']);
     expect(restored.stats().files).toBe(1);
   });
+
+  it('handles a very deep import chain without overflowing the stack', () => {
+    // A linear chain longer than the JS recursion limit (~4k) — the old
+    // recursive cycles() crashed here; the iterative one must not.
+    const n = 6000;
+    const nodes = Array.from({ length: n }, (_, i) => ({
+      path: `a${i}.ts`,
+      language: 'typescript' as const,
+      loc: 1,
+      imports:
+        i < n - 1
+          ? [{ specifier: `./a${i + 1}.js`, to: `a${i + 1}.ts`, external: false, specifiers: [], line: 1 }]
+          : [],
+      exports: [],
+      symbols: [],
+    }));
+    const graph = CodeGraph.fromJSON({ root: '/x', nodes });
+    expect(() => graph.cycles()).not.toThrow();
+    expect(graph.cycles()).toEqual([]);
+  });
 });

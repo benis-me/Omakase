@@ -87,9 +87,12 @@ export function parseReview(text: string): { approved: boolean; notes: string } 
     lower,
   );
   const notes = text.trim();
+  // Blank/no verdict is not an approval — a real reviewer always says something.
+  if (notes.length === 0) return { approved: false, notes };
   if (rejects && !approves) return { approved: false, notes };
   if (approves && !rejects) return { approved: true, notes };
-  // Ambiguous: default to approve to avoid livelock, unless an explicit reject term appears.
+  // Ambiguous non-empty text: default to approve to avoid livelock, unless an
+  // explicit reject term appears.
   return { approved: !rejects, notes };
 }
 
@@ -440,28 +443,51 @@ class RunController implements RunHandle {
     this.emitKnowledge();
 
     const summary = (result.text || result.error || '').slice(0, 300);
-    const success = result.status === 'completed' && !result.error;
+    const ranCleanly = result.status === 'completed' && !result.error;
+
+    if (task.role === 'reviewer') {
+      // A reviewer that crashed/timed out/was cancelled has NOT reviewed
+      // anything — never silently treat that as approval. Retry or fail it
+      // like any other task.
+      if (!ranCleanly) {
+        this.graph.setResult(task.id, {
+          success: false,
+          summary,
+          output: result.text,
+          agentId: assignment.agentId,
+          error: result.error ?? 'reviewer did not complete',
+        });
+        this.emit({ type: 'task-finished', taskId: task.id, title: task.title, role: 'reviewer', success: false, summary });
+        if (task.attempts < this.maxAttempts) this.graph.setStatus(task.id, 'pending');
+        else this.graph.setStatus(task.id, 'failed');
+        return;
+      }
+      const review = parseReview(result.text);
+      this.graph.setResult(task.id, {
+        success: review.approved,
+        summary,
+        output: result.text,
+        agentId: assignment.agentId,
+      });
+      // For a reviewer, task-finished.success reflects the verdict, not just
+      // that the agent ran — so the two events never contradict each other.
+      this.emit({ type: 'task-finished', taskId: task.id, title: task.title, role: 'reviewer', success: review.approved, summary });
+      this.emit({ type: 'review', taskId: task.id, approved: review.approved, notes: review.notes.slice(0, 300) });
+      if (review.approved) this.graph.setStatus(task.id, 'succeeded');
+      else await this.handleReviewRejection(task, review.notes);
+      return;
+    }
+
     this.graph.setResult(task.id, {
-      success,
+      success: ranCleanly,
       summary,
       output: result.text,
       agentId: assignment.agentId,
       ...(result.error ? { error: result.error } : {}),
     });
-    this.emit({ type: 'task-finished', taskId: task.id, title: task.title, role: task.role, success, summary });
+    this.emit({ type: 'task-finished', taskId: task.id, title: task.title, role: task.role, success: ranCleanly, summary });
 
-    if (task.role === 'reviewer') {
-      const review = parseReview(result.text);
-      this.emit({ type: 'review', taskId: task.id, approved: review.approved, notes: review.notes.slice(0, 300) });
-      if (review.approved) {
-        this.graph.setStatus(task.id, 'succeeded');
-      } else {
-        await this.handleReviewRejection(task, review.notes);
-      }
-      return;
-    }
-
-    if (success) {
+    if (ranCleanly) {
       this.graph.setStatus(task.id, 'succeeded');
     } else if (task.attempts < this.maxAttempts) {
       this.graph.setStatus(task.id, 'pending');
@@ -523,8 +549,9 @@ class RunController implements RunHandle {
     if (tasks.length === 0) return 'succeeded';
     if (tasks.every((t) => t.status === 'succeeded')) return 'succeeded';
     if (tasks.some((t) => t.status === 'failed' || t.status === 'blocked')) return 'failed';
-    // Ran out of iterations with work still pending.
-    return tasks.every((t) => t.status === 'succeeded') ? 'succeeded' : 'failed';
+    // Non-terminal, non-failed work remains (e.g. the iteration cap was hit):
+    // the run made progress but isn't done. Distinct from a hard failure.
+    return 'incomplete';
   }
 
   private computeSummary(status: RunStatus): string {

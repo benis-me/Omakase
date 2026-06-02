@@ -137,7 +137,8 @@ describe('Orchestrator (Ralph loop)', () => {
     const handleA = a.start({ prompt: 'do work' });
     await collect(handleA);
     const resultA = await handleA.result;
-    expect(resultA.status).not.toBe('succeeded');
+    // Hitting the iteration cap with work still pending is 'incomplete', not 'failed'.
+    expect(resultA.status).toBe('incomplete');
     const firstWorkerId = resultA.plan.tasks.find((t) => t.status === 'succeeded')?.id;
     expect(firstWorkerId).toBeTruthy();
     expect(counts.get(firstWorkerId!)).toBe(1);
@@ -153,6 +154,22 @@ describe('Orchestrator (Ralph loop)', () => {
     // The already-completed worker was NOT executed again.
     expect(counts.get(firstWorkerId!)).toBe(1);
     expect(resultB.plan.tasks.every((t) => t.status === 'succeeded')).toBe(true);
+  });
+
+  it('does not treat a crashed/empty reviewer as an approval', async () => {
+    // The reviewer agent errors (no verdict text); workers succeed.
+    const exec = createScriptedAgent((input) =>
+      String(input.metadata?.role) === 'reviewer'
+        ? [{ type: 'error', message: 'reviewer crashed' }]
+        : [{ type: 'text_delta', delta: 'done' }],
+    );
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({ ...baseOptions(runtime, new RulePlanner()), maxAttemptsPerTask: 2 });
+    const result = await orch.start({ prompt: '- a\n- b' }).result;
+    // The reviewer never produced a verdict → it must NOT be reported succeeded.
+    expect(result.status).not.toBe('succeeded');
+    const reviewer = result.plan.tasks.find((t) => t.role === 'reviewer');
+    expect(reviewer?.status === 'failed' || reviewer?.status === 'blocked').toBe(true);
   });
 
   it('supports cancel', async () => {

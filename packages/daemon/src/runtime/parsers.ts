@@ -153,8 +153,11 @@ export const codexJsonMapper: JsonEventMapper = (raw, state) => {
     const item = asRecord(obj.item)!;
     const it = item.type;
     if ((it === 'agent_message' || it === 'assistant_message') && typeof item.text === 'string') {
+      // Codex fires both item.started and item.completed for the same message,
+      // each carrying the full text. Arm the guard so we emit it only once.
       if (!state.streamedText) {
         out.push(...firstTokenStatus(state));
+        state.streamedText = true;
         out.push({ type: 'text_delta', delta: item.text });
       }
     } else if (it === 'reasoning' && typeof item.text === 'string') {

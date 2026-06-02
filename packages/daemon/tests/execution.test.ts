@@ -159,6 +159,24 @@ describe('runtime: pi RPC executor', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('terminates (does not hang) when pi rejects the prompt', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) return answerProbe(ctrl);
+      ctrl.onStdin((data) => {
+        const msg = JSON.parse(data.trim()) as { type: string; id: number };
+        if (msg.type !== 'prompt') return;
+        // Reject the prompt, then stay alive like a real pi server would.
+        ctrl.emitStdoutJson({ type: 'response', id: msg.id, success: false, error: 'bad model' });
+      });
+      ctrl.onStdinEnd(() => ctrl.exit(0));
+      ctrl.onKill(() => ctrl.exit(0));
+    });
+    // No timeoutMs — must still terminate via the rejection path.
+    const result = await runtimeWith(transport).runAgent({ agentId: 'pi', prompt: 'hi' });
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/prompt rejected/);
+  });
+
   it('auto-resolves extension-ui requests without hanging', async () => {
     const transport = createFakeTransport((ctrl) => {
       if (ctrl.request.args.includes('--version')) return answerProbe(ctrl);

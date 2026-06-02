@@ -11,16 +11,24 @@ import { RulePlanner } from '../src/plan/planner.js';
 import { createIdGenerator } from '../src/ids.js';
 
 const dirtyRunner: GitRunner = async (args) => {
+  if (args.includes('--is-inside-work-tree')) return { stdout: 'true\n', code: 0 };
   if (args[0] === 'status') return { stdout: ' M src/a.ts\n?? new.ts\nR  old.ts -> renamed.ts\n', code: 0 };
-  if (args[0] === 'rev-parse') return { stdout: 'main\n', code: 0 };
+  if (args.includes('--abbrev-ref')) return { stdout: 'main\n', code: 0 };
   return { stdout: '', code: 0 };
 };
 const cleanRunner: GitRunner = async (args) => {
+  if (args.includes('--is-inside-work-tree')) return { stdout: 'true\n', code: 0 };
   if (args[0] === 'status') return { stdout: '', code: 0 };
-  if (args[0] === 'rev-parse') return { stdout: 'main\n', code: 0 };
+  if (args.includes('--abbrev-ref')) return { stdout: 'main\n', code: 0 };
   return { stdout: '', code: 0 };
 };
 const notRepoRunner: GitRunner = async () => ({ stdout: 'fatal: not a git repository', code: 128 });
+// A real repo where `git status` itself fails (held index.lock, perms, …).
+const statusFailsRunner: GitRunner = async (args) => {
+  if (args.includes('--is-inside-work-tree')) return { stdout: 'true\n', code: 0 };
+  if (args[0] === 'status') return { stdout: '', code: 1 };
+  return { stdout: '', code: 0 };
+};
 
 describe('readGitStatus', () => {
   it('parses porcelain output including renames and untracked files', async () => {
@@ -49,6 +57,11 @@ describe('assertSafeWorkspace', () => {
   it('passes on a clean repo and on a non-repo', async () => {
     await expect(assertSafeWorkspace('/x', cleanRunner)).resolves.toBeDefined();
     await expect(assertSafeWorkspace('/x', notRepoRunner)).resolves.toBeDefined();
+  });
+
+  it('fails closed when it is a repo but git status fails', async () => {
+    // Cannot verify cleanliness → must NOT proceed (avoid clobbering work).
+    await expect(assertSafeWorkspace('/x', statusFailsRunner)).rejects.toBeInstanceOf(WorkspaceDirtyError);
   });
 });
 
