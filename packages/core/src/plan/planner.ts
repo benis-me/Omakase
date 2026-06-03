@@ -4,7 +4,7 @@
  * gated by a final review task). {@link createAgentPlanner} asks an agent for a
  * structured plan and falls back to the rule planner if the answer is unusable.
  */
-import type { AgentRuntime } from '@omakase/daemon';
+import { renderSkillContext, type AgentRuntime, type SkillInfo } from '@omakase/daemon';
 import type { IdGenerator } from '../ids.js';
 import type { OrchestrationRequest } from '../types.js';
 import { PlanGraph } from './plan-graph.js';
@@ -15,6 +15,8 @@ export interface PlanContext {
   clock?: () => number;
   /** Optional knowledge snapshot to inform planning. */
   knowledge?: string;
+  /** Skills selected for the planner role, injected into agent-backed prompts. */
+  skills?: SkillInfo[];
 }
 
 export interface Planner {
@@ -143,6 +145,9 @@ export function createAgentPlanner(
         'Break the following request into an ordered list of implementation tasks.',
         'Respond with ONLY a JSON array of objects: {"title": string, "description": string, "dependsOn": number[] (indices of earlier tasks)}.',
         ctx.knowledge ? `\nProject context:\n${ctx.knowledge}\n` : '',
+        ctx.skills && ctx.skills.length > 0
+          ? `\nApplicable skills (follow them when planning):\n${renderSkillContext(ctx.skills)}\n`
+          : '',
         `Request: ${ctx.request.prompt}`,
       ].join('\n'));
 

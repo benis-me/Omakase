@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentRunResult } from '@omakase/daemon';
+import type { AgentRunResult, SkillInfo } from '@omakase/daemon';
 import {
   RulePlanner,
   createAgentPlanner,
@@ -88,5 +88,37 @@ describe('createAgentPlanner', () => {
       clock: () => 0,
     });
     expect(graph.tasks().filter((t) => t.role === 'worker')).toHaveLength(2);
+  });
+
+  it('injects planner-role skills into the agent prompt', async () => {
+    const skill: SkillInfo = {
+      id: 'tdd',
+      name: 'tdd',
+      description: 'red-green-refactor',
+      body: 'Always write a failing test first.',
+      triggers: [],
+      roles: ['planner'],
+      source: 'builtin',
+      root: '/x',
+      dir: '/x/tdd',
+      frontmatter: {},
+    };
+    let captured = '';
+    const planner = createAgentPlanner(
+      {
+        runAgent: async (input) => {
+          captured = input.prompt;
+          return result(JSON.stringify([{ title: 'a', description: 'b' }]));
+        },
+      },
+      { agentId: 'planner-agent' },
+    );
+    await planner.plan({
+      request: { prompt: 'build a thing' },
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      skills: [skill],
+    });
+    expect(captured).toContain('Always write a failing test first.');
   });
 });

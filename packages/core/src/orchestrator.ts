@@ -207,7 +207,12 @@ class RunController implements RunHandle {
     return this.stream.iterable;
   }
 
-  constructor(options: OrchestratorOptions, request: OrchestrationRequest, resumeFrom?: RunRecord) {
+  constructor(
+    options: OrchestratorOptions,
+    request: OrchestrationRequest,
+    resumeFrom?: RunRecord,
+    runId?: string,
+  ) {
     this.request = request;
     this.runtime = options.runtime;
     this.mode = resumeFrom?.mode ?? request.mode ?? options.defaultMode ?? 'normal';
@@ -241,7 +246,9 @@ class RunController implements RunHandle {
       this.checkpointSeq = resumeFrom.checkpointSeq;
     } else {
       this.ids = options.idGenerator ?? createIdGenerator();
-      this.id = this.ids.next('run');
+      // A caller-supplied runId (the Orchestrator allocates a unique one per
+      // start) keeps runs from colliding in the store; otherwise derive one.
+      this.id = runId ?? this.ids.next('run');
       this.wiki = new ProjectWiki({ clock: this.clock });
       this.graph = new PlanGraph({ idGenerator: this.ids, clock: this.clock });
       this.inbox = new Inbox({ clock: this.clock });
@@ -420,6 +427,13 @@ class RunController implements RunHandle {
             idGenerator: this.ids,
             clock: this.clock,
             knowledge: this.knowledgeContext(),
+            skills:
+              this.skills.length > 0
+                ? selectSkillsForPrompt(this.skills, this.request.prompt, {
+                    role: 'planner',
+                    limit: 3,
+                  })
+                : [],
           });
           this.attachGraphListener();
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
@@ -753,11 +767,17 @@ class RunController implements RunHandle {
 }
 
 export class Orchestrator {
-  constructor(private readonly options: OrchestratorOptions) {}
+  private readonly runIds: IdGenerator;
+
+  constructor(private readonly options: OrchestratorOptions) {
+    // A shared generator so every start() gets a distinct run id and runs never
+    // collide in the store (the per-run task generator is separate).
+    this.runIds = options.idGenerator ?? createIdGenerator();
+  }
 
   /** Start a new run and return a streaming handle. */
   start(request: OrchestrationRequest): RunHandle {
-    return new RunController(this.options, request);
+    return new RunController(this.options, request, undefined, this.runIds.next('run'));
   }
 
   /** Resume a previously persisted run; returns null if not found or no store. */

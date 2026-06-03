@@ -77,6 +77,8 @@ export { Inbox } from './inbox.js';
 export type { InboxItem, InboxItemKind, InboxAppendOptions, InboxOptions } from './inbox.js';
 export { MemoryRunStore, FileRunStore } from './supervisor/run-store.js';
 export type { RunStore, RunRecord } from './supervisor/run-store.js';
+export { Supervisor, RESUMABLE_STATUSES } from './supervisor/supervisor.js';
+export type { SupervisorOptions, SupervisorHealth, SupervisorState } from './supervisor/supervisor.js';
 export type {
   OrchestratorEvent,
   OrchestratorEventType,

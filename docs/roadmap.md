@@ -37,9 +37,10 @@ where the edges are and what would deepen each layer.
   ({@link loadTsconfigAliases}); it does not resolve types or call graphs. Good
   for blast-radius reasoning, not for refactoring proofs — back it with an OSS
   tool (dependency-cruiser/madge/ts-morph) via `CodeGraph.fromJSON` for depth.
-- **24/7 operation** is modeled via the resumable supervisor (checkpoint +
-  `resume`), not a long-lived process; a daemonized scheduler/heartbeat monitor
-  on top of `RunStore` is future work.
+- **24/7 operation** is provided by the {@link Supervisor} (queue +
+  `resumeInterrupted()` + heartbeat) plus the resumable orchestrator
+  (checkpoint + `resume`). It is pull-based (`drain()`/`heartbeat()`) and
+  timer-free; a host wires it to a long-lived loop or cron.
 
 ### CLI/TUI
 - `omakase run` uses real installed agents by default (it will spend real model
@@ -57,17 +58,16 @@ where the edges are and what would deepen each layer.
 2. **Codegraph depth**: symbol-level edges, call graphs, and a watch-mode that
    feeds incremental `update()` from a file watcher (path-alias resolution is
    done).
-3. **Supervisor daemon**: a long-running process that owns `RunStore`, restarts
-   interrupted runs, and exposes heartbeat/health.
-4. **Skill-aware planning**: let selected skills shape the plan, not just inject
-   prompt context.
+3. **Host integrations**: an `omakase serve`/cron wrapper around the
+   {@link Supervisor}, and an in-TUI text input for composing new tasks.
 
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
 `refreshDetection()`), `--offline`/`--agent`, a token/cost budget (`budget` /
-`--max-tokens` / `--max-cost`), atomic checkpoint writes, the 14 adversarial-review
-fixes, **cross-run persisted knowledge** (`KnowledgeStore` /
+`--max-tokens` / `--max-cost`), atomic checkpoint writes, unique run ids, the 14
+adversarial-review fixes, **cross-run persisted knowledge** (`KnowledgeStore` /
 `projectKnowledgeStore` under `.omakase/`), **structured per-criterion review**
 (`acceptanceCriteria` + `parseStructuredReview`), **live MCP injection** (three
-strategies via `applyMcpInjection`), and **codegraph tsconfig path-alias
-resolution** (`loadTsconfigAliases`).
+strategies via `applyMcpInjection`), **codegraph tsconfig path-alias
+resolution** (`loadTsconfigAliases`), the **Supervisor daemon** (queue +
+`resumeInterrupted()` + heartbeat), and **skill-aware planning**.
