@@ -44,6 +44,8 @@ export class Supervisor {
   private readonly resumeQueue: string[] = [];
   private readonly active = new Map<string, RunHandle>();
   private readonly completed: Array<{ id: string; status: RunStatus }> = [];
+  /** Run ids this supervisor has already taken responsibility for (active, queued to resume, or done) — never resume them again. */
+  private readonly handled = new Set<string>();
   private state: SupervisorState = 'idle';
   private lastHeartbeatAt = 0;
   private readonly clock: () => number;
@@ -57,13 +59,22 @@ export class Supervisor {
     return this;
   }
 
-  /** Scan the store for non-terminal runs and queue them to resume. */
+  /**
+   * Scan the store for non-terminal runs and queue them to resume. Runs this
+   * supervisor is already driving or has already handled (active, queued, or
+   * completed) are skipped, so a live run is never double-resumed and a
+   * repeatedly-`incomplete` run is not re-queued every cycle (no livelock).
+   */
   async resumeInterrupted(): Promise<string[]> {
     const ids = await this.options.store.list();
     const toResume: string[] = [];
     for (const id of ids) {
+      if (this.handled.has(id) || this.active.has(id) || this.resumeQueue.includes(id)) continue;
       const record = await this.options.store.load(id);
-      if (record && RESUMABLE_STATUSES.includes(record.status)) toResume.push(id);
+      if (record && RESUMABLE_STATUSES.includes(record.status)) {
+        this.handled.add(id);
+        toResume.push(id);
+      }
     }
     this.resumeQueue.push(...toResume);
     return toResume;
@@ -95,6 +106,7 @@ export class Supervisor {
   }
 
   private async track(handle: RunHandle): Promise<void> {
+    this.handled.add(handle.id);
     this.active.set(handle.id, handle);
     this.heartbeat();
     try {

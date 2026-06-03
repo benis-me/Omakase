@@ -195,6 +195,7 @@ class RunController implements RunHandle {
   private available: DetectedAgent[] = [];
 
   private status: RunStatus = 'pending';
+  private finished = false;
   private paused = false;
   private cancelled = false;
   private pauseGate: Deferred | null = null;
@@ -244,6 +245,14 @@ class RunController implements RunHandle {
       this.inbox = Inbox.restore(resumeFrom.inbox, { clock: this.clock });
       this.eventLog.push(...resumeFrom.events);
       this.checkpointSeq = resumeFrom.checkpointSeq;
+      // Carry spend across resume so the budget ceiling is cumulative, not reset.
+      this.spentTokens = resumeFrom.spentTokens ?? 0;
+      this.spentCostUsd = resumeFrom.spentCostUsd ?? 0;
+      if (this.budget) {
+        const overTokens = this.budget.maxTokens != null && this.spentTokens >= this.budget.maxTokens;
+        const overCost = this.budget.maxCostUsd != null && this.spentCostUsd >= this.budget.maxCostUsd;
+        this.budgetExhausted = overTokens || overCost;
+      }
     } else {
       this.ids = options.idGenerator ?? createIdGenerator();
       // A caller-supplied runId (the Orchestrator allocates a unique one per
@@ -454,6 +463,7 @@ class RunController implements RunHandle {
         tags: ['run', status],
         source: `run:${this.id}`,
       });
+      this.finished = true;
       this.emit({ type: 'run-finished', status, summary });
       await this.store.save(this.buildRecord(status, summary));
       await this.persistKnowledge();
@@ -463,6 +473,7 @@ class RunController implements RunHandle {
       this.emit({ type: 'error', phase: 'run', message });
       await this.hooks.emit('onError', { error: err, phase: 'run' }).catch(() => undefined);
       this.status = 'failed';
+      this.finished = true;
       this.emit({ type: 'run-finished', status: 'failed', summary: message });
       await this.store.save(this.buildRecord('failed', message)).catch(() => undefined);
       return this.buildResult('failed', message);
@@ -500,19 +511,32 @@ class RunController implements RunHandle {
   /** Run the ready tasks of one iteration with bounded concurrency. */
   private async runBatch(tasks: TaskNode[]): Promise<void> {
     let next = 0;
+    let laneError: unknown;
     const worker = async (): Promise<void> => {
-      while (next < tasks.length && !this.cancelled && !this.budgetExhausted) {
+      while (next < tasks.length && !this.cancelled && !this.budgetExhausted && laneError === undefined) {
         const task = tasks[next];
         next += 1;
         if (!task) break;
         await this.waitIfPaused();
         if (this.cancelled) break;
-        await this.executeTask(task);
-        await this.checkpoint();
+        try {
+          await this.executeTask(task);
+          await this.checkpoint();
+        } catch (err) {
+          // A lane that throws must not orphan its siblings: record the error,
+          // stop scheduling, and abort in-flight runs so every lane settles
+          // before runBatch resolves (no late checkpoint over a terminal record).
+          laneError ??= err;
+          this.cancelled = true;
+          for (const abort of this.activeAborts) abort.abort();
+        }
       }
     };
     const lanes = Math.min(this.maxConcurrency, tasks.length);
+    // Workers never reject (they catch internally), so Promise.all awaits ALL
+    // lanes to completion before we surface the first error.
     await Promise.all(Array.from({ length: lanes }, () => worker()));
+    if (laneError !== undefined) throw laneError;
   }
 
   private async executeTask(task: TaskNode): Promise<void> {
@@ -677,7 +701,14 @@ class RunController implements RunHandle {
   private async persistKnowledge(): Promise<void> {
     if (!this.knowledgeStore) return;
     try {
-      await this.knowledgeStore.saveWiki(this.wiki.toJSON());
+      // Merge against the on-disk wiki (union by entry id, this run's entries
+      // win) rather than overwriting wholesale — otherwise a resumed run, or a
+      // run that started before a sibling wrote, would clobber the shared
+      // cross-run accumulator.
+      const onDisk = await this.knowledgeStore.loadWiki();
+      const byId = new Map((onDisk?.entries ?? []).map((e) => [e.id, e] as const));
+      for (const entry of this.wiki.toJSON().entries) byId.set(entry.id, entry);
+      await this.knowledgeStore.saveWiki({ entries: [...byId.values()] });
       if (this.codegraph) await this.knowledgeStore.saveCodegraph(this.codegraph.toJSON());
     } catch {
       // Best-effort persistence; never fail a run over it.
@@ -710,6 +741,7 @@ class RunController implements RunHandle {
   }
 
   private async checkpoint(): Promise<void> {
+    if (this.finished) return; // never overwrite the terminal record
     this.checkpointSeq += 1;
     this.emit({ type: 'heartbeat', at: this.clock() });
     await this.store.save(this.buildRecord('running', this.computeSummary('running')));
@@ -745,6 +777,8 @@ class RunController implements RunHandle {
       inbox: this.inbox.snapshot(),
       events: this.eventLog,
       summary,
+      spentTokens: this.spentTokens,
+      spentCostUsd: this.spentCostUsd,
       createdAt: this.createdAt,
       updatedAt: now,
       heartbeatAt: now,

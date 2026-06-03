@@ -110,9 +110,10 @@ export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: App
         handleRef.current?.appendUserInput('Reviewer note: keep going and harden edge cases.');
       } else if (input === 'm') {
         // A run's mode is fixed once it starts; only let the user pick a mode
-        // while idle (e.g. the TUI was opened without a task) so the header
-        // never claims a mode the orchestrator isn't actually using.
-        if (view.status === 'idle') {
+        // when no run has been started (gate on the handle, not transient
+        // view.status — run-started arrives a microtask after start()), so the
+        // header never claims a mode the orchestrator isn't actually using.
+        if (!task && handleRef.current === null) {
           setMode((current) => MODES[(MODES.indexOf(current) + 1) % MODES.length]!);
         }
       }

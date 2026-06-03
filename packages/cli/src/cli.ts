@@ -91,6 +91,37 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+interface AgentBudget {
+  agentOverride?: string;
+  budget?: { maxTokens?: number; maxCostUsd?: number };
+  error?: string;
+}
+
+/** Resolve --offline/--agent and --max-tokens/--max-cost, validating numbers. */
+function parseAgentBudget(options: ParsedArgs['options']): AgentBudget {
+  if (options.agent === true) {
+    return { error: '--agent requires an agent id, e.g. --agent claude' };
+  }
+  const agentOverride =
+    typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
+  const budget: { maxTokens?: number; maxCostUsd?: number } = {};
+  const numericFlags = [
+    ['max-tokens', 'maxTokens'],
+    ['max-cost', 'maxCostUsd'],
+  ] as const;
+  for (const [flag, key] of numericFlags) {
+    const raw = options[flag];
+    if (raw === undefined) continue;
+    const n = typeof raw === 'string' ? Number(raw) : Number.NaN;
+    if (!Number.isFinite(n) || n <= 0) {
+      return { error: `--${flag} must be a positive number` };
+    }
+    budget[key] = n;
+  }
+  const hasBudget = budget.maxTokens !== undefined || budget.maxCostUsd !== undefined;
+  return { ...(agentOverride ? { agentOverride } : {}), ...(hasBudget ? { budget } : {}) };
+}
+
 const HELP = `omakase — agent runtime + multi-agent orchestration
 
 Usage:
@@ -149,14 +180,14 @@ export function createCli(deps: CliDeps = {}): Cli {
     const runtime = createRuntime();
     // --offline / --agent <id> force every role onto one agent (the built-in by
     // default), so a run completes with no model calls and no installed CLIs.
-    const agentOverride =
-      typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
-    const budget: { maxTokens?: number; maxCostUsd?: number } = {};
-    if (typeof options['max-tokens'] === 'string') budget.maxTokens = Number(options['max-tokens']);
-    if (typeof options['max-cost'] === 'string') budget.maxCostUsd = Number(options['max-cost']);
-    const hasBudget = Boolean(budget.maxTokens || budget.maxCostUsd);
+    const ab = parseAgentBudget(options);
+    if (ab.error) {
+      error(`omakase run: ${ab.error}`);
+      return 1;
+    }
+    const { agentOverride, budget } = ab;
     const orchestrator =
-      agentOverride || hasBudget
+      agentOverride || budget
         ? new Orchestrator({
             runtime,
             store: new MemoryRunStore(),
@@ -164,7 +195,7 @@ export function createCli(deps: CliDeps = {}): Cli {
             ...(agentOverride
               ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
               : {}),
-            ...(hasBudget ? { budget } : {}),
+            ...(budget ? { budget } : {}),
             ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
           })
         : createOrchestrator(runtime, mode);
@@ -202,27 +233,27 @@ export function createCli(deps: CliDeps = {}): Cli {
     return result.status === 'succeeded' ? 0 : 1;
   }
 
-  function serveConfig(options: ParsedArgs['options']): ServeConfig {
+  function serveConfig(options: ParsedArgs['options'], ab: AgentBudget): ServeConfig {
     const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
-    const agentOverride =
-      typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
-    const budget: { maxTokens?: number; maxCostUsd?: number } = {};
-    if (typeof options['max-tokens'] === 'string') budget.maxTokens = Number(options['max-tokens']);
-    if (typeof options['max-cost'] === 'string') budget.maxCostUsd = Number(options['max-cost']);
     return {
       cwd,
       runsDir: typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs'),
       queueDir: typeof options['queue-dir'] === 'string' ? options['queue-dir'] : path.join(cwd, '.omakase', 'queue'),
       concurrency: Number(options.concurrency) || 1,
       mode: resolveMode(options.mode),
-      ...(agentOverride ? { agentOverride } : {}),
-      ...(budget.maxTokens || budget.maxCostUsd ? { budget } : {}),
+      ...(ab.agentOverride ? { agentOverride: ab.agentOverride } : {}),
+      ...(ab.budget ? { budget: ab.budget } : {}),
       ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
     };
   }
 
   async function serveCommand(tasks: string[], options: ParsedArgs['options']): Promise<number> {
-    const config = serveConfig(options);
+    const ab = parseAgentBudget(options);
+    if (ab.error) {
+      error(`omakase serve: ${ab.error}`);
+      return 1;
+    }
+    const config = serveConfig(options, ab);
     const server = createServer(config, {
       write,
       ...(deps.createRuntime ? { createRuntime: deps.createRuntime } : {}),
@@ -249,15 +280,38 @@ export function createCli(deps: CliDeps = {}): Cli {
 
     const health = await server.cycle();
     write(`serve: processed ${health.completed} run(s)`);
-    const failed = health.runs.filter((r) => r.status !== 'succeeded' && r.status !== 'running');
+    // Only a hard failure is a non-zero exit; 'incomplete' (resumable) and
+    // 'cancelled' are not errors for a queue processor.
+    const failed = health.runs.filter((r) => r.status === 'failed');
     return failed.length > 0 ? 1 : 0;
   }
 
   async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
-    const mode = resolveMode(options.mode);
+    const baseMode = resolveMode(options.mode);
     const cwd = typeof options.cwd === 'string' ? options.cwd : undefined;
+    const ab = parseAgentBudget(options);
+    if (ab.error) {
+      error(`omakase tui: ${ab.error}`);
+      return 1;
+    }
+    const { agentOverride, budget } = ab;
+    const mode = agentOverride ? 'custom' : baseMode;
     const runtime = createRuntime();
-    const orchestrator = createOrchestrator(runtime, mode);
+    // Honor --offline/--agent/--max-tokens/--max-cost here too, so the TUI's
+    // auto-started run uses the requested agent and budget (not the default).
+    const orchestrator =
+      agentOverride || budget
+        ? new Orchestrator({
+            runtime,
+            store: new MemoryRunStore(),
+            defaultMode: mode,
+            ...(agentOverride
+              ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
+              : {}),
+            ...(budget ? { budget } : {}),
+            ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+          })
+        : createOrchestrator(runtime, baseMode);
     const launch =
       deps.launchTui ??
       (async (opts) => {

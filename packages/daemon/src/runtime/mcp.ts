@@ -10,7 +10,7 @@
  * The builders are pure and unit-testable; {@link applyMcpInjection} performs
  * the side effects (env mutation, file write) the spawn layer needs.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeAgentDef } from '../runtimes/types.js';
 
@@ -34,8 +34,10 @@ export function buildClaudeMcpJson(
 ): { mcpServers: Record<string, unknown> } {
   const mcpServers: Record<string, unknown> = {};
   for (const s of servers) {
+    // Remote (http/sse) servers carry credentials via `headers`, not `env`, so
+    // `env` is only meaningful for stdio servers.
     mcpServers[s.name] = s.url
-      ? { type: s.type ?? 'http', url: s.url, ...(s.env ? { env: s.env } : {}) }
+      ? { type: s.type ?? 'http', url: s.url }
       : { command: s.command ?? '', args: s.args ?? [], ...(s.env ? { env: s.env } : {}) };
   }
   return { mcpServers };
@@ -91,6 +93,8 @@ export interface ApplyMcpInjectionContext {
   env: Record<string, string | undefined>;
   /** Override the file writer (tests). Defaults to writing under cwd. */
   writeProjectFile?: (filePath: string, content: string) => Promise<void>;
+  /** Override the file reader (tests). Returns null if absent. */
+  readProjectFile?: (filePath: string) => Promise<string | null>;
 }
 
 export interface ApplyMcpInjectionResult {
@@ -101,6 +105,14 @@ export interface ApplyMcpInjectionResult {
 async function defaultWrite(filePath: string, content: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, 'utf8');
+}
+
+async function defaultRead(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -118,8 +130,28 @@ export async function applyMcpInjection(
     case 'claude-mcp-json': {
       if (!ctx.cwd) return { env: ctx.env, wroteFiles: [] };
       const filePath = path.join(ctx.cwd, '.mcp.json');
+      const read = ctx.readProjectFile ?? defaultRead;
       const write = ctx.writeProjectFile ?? defaultWrite;
-      await write(filePath, JSON.stringify(buildClaudeMcpJson(ctx.servers), null, 2));
+      // Merge into any existing .mcp.json rather than clobbering the user's own
+      // servers; our injected servers win on a name collision.
+      let existing: { mcpServers?: Record<string, unknown> } & Record<string, unknown> = {};
+      const raw = await read(filePath);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') existing = parsed;
+        } catch {
+          /* malformed existing file — fall back to writing fresh */
+        }
+      }
+      const merged = {
+        ...existing,
+        mcpServers: {
+          ...(existing.mcpServers ?? {}),
+          ...buildClaudeMcpJson(ctx.servers).mcpServers,
+        },
+      };
+      await write(filePath, JSON.stringify(merged, null, 2));
       return { env: ctx.env, wroteFiles: [filePath] };
     }
     case 'opencode-env-content':

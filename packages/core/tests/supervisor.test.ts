@@ -85,6 +85,29 @@ describe('Supervisor', () => {
     expect(health.runs[0]?.status).toBe('succeeded');
   });
 
+  it('does not re-resume a run it has already handled (no double-resume / livelock)', async () => {
+    const store = new MemoryRunStore();
+    const runtime = scriptedRuntime();
+    const chained: Planner = {
+      plan: (ctx) => {
+        const g = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+        const w1 = g.addTask({ title: 'w1', role: 'worker' });
+        const w2 = g.addTask({ title: 'w2', role: 'worker', dependsOn: [w1.id] });
+        g.addTask({ title: 'review', role: 'reviewer', dependsOn: [w2.id] });
+        g.refreshReadiness();
+        return g;
+      },
+    };
+    const crashed = orchestrator(runtime, store, chained, { maxIterations: 1 });
+    const result = await crashed.start({ prompt: 'do work' }).result;
+    expect(result.status).toBe('incomplete');
+
+    const sup = new Supervisor({ orchestrator: orchestrator(runtime, store, chained), store, clock: () => 42 });
+    expect(await sup.resumeInterrupted()).toEqual([result.id]);
+    // A second scan (e.g. the next --watch cycle) must NOT re-queue the same id.
+    expect(await sup.resumeInterrupted()).toEqual([]);
+  });
+
   it('does not process work while paused, and resumes after', async () => {
     const store = new MemoryRunStore();
     const sup = new Supervisor({

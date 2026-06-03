@@ -312,6 +312,61 @@ describe('runtime: error + lifecycle handling', () => {
     expect(versionProbes).toBe(2); // cache cleared → re-probed
   });
 
+  it('keys the detection cache on env so a PATH change re-probes', async () => {
+    let versionProbes = 0;
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) {
+        versionProbes += 1;
+        return answerProbe(ctrl);
+      }
+      if (ctrl.request.args.includes('--help')) return answerProbe(ctrl);
+      ctrl.onStdinEnd(() => {
+        ctrl.emitStdoutJson({ type: 'result', subtype: 'success' });
+        ctrl.exit(0);
+      });
+    });
+    const binDir2 = mkdtempSync(path.join(os.tmpdir(), 'omakase-exec-bin2-'));
+    writeFileSync(path.join(binDir2, 'claude'), '#!/bin/sh\n');
+    chmodSync(path.join(binDir2, 'claude'), 0o755);
+    const runtime = createAgentRuntime({
+      registry: createRegistry(),
+      transport,
+      detection: { transport, includeWellKnownPathDirs: false, home },
+      detectionCacheTtlMs: 60_000,
+      now: () => 1,
+    });
+    await runtime.runAgent({ agentId: 'claude', prompt: 'a', env: { PATH: binDir } });
+    await runtime.runAgent({ agentId: 'claude', prompt: 'b', env: { PATH: binDir } });
+    expect(versionProbes).toBe(1); // same PATH → cached
+    await runtime.runAgent({ agentId: 'claude', prompt: 'c', env: { PATH: binDir2 } });
+    expect(versionProbes).toBe(2); // different PATH → re-probed
+  });
+
+  it('never caches a null resolution, so installing an agent mid-TTL takes effect', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-exec-late-'));
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) {
+        ctrl.emitStdout('1.0\n');
+        ctrl.exit(0);
+        return;
+      }
+      ctrl.onStdinEnd(() => ctrl.exit(0));
+    });
+    const runtime = createAgentRuntime({
+      registry: createRegistry(),
+      transport,
+      detection: { transport, includeWellKnownPathDirs: false, home },
+      detectionCacheTtlMs: 60_000,
+      now: () => 1,
+    });
+    const first = await runtime.runAgent({ agentId: 'gemini', prompt: 'a', env: { PATH: dir } });
+    expect(first.status).toBe('error'); // not installed yet (null not cached)
+    writeFileSync(path.join(dir, 'gemini'), '#!/bin/sh\n');
+    chmodSync(path.join(dir, 'gemini'), 0o755);
+    const second = await runtime.runAgent({ agentId: 'gemini', prompt: 'b', env: { PATH: dir } });
+    expect(second.status).toBe('completed'); // re-probed, now resolves
+  });
+
   it('cancels a run when the abort signal fires', async () => {
     const transport = createFakeTransport((ctrl) => {
       if (isProbe(ctrl)) return answerProbe(ctrl);

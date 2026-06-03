@@ -103,9 +103,16 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
         continue;
       }
       if (!content) continue;
-      supervisor.enqueue({ prompt: content, cwd: config.cwd });
+      // Claim the file (move it) BEFORE enqueuing, so a rename failure can't
+      // leave the file in place to be re-ingested (double-submitted) next cycle.
       await mkdir(processedDir, { recursive: true });
-      await rename(full, path.join(processedDir, entry.name)).catch(() => undefined);
+      try {
+        await rename(full, path.join(processedDir, entry.name));
+      } catch {
+        write(`serve: could not claim queue file ${entry.name}; leaving it for next cycle`);
+        continue;
+      }
+      supervisor.enqueue({ prompt: content, cwd: config.cwd });
       enqueued.push(entry.name);
     }
     return enqueued;

@@ -51,6 +51,29 @@ describe('applyMcpInjection', () => {
     expect(JSON.parse(writes[0]!.content).mcpServers.fs.command).toBe('mcp-fs');
   });
 
+  it('merges into an existing .mcp.json instead of clobbering it', async () => {
+    let written = '';
+    await applyMcpInjection({
+      strategy: 'claude-mcp-json',
+      servers: [fs],
+      cwd: '/proj',
+      env: {},
+      readProjectFile: async () =>
+        JSON.stringify({ mcpServers: { userSrv: { command: 'user-srv' } }, otherKey: 1 }),
+      writeProjectFile: async (_p, c) => void (written = c),
+    });
+    const out = JSON.parse(written);
+    expect(out.mcpServers.userSrv.command).toBe('user-srv'); // user server preserved
+    expect(out.mcpServers.fs.command).toBe('mcp-fs'); // injected server added
+    expect(out.otherKey).toBe(1); // other top-level keys preserved
+  });
+
+  it('omits env on remote servers in both builders', () => {
+    expect((buildClaudeMcpJson([remote]).mcpServers.web as Record<string, unknown>).env).toBeUndefined();
+    const oc = JSON.parse(buildOpenCodeConfigContent([{ ...remote, env: { K: 'v' } }]));
+    expect(oc.mcp.web.environment).toBeUndefined();
+  });
+
   it('is a no-op for acp-merge on the direct-spawn path and when no servers', async () => {
     expect((await applyMcpInjection({ strategy: 'acp-merge', servers: [fs], env: { A: '1' } })).env).toEqual({ A: '1' });
     expect((await applyMcpInjection({ strategy: 'claude-mcp-json', servers: [], env: { A: '1' } })).wroteFiles).toEqual([]);

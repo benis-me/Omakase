@@ -92,6 +92,20 @@ describe('omakase run', () => {
     expect(err()).toMatch(/task description is required/);
   });
 
+  it('rejects a non-numeric --max-tokens instead of silently dropping the budget', async () => {
+    const { cli, err } = harness();
+    const code = await cli.main(['run', 'do a thing', '--max-tokens', '5k']);
+    expect(code).toBe(1);
+    expect(err()).toMatch(/max-tokens must be a positive number/);
+  });
+
+  it('rejects --agent without a value', async () => {
+    const { cli, err } = harness();
+    const code = await cli.main(['run', 'do a thing', '--agent']);
+    expect(code).toBe(1);
+    expect(err()).toMatch(/--agent requires an agent id/);
+  });
+
   it('emits one JSON object per event with --json', async () => {
     const { cli, out } = harness();
     await cli.main(['run', 'summarize', '--json']);
@@ -126,6 +140,21 @@ describe('omakase tui', () => {
     const code = await cli.main(['tui', 'do a thing', '--cwd', '/some/dir', '--mode', 'max-power']);
     expect(code).toBe(0);
     expect(captured).toMatchObject({ task: 'do a thing', cwd: '/some/dir', mode: 'max-power' });
+  });
+
+  it('honors --offline by forwarding a custom mode (not the default agent)', async () => {
+    let captured: { mode?: string } = {};
+    const cli = createCli({
+      write: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      launchTui: async (opts) => {
+        captured = { mode: opts.mode };
+      },
+    });
+    const code = await cli.main(['tui', 'do a thing', '--offline']);
+    expect(code).toBe(0);
+    expect(captured.mode).toBe('custom');
   });
 });
 

@@ -479,11 +479,19 @@ export async function loadTsconfigAliases(
     );
     const out: Record<string, string[]> = {};
     for (const [pattern, targets] of Object.entries(paths)) {
+      const toRel = (q: string): string =>
+        path.relative(root, path.resolve(baseDir, q)).split(path.sep).join('/');
       out[pattern] = targets.map((target) => {
-        const hasStar = target.includes('*');
-        const abs = path.resolve(baseDir, target.replace('*', ' '));
-        const rel = path.relative(root, abs).split(path.sep).join('/');
-        return hasStar ? rel.replace(' ', '*') : rel;
+        const starIdx = target.indexOf('*');
+        // Resolve only the literal prefix and re-attach the wildcard; never run
+        // the '*' through path resolution.
+        if (starIdx === -1) return toRel(target);
+        const prefix = target.slice(0, starIdx);
+        const suffix = target.slice(starIdx + 1);
+        const trailingSep = /[/\\]$/.test(prefix);
+        const relPrefix = prefix.replace(/[/\\]+$/, '') === '' ? toRel('.') : toRel(prefix);
+        const sep = trailingSep && relPrefix && !relPrefix.endsWith('/') ? '/' : '';
+        return `${relPrefix}${sep}*${suffix}`;
       });
     }
     return out;

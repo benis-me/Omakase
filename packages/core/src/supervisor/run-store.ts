@@ -24,6 +24,9 @@ export interface RunRecord {
   inbox: InboxItemSnapshot[];
   events: OrchestratorEvent[];
   summary: string;
+  /** Cumulative token/cost spend, persisted so a budget ceiling survives resume. */
+  spentTokens?: number;
+  spentCostUsd?: number;
   createdAt: number;
   updatedAt: number;
   heartbeatAt: number;

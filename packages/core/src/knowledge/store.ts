@@ -24,10 +24,19 @@ function isWikiSnapshot(value: unknown): value is WikiSnapshot {
 }
 
 function isCodegraphSnapshot(value: unknown): value is CodeGraphSnapshot {
-  return (
-    Boolean(value) &&
-    typeof (value as CodeGraphSnapshot).root === 'string' &&
-    Array.isArray((value as CodeGraphSnapshot).nodes)
+  if (!value || typeof value !== 'object') return false;
+  const snap = value as CodeGraphSnapshot;
+  if (typeof snap.root !== 'string' || !Array.isArray(snap.nodes)) return false;
+  // Validate node element shape too, so a well-formed-JSON-but-wrong-shape file
+  // (e.g. from an external codegraph producer) can't pass and then crash
+  // dependencies()/cycles()/stats() on undefined arrays at query time.
+  return snap.nodes.every(
+    (n) =>
+      Boolean(n) &&
+      typeof (n as { path?: unknown }).path === 'string' &&
+      Array.isArray((n as { imports?: unknown }).imports) &&
+      Array.isArray((n as { exports?: unknown }).exports) &&
+      Array.isArray((n as { symbols?: unknown }).symbols),
   );
 }
 

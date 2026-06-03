@@ -92,6 +92,19 @@ describe('CodeGraph', () => {
     expect(graph.dependencies('src/a.ts')).toEqual(['pkg/b.ts']);
   });
 
+  it('resolves aliases whose target path contains a space', async () => {
+    write('src/a.ts', `import '@app/b';\n`);
+    write('my pkg/b.ts', `export const b = 1;\n`);
+    const graph = await CodeGraph.scan({ root, aliases: { '@app/*': ['my pkg/*'] } });
+    expect(graph.dependencies('src/a.ts')).toEqual(['my pkg/b.ts']);
+  });
+
+  it('loadTsconfigAliases preserves wildcard targets containing spaces', async () => {
+    write('tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@app/*': ['my pkg/*'] } } }));
+    const aliases = await loadTsconfigAliases(path.join(root, 'tsconfig.json'), root);
+    expect(aliases['@app/*']).toEqual(['my pkg/*']);
+  });
+
   it('handles a very deep import chain without overflowing the stack', () => {
     // A linear chain longer than the JS recursion limit (~4k) — the old
     // recursive cycles() crashed here; the iterative one must not.

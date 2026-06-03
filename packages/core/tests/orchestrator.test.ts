@@ -219,6 +219,40 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(result.plan.tasks.find((t) => t.role === 'reviewer')?.status).not.toBe('succeeded');
   });
 
+  it('carries budget spend across resume so the ceiling is not reset', async () => {
+    const store = new MemoryRunStore();
+    let workerRuns = 0;
+    const exec = createScriptedAgent((input) => {
+      if (String(input.metadata?.role) !== 'reviewer') workerRuns += 1;
+      return [
+        { type: 'text_delta', delta: 'done' },
+        { type: 'usage', usage: { inputTokens: 50, outputTokens: 50 } },
+      ];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const opts = {
+      runtime,
+      router: complexRouter,
+      planner: new RulePlanner(),
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store,
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      maxConcurrency: 1,
+      budget: { maxTokens: 150 },
+    };
+    const first = await new Orchestrator(opts).start({ prompt: '- task a\n- task b' }).result;
+    expect(first.status).toBe('incomplete');
+    expect(first.spentTokens).toBeGreaterThanOrEqual(150);
+    const runsAfterFirst = workerRuns;
+
+    const handle = await new Orchestrator(opts).resume(first.id);
+    const second = await handle!.result;
+    expect(second.spentTokens).toBeGreaterThanOrEqual(150);
+    expect(workerRuns).toBe(runsAfterFirst); // resume spent nothing more
+    expect(second.status).toBe('incomplete');
+  });
+
   it('supports cancel', async () => {
     const runtime = scriptedRuntime(() => 'done');
     const orch = new Orchestrator(baseOptions(runtime, new RulePlanner()));
