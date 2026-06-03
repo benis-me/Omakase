@@ -50,6 +50,23 @@ describe('createServer', () => {
     expect(existsSync(path.join(queue, 't1.txt'))).toBe(false);
   });
 
+  it('re-ingests a claimed queue file that never produced a run record', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-recover-'));
+    const processed = path.join(cwd, '.omakase', 'queue', 'processed');
+    mkdirSync(processed, { recursive: true });
+    // Simulate a crash AFTER the claim-rename but BEFORE the first checkpoint:
+    // the file sits in processed/ with no corresponding run record.
+    writeFileSync(path.join(processed, 'orphan.txt'), 'summarize the project');
+
+    const server = createServer(config(cwd), { write: () => {} });
+    const health = await server.cycle();
+    expect(health.completed).toBe(1); // recovered and ran the orphaned task
+
+    // A second cycle must NOT re-run it (a run record now correlates the file).
+    const health2 = await server.cycle();
+    expect(health2.completed).toBe(1);
+  });
+
   it('resumes a run a previous process left unfinished', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-resume-'));
     const runsDir = path.join(cwd, '.omakase', 'runs');

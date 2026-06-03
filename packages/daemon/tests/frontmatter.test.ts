@@ -67,4 +67,33 @@ describe('parseFrontmatter', () => {
     expect(data).toEqual({});
     expect(body).toBe('just a body\n');
   });
+
+  it('parses tab-indented nested maps and lists (does not flatten them)', () => {
+    const src = [
+      '---',
+      'omakase:',
+      '\troles:',
+      '\t\t- planner',
+      '\t\t- reviewer',
+      '\tcategory: workflow',
+      '---',
+      'body',
+    ].join('\n');
+    const { data } = parseFrontmatter(src);
+    expect(data.omakase).toEqual({ roles: ['planner', 'reviewer'], category: 'workflow' });
+  });
+
+  it('does not slice content off block-scalar lines shallower than the first', () => {
+    const src = [
+      '---',
+      'text: |',
+      '      deeply indented first',
+      '   less indented',
+      '---',
+      'body',
+    ].join('\n');
+    const { data } = parseFrontmatter(src);
+    expect(data.text).toContain('less indented'); // not 's indented'
+    expect(data.text).toContain('deeply indented first');
+  });
 });

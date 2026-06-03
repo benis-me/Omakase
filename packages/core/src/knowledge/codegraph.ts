@@ -103,7 +103,10 @@ function parseImportSpecifiers(clause: string): string[] {
   const braces = /\{([^}]*)\}/.exec(clause);
   if (braces) {
     for (const part of braces[1]!.split(',')) {
-      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      let p = part.trim();
+      if (!p || p === 'type') continue; // `import { type } from ...` (degenerate)
+      if (p.startsWith('type ')) p = p.slice(5).trim(); // strip inline `type` modifier
+      const name = p.split(/\s+as\s+/).pop()?.trim();
       if (name) names.push(name);
     }
   }
@@ -153,8 +156,11 @@ function parseExports(content: string): string[] {
   const namedRe = /\bexport\s*\{([^}]*)\}/g;
   for (let m = namedRe.exec(content); m; m = namedRe.exec(content)) {
     for (const part of m[1]!.split(',')) {
-      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
-      if (name && name !== 'type') names.add(name);
+      let p = part.trim();
+      if (!p || p === 'type') continue;
+      if (p.startsWith('type ')) p = p.slice(5).trim(); // strip inline `type` modifier
+      const name = p.split(/\s+as\s+/).pop()?.trim();
+      if (name) names.add(name);
     }
   }
   return [...names];

@@ -24,7 +24,8 @@ export interface FakeProcessController {
   emitStderr(text: string): void;
   /** Emit a single object as a JSONL line on stdout. */
   emitStdoutJson(value: unknown): void;
-  exit(code?: number, signal?: NodeJS.Signals | null): void;
+  /** Settle the process exit. Pass `code: null` with a signal to simulate a signal-kill. */
+  exit(code?: number | null, signal?: NodeJS.Signals | null): void;
   /** Reject the spawn (e.g. simulate ENOENT for a missing binary). */
   failSpawn(error: unknown): void;
   onStdin(listener: (data: string) => void): void;
@@ -78,7 +79,8 @@ export function createFakeTransport(handler: FakeSpawnHandler): FakeTransport {
         emitStdout: (text) => stdout.push(text),
         emitStderr: (text) => stderr.push(text),
         emitStdoutJson: (value) => stdout.push(`${JSON.stringify(value)}\n`),
-        exit: (code = 0, signal = null) => settleExit({ code, signal }),
+        exit: (code: number | null = 0, signal: NodeJS.Signals | null = null) =>
+          settleExit({ code, signal }),
         failSpawn: (error) => {
           if (settled) return;
           settled = true;

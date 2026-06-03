@@ -119,6 +119,29 @@ describe('resolveExecutable', () => {
     );
     expect(r.selectedPath).toBe(path.join(binDir, 'openclaude'));
   });
+
+  it('fails closed when binEnvVar is set but unresolvable (no PATH fallthrough)', () => {
+    // `claude` IS on PATH here, so the only reason to return null is the fix:
+    // a pinned-but-bad override must not silently run a different PATH binary.
+    const r = resolveExecutable(claudeAgentDef, {
+      env: { PATH: binDir, CLAUDE_BIN: '/nonexistent/claude-pinned' },
+      pathDirs: [binDir],
+      home: emptyHome,
+    });
+    expect(r.selectedPath).toBeNull();
+    expect(r.source).toBeNull();
+    expect(r.overrideUnresolved).toBe('/nonexistent/claude-pinned');
+  });
+
+  it('still uses PATH when binEnvVar is unset (empty override does not fail closed)', () => {
+    const r = resolveExecutable(claudeAgentDef, {
+      env: { PATH: binDir },
+      pathDirs: [binDir],
+      home: emptyHome,
+    });
+    expect(r.selectedPath).toBe(path.join(binDir, 'claude'));
+    expect(r.source).toBe('path');
+  });
 });
 
 describe('detectAgents', () => {
@@ -179,6 +202,14 @@ describe('detectAgents', () => {
       detectOpts({ env: { PATH: binDir, ANTHROPIC_API_KEY: 'sk-test' } }),
     );
     expect(ok.authStatus).toBe('ok');
+  });
+
+  it('does not treat ~/.claude.json (a config file) as a credential', async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'omakase-claudehome-'));
+    // A general config file, present even on unauthenticated installs.
+    writeFileSync(path.join(home, '.claude.json'), '{}');
+    const claude = await detectAgent(claudeAgentDef, detectOpts({ home }));
+    expect(claude.authStatus).toBe('missing');
   });
 
   it('treats a 127 exit from the version probe as not invocable', async () => {

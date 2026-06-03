@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent, type AgentRuntime } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
-import { MemoryRunStore } from '../src/supervisor/run-store.js';
+import { MemoryRunStore, type RunRecord } from '../src/supervisor/run-store.js';
 import { Supervisor } from '../src/supervisor/supervisor.js';
 import { createModelPolicy } from '../src/modes/policy.js';
 import { PlanGraph } from '../src/plan/plan-graph.js';
@@ -185,6 +185,41 @@ describe('Supervisor', () => {
     sup.stop();
     const health = await sup.drain();
     expect(health.state).toBe('stopped');
+    expect(health.completed).toBe(0);
+  });
+
+  it('isolates a resume() that throws — one bad run does not wedge drain()', async () => {
+    const store = new MemoryRunStore();
+    const record: RunRecord = {
+      id: 'bad-run',
+      request: { prompt: 'x' },
+      mode: 'normal',
+      status: 'incomplete', // resumable, so resumeInterrupted queues it
+      plan: { tasks: [], seq: 0 },
+      wiki: { entries: [] },
+      inbox: [],
+      events: [],
+      summary: '',
+      createdAt: 0,
+      updatedAt: 0,
+      heartbeatAt: 0,
+      checkpointSeq: 1,
+    };
+    await store.save(record);
+    // An orchestrator whose resume() throws synchronously (as a malformed-record
+    // deserialization would). The supervisor must isolate it.
+    const throwingOrch = {
+      resume: async () => {
+        throw new Error('deserialization blew up');
+      },
+      start: () => {
+        throw new Error('should not be reached');
+      },
+    } as unknown as Orchestrator;
+    const sup = new Supervisor({ orchestrator: throwingOrch, store, clock: () => 5 });
+    expect(await sup.resumeInterrupted()).toEqual(['bad-run']);
+    const health = await sup.drain(); // must resolve, not reject
+    expect(health.state).toBe('idle');
     expect(health.completed).toBe(0);
   });
 

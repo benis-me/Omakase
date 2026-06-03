@@ -156,30 +156,39 @@ export const codexJsonMapper: JsonEventMapper = (raw, state) => {
   if ((obj.type === 'item.completed' || obj.type === 'item.started') && asRecord(obj.item)) {
     const item = asRecord(obj.item)!;
     const it = item.type;
+    // Codex fires BOTH item.started and item.completed for the SAME item id.
+    // Dedup EVERY item kind by id so a single message / reasoning block / tool
+    // call is emitted once; distinct items (different id) are still each emitted.
+    const id = typeof item.id === 'string' ? item.id : undefined;
+    const seenById = id ? (state.emittedItemIds?.has(id) ?? false) : false;
+    const markSeen = (): void => {
+      if (id) (state.emittedItemIds ??= new Set()).add(id);
+    };
     if ((it === 'agent_message' || it === 'assistant_message') && typeof item.text === 'string') {
-      // Codex fires both item.started and item.completed for the SAME message
-      // (same id), each carrying the full text — dedup those — but DISTINCT
-      // messages in one turn (different id) must still each be emitted.
-      const id = typeof item.id === 'string' ? item.id : undefined;
-      const isRepeat = id
-        ? (state.emittedItemIds?.has(id) ?? false)
-        : item.text === state.lastMessageText;
+      // Distinct messages with no id fall back to last-text comparison.
+      const isRepeat = id ? seenById : item.text === state.lastMessageText;
       if (!isRepeat) {
         out.push(...firstTokenStatus(state));
         state.streamedText = true;
         state.lastMessageText = item.text;
-        if (id) (state.emittedItemIds ??= new Set()).add(id);
+        markSeen();
         out.push({ type: 'text_delta', delta: item.text });
       }
     } else if (it === 'reasoning' && typeof item.text === 'string') {
-      out.push({ type: 'thinking_delta', delta: item.text });
+      if (!seenById) {
+        markSeen();
+        out.push({ type: 'thinking_delta', delta: item.text });
+      }
     } else if (it === 'command_execution' || it === 'tool_call') {
-      out.push({
-        type: 'tool_use',
-        id: typeof item.id === 'string' ? item.id : null,
-        name: typeof item.command === 'string' ? item.command : (it as string),
-        input: item.command ?? item.input ?? null,
-      });
+      if (!seenById) {
+        markSeen();
+        out.push({
+          type: 'tool_use',
+          id: id ?? null,
+          name: typeof item.command === 'string' ? item.command : (it as string),
+          input: item.command ?? item.input ?? null,
+        });
+      }
     }
     return out;
   }

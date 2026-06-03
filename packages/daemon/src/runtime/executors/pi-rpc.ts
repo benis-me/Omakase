@@ -118,11 +118,20 @@ async function piRpcDriver(
     if (ended) proc.kill('SIGTERM');
 
     const exit = await exited;
-    if (timedOut) throw new AgentTimeoutError(input.timeoutMs!);
+    // Only a genuine timeout (turn never ended) is a timeout. A turn that ended
+    // cleanly must not be discarded just because the unref'd kill-grace/timeout
+    // timer happened to fire while we awaited the child's exit.
+    if (timedOut && !ended) throw new AgentTimeoutError(input.timeoutMs!);
     if (rejected) return 'error';
     if (ac.signal.aborted && !ended) return 'cancelled';
     if (!ended && exit.code !== 0 && exit.code !== null) {
       push({ type: 'error', message: `Pi exited with code ${exit.code}` });
+      return 'error';
+    }
+    // Killed by an external signal before the turn ended (crash/OOM) — not the
+    // post-turn SIGTERM we send on line 118, which only fires when ended=true.
+    if (!ended && exit.code === null && exit.signal) {
+      push({ type: 'error', message: `Pi terminated by signal ${exit.signal}` });
       return 'error';
     }
     return 'completed';

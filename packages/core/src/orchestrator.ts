@@ -240,10 +240,17 @@ class RunController implements RunHandle {
       this.id = resumeFrom.id;
       this.ids = options.idGenerator ?? createIdGenerator(resumeFrom.checkpointSeq + 1000);
       this.routeDecision = resumeFrom.routeDecision;
-      this.wiki = ProjectWiki.fromJSON(resumeFrom.wiki);
+      this.wiki = ProjectWiki.fromJSON(resumeFrom.wiki, { clock: this.clock });
       this.graph = PlanGraph.fromSnapshot(resumeFrom.plan, { clock: this.clock });
       this.inbox = Inbox.restore(resumeFrom.inbox, { clock: this.clock });
-      this.eventLog.push(...resumeFrom.events);
+      // Drop the interrupted run's terminal run-finished marker(s) so the
+      // resumed run's log stays a single coherent sequence (one run-started,
+      // one trailing run-finished) instead of stacking a second pair.
+      const restored = [...resumeFrom.events];
+      while (restored.length > 0 && restored[restored.length - 1]?.type === 'run-finished') {
+        restored.pop();
+      }
+      this.eventLog.push(...restored);
       this.checkpointSeq = resumeFrom.checkpointSeq;
       // Carry spend across resume so the budget ceiling is cumulative, not reset.
       this.spentTokens = resumeFrom.spentTokens ?? 0;
@@ -413,7 +420,12 @@ class RunController implements RunHandle {
   private async run(): Promise<RunResult> {
     try {
       this.status = 'running';
-      this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
+      // Don't re-emit run-started when resuming: the restored log already opens
+      // with the original run-started, and a second one (after the prior events)
+      // would make the persisted sequence self-contradictory.
+      if (!this.resuming) {
+        this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
+      }
       this.available = await this.detectAvailable();
       if (!this.resuming) await this.loadPersistedKnowledge();
 
@@ -465,10 +477,20 @@ class RunController implements RunHandle {
       });
       this.finished = true;
       this.emit({ type: 'run-finished', status, summary });
-      await this.store.save(this.buildRecord(status, summary));
+      // Terminal persistence is best-effort: a disk error (ENOSPC, EACCES, a
+      // failed rename) when saving the final record must NOT flip an
+      // already-decided outcome (e.g. 'succeeded') to 'failed' or emit a second,
+      // contradictory run-finished. persistKnowledge is already self-guarding.
+      await this.store.save(this.buildRecord(status, summary)).catch(() => undefined);
       await this.persistKnowledge();
       return this.buildResult(status, summary);
     } catch (err) {
+      // A run that already reached its terminal state must never be re-finished
+      // as 'failed' by a late error (e.g. from teardown): that would double-emit
+      // run-finished and return the wrong status to the caller.
+      if (this.finished) {
+        return this.buildResult(this.status, this.computeSummary(this.status));
+      }
       const message = errorMessage(err);
       this.emit({ type: 'error', phase: 'run', message });
       await this.hooks.emit('onError', { error: err, phase: 'run' }).catch(() => undefined);
@@ -579,6 +601,17 @@ class RunController implements RunHandle {
 
     this.wiki.recordTask(task.id, task.title, result.status, result.text.slice(0, 500));
     this.emitKnowledge();
+
+    // The task's run was aborted — a sibling lane failed (runBatch aborts its
+    // peers) or the whole run was cancelled. That is NOT a verdict: don't emit a
+    // contradictory task-finished{success:false}, don't burn a retry attempt,
+    // and don't mark it failed. Refund the attempt and record an honest
+    // 'cancelled' status so the persisted plan isn't corrupted.
+    if (this.cancelled || abort.signal.aborted || result.status === 'cancelled') {
+      this.graph.decrementAttempts(task.id);
+      this.graph.setStatus(task.id, 'cancelled');
+      return;
+    }
 
     const summary = (result.text || result.error || '').slice(0, 300);
     const ranCleanly = result.status === 'completed' && !result.error;

@@ -146,6 +146,16 @@ async function spawnDriver(
       });
       return 'error';
     }
+    // Killed by an external signal we didn't send (SIGKILL/SIGSEGV, OOM): code is
+    // null with a signal set. That is a failure, not a clean completion.
+    if (exit.code === null && exit.signal) {
+      const detail = stderrText.trim().slice(0, 500);
+      push({
+        type: 'error',
+        message: `${def.name} terminated by signal ${exit.signal}${detail ? `: ${detail}` : ''}`,
+      });
+      return 'error';
+    }
     return 'completed';
   } catch (err) {
     // Any abnormal exit from the read loop (e.g. a non-EPIPE stdin error that

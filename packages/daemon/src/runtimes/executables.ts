@@ -26,6 +26,13 @@ export interface ExecutableResolution {
   binEnvVar: string | undefined;
   /** Binary names that were searched, for diagnostics. */
   probedBins: string[];
+  /**
+   * Set when `binEnvVar` was provided but pointed at something that didn't
+   * resolve to an executable. The agent is reported unavailable (rather than
+   * silently substituting a PATH binary) so a clear "override set but not
+   * executable" state is surfaceable.
+   */
+  overrideUnresolved?: string;
 }
 
 function expandHome(value: string, home: string): string {
@@ -102,12 +109,23 @@ export function resolveExecutable(
   ctx: ExecutableResolveContext,
 ): ExecutableResolution {
   const binEnvVar = def.binEnvVar;
-  const override = binEnvVar
-    ? resolveAbsoluteOverride(ctx.env[binEnvVar], ctx)
-    : null;
+  const overrideRaw = binEnvVar ? ctx.env[binEnvVar] : undefined;
+  const override = overrideRaw ? resolveAbsoluteOverride(overrideRaw, ctx) : null;
   const probedBins = [def.bin, ...(def.fallbackBins ?? [])];
   if (override) {
     return { selectedPath: override, source: 'env-override', binEnvVar, probedBins };
+  }
+  // An operator who pinned a binary via binEnvVar but whose value doesn't
+  // resolve must NOT silently fall through to a PATH binary (that would run a
+  // different agent than pinned). Fail closed and surface the bad override.
+  if (typeof overrideRaw === 'string' && overrideRaw.trim() !== '') {
+    return {
+      selectedPath: null,
+      source: null,
+      binEnvVar,
+      probedBins,
+      overrideUnresolved: overrideRaw,
+    };
   }
   for (const bin of probedBins) {
     const resolved = resolveOnPath(bin, ctx);

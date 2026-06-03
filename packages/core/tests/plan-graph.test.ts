@@ -28,6 +28,37 @@ describe('PlanGraph', () => {
     expect(g.get(b.id)?.status).toBe('blocked');
   });
 
+  it('propagates blocking transitively down a dependency chain', () => {
+    const g = fixedGraph();
+    const a = g.addTask({ title: 'A' });
+    const b = g.addTask({ title: 'B', dependsOn: [a.id] });
+    const c = g.addTask({ title: 'C', dependsOn: [b.id] });
+    g.setStatus(a.id, 'failed');
+    g.refreshReadiness();
+    expect(g.get(b.id)?.status).toBe('blocked'); // direct
+    expect(g.get(c.id)?.status).toBe('blocked'); // transitive: its dep B is blocked
+  });
+
+  it('propagates blocking to a fixpoint regardless of insertion order', () => {
+    const g = fixedGraph();
+    // Insert the deepest task FIRST: a single forward pass would leave it stuck.
+    g.addTask({ title: 'C', id: 'c', dependsOn: ['b'] });
+    g.addTask({ title: 'B', id: 'b', dependsOn: ['a'] });
+    g.addTask({ title: 'A', id: 'a' });
+    g.setStatus('a', 'failed');
+    g.refreshReadiness();
+    expect(g.get('b')?.status).toBe('blocked');
+    expect(g.get('c')?.status).toBe('blocked');
+  });
+
+  it('decrementAttempts refunds an attempt without going negative', () => {
+    const g = fixedGraph();
+    const a = g.addTask({ title: 'A' });
+    g.incrementAttempts(a.id);
+    expect(g.decrementAttempts(a.id)).toBe(0);
+    expect(g.decrementAttempts(a.id)).toBe(0); // clamped at 0
+  });
+
   it('emits status-change events', () => {
     const changes: Array<{ from: string; to: string }> = [];
     const g = new PlanGraph({

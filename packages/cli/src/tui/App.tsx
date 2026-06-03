@@ -84,6 +84,11 @@ export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: App
           }
         } catch {
           /* stream ended */
+        } finally {
+          // Without a raw-mode TTY (piped stdin / CI) there is no way to press
+          // [q], so the app would hang forever after the run ends. Exit once the
+          // event stream completes. Interactive sessions stay open for review.
+          if (active && !isRawModeSupported) exit();
         }
       })();
     }

@@ -155,6 +155,55 @@ describe('codexJsonMapper', () => {
     );
     expect(fold(events).text).toBe('DoneDone');
   });
+
+  it('dedupes a codex tool_call echoed across item.started and item.completed', () => {
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.started', item: { id: 'c1', type: 'command_execution', command: 'ls' } },
+        state,
+      ),
+    );
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.completed', item: { id: 'c1', type: 'command_execution', command: 'ls' } },
+        state,
+      ),
+    );
+    expect(events.filter((e) => e.type === 'tool_use')).toHaveLength(1);
+    expect(fold(events).toolCalls).toHaveLength(1);
+  });
+
+  it('dedupes codex reasoning echoed across item.started and item.completed', () => {
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.started', item: { id: 'r1', type: 'reasoning', text: 'thinking hard' } },
+        state,
+      ),
+    );
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.completed', item: { id: 'r1', type: 'reasoning', text: 'thinking hard' } },
+        state,
+      ),
+    );
+    expect(events.filter((e) => e.type === 'thinking_delta')).toHaveLength(1);
+  });
+
+  it('keeps distinct codex tool calls with different ids', () => {
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(
+      ...codexJsonMapper({ type: 'item.completed', item: { id: 'c1', type: 'tool_call', command: 'ls' } }, state),
+    );
+    events.push(
+      ...codexJsonMapper({ type: 'item.completed', item: { id: 'c2', type: 'tool_call', command: 'pwd' } }, state),
+    );
+    expect(events.filter((e) => e.type === 'tool_use')).toHaveLength(2);
+  });
 });
 
 describe('mapPiRpcEvent', () => {
@@ -194,5 +243,17 @@ describe('mapPiRpcEvent', () => {
     expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
     expect(r.costUsd).toBe(0.01);
     expect(r.toolCalls[0]?.result?.content).toBe('a.ts');
+  });
+
+  it('emits usage with cost even when token fields are absent', () => {
+    const state = piState();
+    const { events } = mapPiRpcEvent(
+      { type: 'turn_end', message: { usage: { cost: { total: 0.02 } } } },
+      state,
+    );
+    const usage = events.find((e) => e.type === 'usage');
+    expect(usage).toBeDefined();
+    expect((usage as { costUsd?: number }).costUsd).toBe(0.02);
+    expect(fold(events).costUsd).toBe(0.02);
   });
 });

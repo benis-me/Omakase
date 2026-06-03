@@ -27,8 +27,14 @@ export function parseFrontmatter(src: string): ParsedFrontmatter {
   return { data, body: match[2] ?? '' };
 }
 
-function leadingSpaces(line: string): number {
-  const m = /^[ ]*/.exec(line);
+/**
+ * Count leading indentation characters (spaces AND tabs). The parser slices by
+ * this count everywhere, so counting a tab as one indentation char keeps depth
+ * comparisons and slices self-consistent — a tab-indented nested block is no
+ * longer silently flattened to indent 0 (which dropped roles/triggers lists).
+ */
+function leadingIndent(line: string): number {
+  const m = /^[ \t]*/.exec(line);
   return m ? m[0].length : 0;
 }
 
@@ -109,7 +115,7 @@ function parseMap(
       i += 1;
       continue;
     }
-    const ind = leadingSpaces(raw);
+    const ind = leadingIndent(raw);
     if (ind < indent) break;
     if (ind > indent) {
       i += 1;
@@ -152,7 +158,7 @@ function parseNested(
   let j = start;
   while (j < lines.length && isBlankOrComment(lines[j] ?? '')) j += 1;
   if (j >= lines.length) return ['', j];
-  const ind = leadingSpaces(lines[j] ?? '');
+  const ind = leadingIndent(lines[j] ?? '');
   if (ind <= parentIndent) return ['', start];
   const content = (lines[j] ?? '').slice(ind);
   if (content.startsWith('- ')) return parseList(lines, j, ind);
@@ -173,7 +179,7 @@ function parseList(
       i += 1;
       continue;
     }
-    const ind = leadingSpaces(raw);
+    const ind = leadingIndent(raw);
     if (ind < indent) break;
     if (ind > indent) {
       i += 1;
@@ -217,10 +223,12 @@ function parseBlockScalar(
       i += 1;
       continue;
     }
-    const ind = leadingSpaces(raw);
+    const ind = leadingIndent(raw);
     if (ind <= parentIndent) break;
     if (blockIndent === -1) blockIndent = ind;
-    collected.push(raw.slice(blockIndent));
+    // Clamp the strip to this line's own indent: a content line shallower than
+    // the first line's indent must not have its actual text sliced away.
+    collected.push(raw.slice(Math.min(blockIndent, ind)));
     i += 1;
   }
   while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop();

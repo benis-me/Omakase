@@ -158,41 +158,54 @@ export class PlanGraph {
     return node.attempts;
   }
 
+  /** Refund an attempt that didn't really run (e.g. a sibling-aborted task). */
+  decrementAttempts(id: string): number {
+    const node = this.require(id);
+    if (node.attempts > 0) node.attempts -= 1;
+    return node.attempts;
+  }
+
   /** True when every dependency of `id` has succeeded. */
   dependenciesSatisfied(id: string): boolean {
     const node = this.require(id);
     return node.dependsOn.every((dep) => this.nodes.get(dep)?.status === 'succeeded');
   }
 
-  /** True when a dependency has failed or been cancelled (so the task is blocked). */
+  /**
+   * True when a dependency has failed, been cancelled, or is itself blocked —
+   * so blocking propagates transitively down the dependency chain rather than
+   * leaving a deeper task stuck `pending` forever.
+   */
   dependenciesBroken(id: string): boolean {
     const node = this.require(id);
     return node.dependsOn.some((dep) => {
       const s = this.nodes.get(dep)?.status;
-      return s === 'failed' || s === 'cancelled';
+      return s === 'failed' || s === 'cancelled' || s === 'blocked';
     });
   }
 
   /**
    * Recompute readiness: pending tasks whose deps all succeeded become `ready`;
-   * pending tasks with a broken dependency become `blocked`. Returns the tasks
-   * that are now `ready`.
+   * pending tasks with a broken (failed/cancelled/blocked) dependency become
+   * `blocked`. Iterates to a fixpoint so transitive blocking propagates in one
+   * call regardless of task insertion order. Returns the tasks that are `ready`.
    */
   refreshReadiness(): TaskNode[] {
-    const ready: TaskNode[] = [];
-    for (const node of this.tasks()) {
-      if (node.status !== 'pending') {
-        if (node.status === 'ready') ready.push(node);
-        continue;
-      }
-      if (this.dependenciesBroken(node.id)) {
-        this.setStatus(node.id, 'blocked');
-      } else if (this.dependenciesSatisfied(node.id)) {
-        this.setStatus(node.id, 'ready');
-        ready.push(node);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const node of this.tasks()) {
+        if (node.status !== 'pending') continue;
+        if (this.dependenciesBroken(node.id)) {
+          this.setStatus(node.id, 'blocked');
+          changed = true;
+        } else if (this.dependenciesSatisfied(node.id)) {
+          this.setStatus(node.id, 'ready');
+          changed = true;
+        }
       }
     }
-    return ready;
+    return this.tasks().filter((t) => t.status === 'ready');
   }
 
   readyTasks(): TaskNode[] {

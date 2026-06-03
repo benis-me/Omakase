@@ -52,7 +52,10 @@ export const claudeAgentDef: RuntimeAgentDef = {
   externalMcpInjection: 'claude-mcp-json',
   auth: {
     envVars: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
-    homeFiles: ['.claude/.credentials.json', '.claude.json'],
+    // Only the credential store proves authentication. ~/.claude.json is a
+    // general config file written even for unauthenticated installs, so keying
+    // auth on it produced false 'ok'. The OAuth login writes .credentials.json.
+    homeFiles: ['.claude/.credentials.json'],
   },
   installUrl: 'https://docs.claude.com/en/docs/claude-code',
   docsUrl: 'https://docs.claude.com/en/docs/claude-code',

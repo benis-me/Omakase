@@ -35,6 +35,20 @@ describe('CodeGraph', () => {
     expect(graph.externalDependencies()).toContain('node:fs');
   });
 
+  it('strips inline `type` modifiers from import/export specifiers', async () => {
+    write(
+      'src/a.ts',
+      `import { type Foo, Bar } from './b.js';\nexport { type Foo, Bar };\nvoid Bar;\n`,
+    );
+    write('src/b.ts', `export type Foo = number;\nexport const Bar = 1;\n`);
+    const graph = await CodeGraph.scan({ root });
+    const a = graph.node('src/a.ts');
+    // No garbage "type Foo" name; both the type and value specifiers are clean.
+    expect(a?.imports.flatMap((i) => i.specifiers).sort()).toEqual(['Bar', 'Foo']);
+    expect(a?.exports.sort()).toEqual(['Bar', 'Foo']);
+    expect(a?.exports.some((e) => e.includes('type'))).toBe(false);
+  });
+
   it('detects import cycles', async () => {
     write('a.ts', `import './b.js';\nexport const a = 1;\n`);
     write('b.ts', `import './a.js';\nexport const b = 2;\n`);

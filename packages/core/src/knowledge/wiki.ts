@@ -36,6 +36,24 @@ export interface ProjectWikiOptions {
   clock?: () => number;
 }
 
+/** A heading title must be one line — collapse any newlines. */
+function sanitizeTitle(s: string): string {
+  return s.replace(/[\r\n]+/g, ' ').trim();
+}
+
+/**
+ * Neutralize body lines that would otherwise spoof a markdown heading (or our
+ * own `## Section` / `### title` structure) when the wiki — which can hold
+ * untrusted agent output — is rendered into a prompt. Escaping the leading
+ * marker keeps the text readable while preventing section injection.
+ */
+function sanitizeBody(s: string): string {
+  return s
+    .split('\n')
+    .map((line) => line.replace(/^(\s*)(#{1,6})(\s)/, '$1\\$2$3'))
+    .join('\n');
+}
+
 export class ProjectWiki {
   private readonly entries = new Map<string, WikiEntry>();
   private readonly order: string[] = [];
@@ -149,8 +167,8 @@ export class ProjectWiki {
       if (entries.length === 0) continue;
       out.push(`## ${section.heading}`, '');
       for (const entry of entries) {
-        out.push(`### ${entry.title}`);
-        if (entry.body) out.push(entry.body);
+        out.push(`### ${sanitizeTitle(entry.title)}`);
+        if (entry.body) out.push(sanitizeBody(entry.body));
         if (entry.tags.length > 0) out.push(`_tags: ${entry.tags.join(', ')}_`);
         out.push('');
       }

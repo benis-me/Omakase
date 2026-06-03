@@ -160,12 +160,15 @@ export function mapPiRpcEvent(raw: unknown, state: PiMapperState): PiMapResult {
       if (num(u.cacheRead) !== undefined) usage.cachedReadTokens = num(u.cacheRead);
       if (num(u.cacheWrite) !== undefined) usage.cachedWriteTokens = num(u.cacheWrite);
       if (num(u.totalTokens) !== undefined) usage.totalTokens = num(u.totalTokens);
-      if (Object.keys(usage).length > 0) {
-        const cost = asRecord(u.cost);
+      const cost = asRecord(u.cost);
+      const costUsd = (num(cost?.total) ?? num(cost?.totalCost)) ?? null;
+      // Emit usage when EITHER token counts OR a cost is present, so a turn that
+      // reports cost without token fields doesn't drop the spend silently.
+      if (Object.keys(usage).length > 0 || costUsd != null) {
         events.push({
           type: 'usage',
           usage,
-          costUsd: (num(cost?.total) ?? num(cost?.totalCost)) ?? null,
+          costUsd,
           durationMs: state.now() - state.startedAt,
         });
       }

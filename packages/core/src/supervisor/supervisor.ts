@@ -108,7 +108,16 @@ export class Supervisor {
     while (this.state === 'running') {
       const resumeId = this.resumeQueue.shift();
       if (resumeId !== undefined) {
-        const handle = await this.options.orchestrator.resume(resumeId);
+        // resume() constructs a RunController, which deserializes the persisted
+        // wiki/plan synchronously and can throw on a malformed record. Isolate
+        // that so one bad run can't reject drain() and wedge the whole
+        // supervisor at state 'running'.
+        let handle: RunHandle | null = null;
+        try {
+          handle = await this.options.orchestrator.resume(resumeId);
+        } catch {
+          handle = null;
+        }
         if (handle) await this.track(handle);
         continue;
       }

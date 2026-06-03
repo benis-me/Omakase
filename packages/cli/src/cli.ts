@@ -29,24 +29,61 @@ export interface ParsedArgs {
   options: Record<string, string | boolean>;
 }
 
+/** Flags that never take a value — they must not consume the following token. */
+const BOOLEAN_FLAGS = new Set(['offline', 'json', 'watch', 'version', 'v', 'help', 'h']);
+/** Flags that always take the next token as their value (even a `-`-leading one). */
+const VALUE_FLAGS = new Set([
+  'mode',
+  'agent',
+  'cwd',
+  'max-tokens',
+  'max-cost',
+  'interval',
+  'concurrency',
+  'runs-dir',
+  'queue-dir',
+]);
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const positionals: string[] = [];
   const options: Record<string, string | boolean> = {};
+  let optionsEnded = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
+    if (optionsEnded) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      // Everything after `--` is positional, so a task prompt can start with a dash.
+      optionsEnded = true;
+      continue;
+    }
     if (arg.startsWith('--')) {
       const eq = arg.indexOf('=');
       if (eq !== -1) {
         options[arg.slice(2, eq)] = arg.slice(eq + 1);
-      } else {
-        const key = arg.slice(2);
-        const next = argv[i + 1];
-        if (next !== undefined && !next.startsWith('-')) {
+        continue;
+      }
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      if (BOOLEAN_FLAGS.has(key)) {
+        // A known boolean flag must never swallow the following positional
+        // (e.g. `run --offline "summarize"` must keep "summarize" as the task).
+        options[key] = true;
+      } else if (VALUE_FLAGS.has(key)) {
+        if (next !== undefined) {
           options[key] = next;
           i += 1;
         } else {
           options[key] = true;
         }
+      } else if (next !== undefined && !next.startsWith('-')) {
+        // Unknown long flag: keep the permissive "consume a value-looking token".
+        options[key] = next;
+        i += 1;
+      } else {
+        options[key] = true;
       }
     } else if (arg.startsWith('-') && arg.length > 1) {
       options[arg.slice(1)] = true;

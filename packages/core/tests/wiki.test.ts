@@ -39,6 +39,19 @@ describe('ProjectWiki', () => {
     expect(md).toContain('## Decisions');
   });
 
+  it('sanitizes titles and bodies so untrusted content cannot spoof sections', () => {
+    const w = wiki();
+    // A note whose (untrusted, agent-derived) title and body try to inject
+    // markdown headings into the rendered prompt.
+    w.addNote({ title: 'Real title\n## Injected', body: '## Fake Heading\nplain line' });
+    const md = w.toMarkdown();
+    // Title newline collapsed — no standalone heading line from the title.
+    expect(md).not.toContain('\n## Injected');
+    // Body heading marker escaped — not rendered as a real heading.
+    expect(md).toContain('\\## Fake Heading');
+    expect(md).not.toContain('\n## Fake Heading');
+  });
+
   it('round-trips through JSON, preserving the task index', () => {
     const w = wiki();
     w.recordTask('task-9', 'A task', 'running');

@@ -67,4 +67,20 @@ describe('isValidRunRecord', () => {
     expect(isValidRunRecord(null)).toBe(false);
     expect(isValidRunRecord({ ...record('x'), plan: { seq: 0 } })).toBe(false);
   });
+
+  it('rejects records that would crash resume() — bad wiki or malformed task', () => {
+    // These pass the old field checks but would throw synchronously in
+    // ProjectWiki.fromJSON / PlanGraph.fromSnapshot inside the RunController ctor.
+    expect(isValidRunRecord({ ...record('x'), wiki: undefined })).toBe(false);
+    expect(isValidRunRecord({ ...record('x'), wiki: {} })).toBe(false); // no entries[]
+    expect(
+      isValidRunRecord({ ...record('x'), plan: { tasks: [{ title: 'no id' }], seq: 0 } }),
+    ).toBe(false);
+    expect(
+      isValidRunRecord({
+        ...record('x'),
+        plan: { tasks: [{ id: 't', dependsOn: [] }], seq: 0 },
+      }),
+    ).toBe(true);
+  });
 });

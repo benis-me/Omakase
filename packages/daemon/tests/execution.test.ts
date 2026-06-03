@@ -398,6 +398,39 @@ describe('runtime: error + lifecycle handling', () => {
     expect(result.error).toMatch(/timed out/i);
   });
 
+  it('reports a signal-killed agent (OOM/SIGKILL) as error, not completed', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (isProbe(ctrl)) return answerProbe(ctrl);
+      ctrl.onStdinEnd(() => {
+        ctrl.emitStdout('partial output before the kernel killed it');
+        // code null + signal set, and the run was NOT aborted by us.
+        ctrl.exit(null, 'SIGKILL');
+      });
+    });
+    const result = await runtimeWith(transport).runAgent({ agentId: 'gemini', prompt: 'hi' });
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/signal SIGKILL/);
+  });
+
+  it('reports a pi crash by external signal as error, not completed', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) return answerProbe(ctrl);
+      ctrl.onStdin((data) => {
+        const msg = JSON.parse(data.trim()) as { type: string; id: number };
+        if (msg.type !== 'prompt') return;
+        ctrl.emitStdoutJson({ type: 'response', id: msg.id, success: true });
+        ctrl.emitStdoutJson({ type: 'agent_start' });
+        // Crash before agent_end (no clean turn end).
+        ctrl.exit(null, 'SIGSEGV');
+      });
+      ctrl.onStdinEnd(() => ctrl.exit(null, 'SIGSEGV'));
+      ctrl.onKill(() => ctrl.exit(null, 'SIGSEGV'));
+    });
+    const result = await runtimeWith(transport).runAgent({ agentId: 'pi', prompt: 'hi' });
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/signal SIGSEGV/);
+  });
+
   it('does not orphan the exit promise when the spawn fails mid-run', async () => {
     // When the spawn rejects exitPromise and the stdout loop throws, the driver
     // jumps to its catch without ever awaiting wait(). The eager exited.catch()

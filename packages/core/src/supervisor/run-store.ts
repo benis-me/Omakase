@@ -44,17 +44,37 @@ export interface RunStore {
 export function isValidRunRecord(value: unknown): value is RunRecord {
   if (!value || typeof value !== 'object') return false;
   const r = value as Partial<RunRecord>;
-  return (
-    typeof r.id === 'string' &&
-    typeof r.status === 'string' &&
-    typeof r.request === 'object' &&
-    r.request !== null &&
-    typeof r.plan === 'object' &&
-    r.plan !== null &&
-    Array.isArray((r.plan as { tasks?: unknown }).tasks) &&
-    Array.isArray(r.inbox) &&
-    Array.isArray(r.events) &&
-    typeof r.checkpointSeq === 'number'
+  if (
+    !(
+      typeof r.id === 'string' &&
+      typeof r.status === 'string' &&
+      typeof r.request === 'object' &&
+      r.request !== null &&
+      typeof r.plan === 'object' &&
+      r.plan !== null &&
+      Array.isArray((r.plan as { tasks?: unknown }).tasks) &&
+      Array.isArray(r.inbox) &&
+      Array.isArray(r.events) &&
+      typeof r.checkpointSeq === 'number'
+    )
+  ) {
+    return false;
+  }
+  // The wiki and every task must be the shape resume() deserializes, or
+  // ProjectWiki.fromJSON / PlanGraph.fromSnapshot throw synchronously inside the
+  // RunController constructor — before run()'s try/catch exists. Validate them
+  // here so a partial/stale file "fails cleanly" (returns null) as documented,
+  // rather than crashing the resume path.
+  const wiki = (r as { wiki?: unknown }).wiki;
+  if (!wiki || typeof wiki !== 'object' || !Array.isArray((wiki as { entries?: unknown }).entries)) {
+    return false;
+  }
+  const tasks = (r.plan as { tasks: unknown[] }).tasks;
+  return tasks.every(
+    (t) =>
+      Boolean(t) &&
+      typeof (t as { id?: unknown }).id === 'string' &&
+      Array.isArray((t as { dependsOn?: unknown }).dependsOn),
   );
 }
 

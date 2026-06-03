@@ -37,6 +37,21 @@ describe('parseArgs', () => {
   it('supports --key=value', () => {
     expect(parseArgs(['agents', '--cwd=/tmp']).options).toEqual({ cwd: '/tmp' });
   });
+  it('does not let a boolean flag swallow the following positional', () => {
+    const parsed = parseArgs(['run', '--offline', 'summarize this project']);
+    expect(parsed.options.offline).toBe(true);
+    expect(parsed.positionals).toContain('summarize this project');
+  });
+  it('treats -- as end-of-options so a dash-leading task survives', () => {
+    const parsed = parseArgs(['run', '--', '--weird task']);
+    expect(parsed.positionals).toContain('--weird task');
+  });
+  it('still consumes values for value-taking flags', () => {
+    const parsed = parseArgs(['run', 'task', '--mode', 'max-power', '--max-cost', '0.5']);
+    expect(parsed.options.mode).toBe('max-power');
+    expect(parsed.options['max-cost']).toBe('0.5');
+    expect(parsed.positionals).toContain('task');
+  });
 });
 
 describe('omakase agents', () => {

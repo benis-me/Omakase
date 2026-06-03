@@ -105,6 +105,8 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
       if (!content) continue;
       // Claim the file (move it) BEFORE enqueuing, so a rename failure can't
       // leave the file in place to be re-ingested (double-submitted) next cycle.
+      // Tag the request with the (unique) source filename so recoverClaimed can
+      // correlate a claimed file with its eventual run record.
       await mkdir(processedDir, { recursive: true });
       try {
         await rename(full, path.join(processedDir, entry.name));
@@ -112,10 +114,54 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
         write(`serve: could not claim queue file ${entry.name}; leaving it for next cycle`);
         continue;
       }
-      supervisor.enqueue({ prompt: content, cwd: config.cwd });
+      supervisor.enqueue({
+        prompt: content,
+        cwd: config.cwd,
+        metadata: { sourceQueueFile: entry.name },
+      });
       enqueued.push(entry.name);
     }
     return enqueued;
+  };
+
+  // Re-ingest queue files that were claimed (moved to processed/) but whose run
+  // never persisted a record — i.e. a crash struck between the claim-rename and
+  // the run's first checkpoint. Without this, claim-before-enqueue would lose
+  // such a task forever (the file is no longer in the queue dir, and no
+  // resumable record exists). Correlate by the sourceQueueFile metadata key.
+  const recoverClaimed = async (): Promise<string[]> => {
+    const processedDir = path.join(config.queueDir, 'processed');
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await readdir(processedDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const started = new Set<string>();
+    for (const id of await store.list()) {
+      const src = (await store.load(id))?.request.metadata?.sourceQueueFile;
+      if (typeof src === 'string') started.add(src);
+    }
+    const reingested: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !QUEUE_FILE.test(entry.name)) continue;
+      if (started.has(entry.name)) continue; // a run record exists → already underway
+      let content: string;
+      try {
+        content = (await readFile(path.join(processedDir, entry.name), 'utf8')).trim();
+      } catch {
+        continue;
+      }
+      if (!content) continue;
+      supervisor.enqueue({
+        prompt: content,
+        cwd: config.cwd,
+        metadata: { sourceQueueFile: entry.name },
+      });
+      reingested.push(entry.name);
+      write(`serve: re-ingesting ${entry.name} (claimed previously but no run record was persisted)`);
+    }
+    return reingested;
   };
 
   return {
@@ -125,6 +171,7 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     scanQueue,
     async cycle(): Promise<SupervisorHealth> {
       await supervisor.resumeInterrupted();
+      await recoverClaimed();
       await scanQueue();
       return supervisor.drain();
     },
