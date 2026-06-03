@@ -26,6 +26,7 @@ import type { OrchestrationHookBus } from './hooks/types.js';
 import { createIdGenerator, type IdGenerator } from './ids.js';
 import { CodeGraph } from './knowledge/codegraph.js';
 import { ProjectWiki } from './knowledge/wiki.js';
+import type { KnowledgeStore } from './knowledge/store.js';
 import { createModelPolicy, type ModelPolicy } from './modes/policy.js';
 import { Inbox, type InboxAppendOptions } from './inbox.js';
 import {
@@ -74,6 +75,8 @@ export interface OrchestratorOptions {
   policyFor?: (mode: WorkMode) => ModelPolicy;
   hooks?: OrchestrationHookBus;
   store?: RunStore;
+  /** Persists wiki/codegraph across runs (e.g. under `<cwd>/.omakase`). */
+  knowledgeStore?: KnowledgeStore;
   skills?: SkillInfo[];
   codegraph?: CodeGraph;
   idGenerator?: IdGenerator;
@@ -132,7 +135,8 @@ class RunController implements RunHandle {
   private readonly hooks: OrchestrationHookBus;
   private readonly store: RunStore;
   private readonly skills: SkillInfo[];
-  private readonly codegraph: CodeGraph | undefined;
+  private codegraph: CodeGraph | undefined;
+  private readonly knowledgeStore: KnowledgeStore | undefined;
   private readonly ids: IdGenerator;
   private readonly clock: () => number;
   private readonly detectionOptions: DetectionOptions | undefined;
@@ -178,6 +182,7 @@ class RunController implements RunHandle {
     this.store = options.store ?? new MemoryRunStore();
     this.skills = options.skills ?? [];
     this.codegraph = options.codegraph;
+    this.knowledgeStore = options.knowledgeStore;
     this.clock = options.clock ?? (() => Date.now());
     this.detectionOptions = options.detectionOptions;
     this.maxIterations = options.maxIterations ?? 50;
@@ -340,6 +345,7 @@ class RunController implements RunHandle {
       this.status = 'running';
       this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
       this.available = await this.detectAvailable();
+      if (!this.resuming) await this.loadPersistedKnowledge();
 
       if (!this.resuming) {
         await this.hooks.emit('beforeRoute', { request: this.request });
@@ -372,8 +378,17 @@ class RunController implements RunHandle {
       const status = this.computeFinalStatus();
       this.status = status;
       const summary = this.computeSummary(status);
+      // Record a durable run-outcome note so the project wiki accumulates a log
+      // across runs (task-status entries are run-scoped and upsert in place).
+      this.wiki.addNote({
+        title: `Run ${this.id} — ${status}`,
+        body: `${this.request.prompt}\n${summary}`,
+        tags: ['run', status],
+        source: `run:${this.id}`,
+      });
       this.emit({ type: 'run-finished', status, summary });
       await this.store.save(this.buildRecord(status, summary));
+      await this.persistKnowledge();
       return this.buildResult(status, summary);
     } catch (err) {
       const message = errorMessage(err);
@@ -567,6 +582,30 @@ class RunController implements RunHandle {
     await this.replan('review-rejected');
   }
 
+  private async loadPersistedKnowledge(): Promise<void> {
+    if (!this.knowledgeStore) return;
+    try {
+      const wikiSnapshot = await this.knowledgeStore.loadWiki();
+      if (wikiSnapshot) this.wiki = ProjectWiki.fromJSON(wikiSnapshot, { clock: this.clock });
+      if (!this.codegraph) {
+        const cgSnapshot = await this.knowledgeStore.loadCodegraph();
+        if (cgSnapshot) this.codegraph = CodeGraph.fromJSON(cgSnapshot);
+      }
+    } catch {
+      // Corrupt persisted knowledge is non-fatal — start from what we have.
+    }
+  }
+
+  private async persistKnowledge(): Promise<void> {
+    if (!this.knowledgeStore) return;
+    try {
+      await this.knowledgeStore.saveWiki(this.wiki.toJSON());
+      if (this.codegraph) await this.knowledgeStore.saveCodegraph(this.codegraph.toJSON());
+    } catch {
+      // Best-effort persistence; never fail a run over it.
+    }
+  }
+
   private applyUserInput(text: string): void {
     const worker = this.graph.addTask({
       title: `User input: ${text.slice(0, 48)}`,
@@ -596,6 +635,7 @@ class RunController implements RunHandle {
     this.checkpointSeq += 1;
     this.emit({ type: 'heartbeat', at: this.clock() });
     await this.store.save(this.buildRecord('running', this.computeSummary('running')));
+    await this.persistKnowledge();
   }
 
   private computeFinalStatus(): RunStatus {

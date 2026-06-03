@@ -69,6 +69,8 @@ export type {
   CodeGraphSnapshot,
   ScanOptions,
 } from './knowledge/codegraph.js';
+export { FileKnowledgeStore, projectKnowledgeStore } from './knowledge/store.js';
+export type { KnowledgeStore } from './knowledge/store.js';
 
 // ── Inbox, supervisor, run events ────────────────────────────────────────────
 export { Inbox } from './inbox.js';
