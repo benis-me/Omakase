@@ -42,6 +42,10 @@ pnpm --filter @omakase/cli omakase run "summarize this project" --offline
 
 # Open the interactive TUI
 pnpm --filter @omakase/cli omakase tui "add input validation and write tests"
+
+# Supervise a queue for long-running / 24-7 operation: resumes anything left
+# unfinished and ingests task files dropped into .omakase/queue/*.txt
+pnpm --filter @omakase/cli omakase serve --watch
 ```
 
 During development you can skip the build and run from source via tsx:

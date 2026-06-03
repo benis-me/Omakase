@@ -16,6 +16,8 @@ import {
   type OrchestrationRequest,
   type WorkMode,
 } from '@omakase/core';
+import path from 'node:path';
+import { createServer, type ServeConfig } from './serve.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
 
@@ -75,11 +77,28 @@ function resolveMode(value: unknown): WorkMode {
   return value === 'max-power' || value === 'custom' ? value : 'normal';
 }
 
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
 const HELP = `omakase — agent runtime + multi-agent orchestration
 
 Usage:
   omakase agents [--json]              List detected agent CLIs
   omakase run "<task>" [options]       Run a task through the orchestrator
+  omakase serve ["<task>"...] [opts]   Supervise a queue of runs (24/7), resuming
+                                       anything left unfinished. Reads task files
+                                       from .omakase/queue. --watch to keep polling.
   omakase tui ["<task>"] [options]     Open the interactive TUI
   omakase --version
 
@@ -89,6 +108,8 @@ Options:
   --offline                            Force the built-in agent (no model calls)
   --max-tokens <n>                     Stop the run after ~n tokens are spent
   --max-cost <usd>                     Stop the run after ~usd is spent
+  --watch [--interval <ms>]            (serve) keep polling the queue
+  --concurrency <n>                    (serve) runs to drive in parallel
   --cwd <path>                         Working directory (default: cwd)
   --json                               Machine-readable output (agents/run)
 `;
@@ -181,6 +202,57 @@ export function createCli(deps: CliDeps = {}): Cli {
     return result.status === 'succeeded' ? 0 : 1;
   }
 
+  function serveConfig(options: ParsedArgs['options']): ServeConfig {
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+    const agentOverride =
+      typeof options.agent === 'string' ? options.agent : options.offline ? 'builtin' : undefined;
+    const budget: { maxTokens?: number; maxCostUsd?: number } = {};
+    if (typeof options['max-tokens'] === 'string') budget.maxTokens = Number(options['max-tokens']);
+    if (typeof options['max-cost'] === 'string') budget.maxCostUsd = Number(options['max-cost']);
+    return {
+      cwd,
+      runsDir: typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs'),
+      queueDir: typeof options['queue-dir'] === 'string' ? options['queue-dir'] : path.join(cwd, '.omakase', 'queue'),
+      concurrency: Number(options.concurrency) || 1,
+      mode: resolveMode(options.mode),
+      ...(agentOverride ? { agentOverride } : {}),
+      ...(budget.maxTokens || budget.maxCostUsd ? { budget } : {}),
+      ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+    };
+  }
+
+  async function serveCommand(tasks: string[], options: ParsedArgs['options']): Promise<number> {
+    const config = serveConfig(options);
+    const server = createServer(config, {
+      write,
+      ...(deps.createRuntime ? { createRuntime: deps.createRuntime } : {}),
+    });
+    for (const task of tasks) if (task.trim()) server.supervisor.enqueue({ prompt: task, cwd: config.cwd });
+
+    if (options.watch) {
+      const intervalMs = Number(options.interval) || 2000;
+      write(`omakase serve: watching ${config.queueDir} every ${intervalMs}ms (Ctrl-C to stop)`);
+      const ac = new AbortController();
+      const onSignal = (): void => {
+        ac.abort();
+        server.supervisor.stop();
+      };
+      process.once('SIGINT', onSignal);
+      while (!ac.signal.aborted) {
+        const health = await server.cycle();
+        write(`heartbeat @ ${health.lastHeartbeatAt}: ${health.completed} done, ${health.queued} queued`);
+        if (ac.signal.aborted) break;
+        await sleep(intervalMs, ac.signal);
+      }
+      return 0;
+    }
+
+    const health = await server.cycle();
+    write(`serve: processed ${health.completed} run(s)`);
+    const failed = health.runs.filter((r) => r.status !== 'succeeded' && r.status !== 'running');
+    return failed.length > 0 ? 1 : 0;
+  }
+
   async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
     const mode = resolveMode(options.mode);
     const cwd = typeof options.cwd === 'string' ? options.cwd : undefined;
@@ -218,6 +290,8 @@ export function createCli(deps: CliDeps = {}): Cli {
             return await agentsCommand(options);
           case 'run':
             return await runCommand(positionals.slice(1).join(' '), options);
+          case 'serve':
+            return await serveCommand(positionals.slice(1), options);
           case 'tui':
           case 'dev':
             return await tuiCommand(positionals.slice(1).join(' '), options);

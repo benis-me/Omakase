@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime } from '@omakase/daemon';
 import { MemoryRunStore, Orchestrator, type WorkMode } from '@omakase/core';
@@ -96,6 +99,16 @@ describe('omakase run', () => {
     const events = lines.map((l) => JSON.parse(l));
     expect(events[0]).toHaveProperty('type', 'run-started');
     expect(events.at(-1)).toHaveProperty('type', 'run-finished');
+  });
+});
+
+describe('omakase serve', () => {
+  it('processes queued tasks one-shot and exits 0', async () => {
+    const { cli, out } = harness();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-serve-'));
+    const code = await cli.main(['serve', 'summarize the project', '--offline', '--cwd', cwd]);
+    expect(code).toBe(0);
+    expect(out()).toMatch(/processed 1 run/);
   });
 });
 

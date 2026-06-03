@@ -58,8 +58,8 @@ where the edges are and what would deepen each layer.
 2. **Codegraph depth**: symbol-level edges, call graphs, and a watch-mode that
    feeds incremental `update()` from a file watcher (path-alias resolution is
    done).
-3. **Host integrations**: an `omakase serve`/cron wrapper around the
-   {@link Supervisor}, and an in-TUI text input for composing new tasks.
+3. **Host integrations**: an in-TUI text input for composing new tasks, and a
+   service-manager unit (systemd/launchd) around `omakase serve --watch`.
 
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
@@ -70,4 +70,5 @@ adversarial-review fixes, **cross-run persisted knowledge** (`KnowledgeStore` /
 (`acceptanceCriteria` + `parseStructuredReview`), **live MCP injection** (three
 strategies via `applyMcpInjection`), **codegraph tsconfig path-alias
 resolution** (`loadTsconfigAliases`), the **Supervisor daemon** (queue +
-`resumeInterrupted()` + heartbeat), and **skill-aware planning**.
+`resumeInterrupted()` + heartbeat), **skill-aware planning**, and **`omakase
+serve`** — a file-backed supervisor CLI (queue dir + `--watch` + resume).
