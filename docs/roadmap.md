@@ -29,13 +29,14 @@ where the edges are and what would deepen each layer.
 - **Planner/router are rule-based by default.** They are deterministic and
   tested; the `createAgentRouter`/`createAgentPlanner` extension points use an
   agent but are best-effort parsers with rule-based fallback.
-- **Review is shallow.** With a real agent the reviewer's verdict is parsed
-  from free text (`APPROVE`/`REJECT`); the built-in reviewer auto-approves
-  because it has no model to judge with. Structured review (per-criterion
-  scoring) is a natural extension.
+- **Free-text review fallback.** Per-criterion structured review is supported
+  (`acceptanceCriteria`); without criteria the verdict is parsed from free text
+  (`APPROVE`/`REJECT`), and the built-in reviewer auto-approves (no model).
 - **Codegraph is syntactic.** Regex extraction sees imports/exports/symbols and
-  resolves relative paths; it does not resolve `tsconfig` path aliases, types,
-  or call graphs. Good for blast-radius reasoning, not for refactoring proofs.
+  resolves relative paths and `tsconfig` path aliases
+  ({@link loadTsconfigAliases}); it does not resolve types or call graphs. Good
+  for blast-radius reasoning, not for refactoring proofs — back it with an OSS
+  tool (dependency-cruiser/madge/ts-morph) via `CodeGraph.fromJSON` for depth.
 - **24/7 operation** is modeled via the resumable supervisor (checkpoint +
   `resume`), not a long-lived process; a daemonized scheduler/heartbeat monitor
   on top of `RunStore` is future work.
@@ -53,20 +54,20 @@ where the edges are and what would deepen each layer.
 1. **Adapter conformance tests** that record real CLI output as fixtures and
    replay them through the parsers, keeping argv/stream mapping honest per
    release.
-2. **Live MCP injection** implementing the three declared strategies.
-3. **Structured review** (acceptance-criteria scoring tied to `SpecWorkflow`).
-4. **Codegraph depth**: tsconfig path-alias resolution, symbol-level edges, and
-   a watch-mode that feeds incremental `update()` from a file watcher.
-5. **Supervisor daemon**: a long-running process that owns `RunStore`, restarts
+2. **Codegraph depth**: symbol-level edges, call graphs, and a watch-mode that
+   feeds incremental `update()` from a file watcher (path-alias resolution is
+   done).
+3. **Supervisor daemon**: a long-running process that owns `RunStore`, restarts
    interrupted runs, and exposes heartbeat/health.
-6. **Skill-aware planning**: let selected skills shape the plan, not just inject
+4. **Skill-aware planning**: let selected skills shape the plan, not just inject
    prompt context.
-7. **Persisted wiki/codegraph** under `.omakase/` so knowledge survives across
-   runs and processes.
 
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
-`refreshDetection()`), `--offline`/`--agent` to force the built-in agent, a
-token/cost budget (`budget` / `--max-tokens` / `--max-cost`, emits
-`budget-exhausted` and ends the run `incomplete`), atomic checkpoint writes, and
-the 14 fixes from the adversarial review.
+`refreshDetection()`), `--offline`/`--agent`, a token/cost budget (`budget` /
+`--max-tokens` / `--max-cost`), atomic checkpoint writes, the 14 adversarial-review
+fixes, **cross-run persisted knowledge** (`KnowledgeStore` /
+`projectKnowledgeStore` under `.omakase/`), **structured per-criterion review**
+(`acceptanceCriteria` + `parseStructuredReview`), **live MCP injection** (three
+strategies via `applyMcpInjection`), and **codegraph tsconfig path-alias
+resolution** (`loadTsconfigAliases`).

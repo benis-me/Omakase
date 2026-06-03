@@ -59,7 +59,7 @@ export type {
   WikiInput,
   ProjectWikiOptions,
 } from './knowledge/wiki.js';
-export { CodeGraph } from './knowledge/codegraph.js';
+export { CodeGraph, loadTsconfigAliases } from './knowledge/codegraph.js';
 export type {
   CodeNode,
   CodeSymbol,

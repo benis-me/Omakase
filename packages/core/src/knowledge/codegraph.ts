@@ -61,6 +61,13 @@ export interface ScanOptions {
   ignoreDirs?: ReadonlySet<string>;
   maxFiles?: number;
   maxFileBytes?: number;
+  /**
+   * tsconfig-style path aliases (root-relative targets) so non-relative imports
+   * like `@scope/pkg` resolve to internal files instead of being flagged
+   * external. Keys may end with `/*`; targets may contain `*`. Use
+   * {@link loadTsconfigAliases} to derive these from a tsconfig.json.
+   */
+  aliases?: Record<string, string[]>;
 }
 
 const DEFAULT_INCLUDE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
@@ -186,6 +193,7 @@ export class CodeGraph {
       ignoreDirs: options.ignoreDirs ?? DEFAULT_IGNORE,
       maxFiles: options.maxFiles ?? 5000,
       maxFileBytes: options.maxFileBytes ?? 1024 * 1024,
+      aliases: options.aliases ?? {},
     };
   }
 
@@ -250,12 +258,10 @@ export class CodeGraph {
 
   private resolveEdges(): void {
     const known = new Set(this.nodes.keys());
-    const tryResolve = (fromPath: string, specifier: string): string | null => {
-      if (!specifier.startsWith('.')) return null;
-      const baseDir = path.posix.dirname(fromPath);
-      const joined = path.posix.normalize(path.posix.join(baseDir, specifier));
+    const exts = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+    const resolveTarget = (joinedRaw: string): string | null => {
+      const joined = path.posix.normalize(joinedRaw);
       const candidates = [joined];
-      const exts = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
       for (const ext of exts) candidates.push(joined + ext);
       for (const ext of exts) candidates.push(path.posix.join(joined, `index${ext}`));
       if (joined.endsWith('.js')) {
@@ -263,9 +269,38 @@ export class CodeGraph {
       }
       return candidates.find((c) => known.has(c)) ?? null;
     };
+    const tryRelative = (fromPath: string, specifier: string): string | null => {
+      if (!specifier.startsWith('.')) return null;
+      return resolveTarget(path.posix.join(path.posix.dirname(fromPath), specifier));
+    };
+    const tryAlias = (specifier: string): string | null => {
+      for (const [pattern, targets] of Object.entries(this.options.aliases)) {
+        if (pattern.endsWith('/*')) {
+          const prefix = pattern.slice(0, -1); // keep trailing slash
+          if (!specifier.startsWith(prefix)) continue;
+          const rest = specifier.slice(prefix.length);
+          for (const target of targets) {
+            const joined = target.includes('*') ? target.replace('*', rest) : target;
+            const resolved = resolveTarget(joined);
+            if (resolved) return resolved;
+          }
+        } else if (specifier === pattern) {
+          for (const target of targets) {
+            const resolved = resolveTarget(target);
+            if (resolved) return resolved;
+          }
+        }
+      }
+      return null;
+    };
     for (const node of this.nodes.values()) {
       for (const edge of node.imports) {
-        edge.to = edge.external ? null : tryResolve(node.path, edge.specifier);
+        const resolved = edge.specifier.startsWith('.')
+          ? tryRelative(node.path, edge.specifier)
+          : tryAlias(edge.specifier);
+        edge.to = resolved;
+        // A non-relative import that resolved via an alias is internal.
+        edge.external = resolved ? false : !edge.specifier.startsWith('.');
       }
     }
   }
@@ -413,5 +448,46 @@ export class CodeGraph {
     const graph = new CodeGraph(snapshot.root, options);
     for (const node of snapshot.nodes) graph['nodes'].set(node.path, node);
     return graph;
+  }
+}
+
+/**
+ * Derive {@link ScanOptions.aliases} from a tsconfig.json: reads
+ * `compilerOptions.baseUrl` + `compilerOptions.paths` and rewrites each target
+ * relative to `root` (the CodeGraph root) so non-relative imports like
+ * `@scope/pkg` resolve to internal files. Expects JSON-valid tsconfig (no
+ * comments); returns an empty map on any error.
+ *
+ * For deeper analysis (type-level edges, call graphs) the CodeGraph is
+ * intentionally pluggable — a downstream can back it with an OSS tool such as
+ * dependency-cruiser, madge, or ts-morph and feed results into
+ * `CodeGraph.fromJSON`.
+ */
+export async function loadTsconfigAliases(
+  tsconfigPath: string,
+  root: string,
+): Promise<Record<string, string[]>> {
+  try {
+    const json = JSON.parse(await readFile(tsconfigPath, 'utf8')) as {
+      compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
+    };
+    const compilerOptions = json.compilerOptions ?? {};
+    const paths = compilerOptions.paths ?? {};
+    const baseDir = path.resolve(
+      path.dirname(tsconfigPath),
+      compilerOptions.baseUrl ?? '.',
+    );
+    const out: Record<string, string[]> = {};
+    for (const [pattern, targets] of Object.entries(paths)) {
+      out[pattern] = targets.map((target) => {
+        const hasStar = target.includes('*');
+        const abs = path.resolve(baseDir, target.replace('*', ' '));
+        const rel = path.relative(root, abs).split(path.sep).join('/');
+        return hasStar ? rel.replace(' ', '*') : rel;
+      });
+    }
+    return out;
+  } catch {
+    return {};
   }
 }

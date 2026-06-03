@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CodeGraph } from '../src/knowledge/codegraph.js';
+import { CodeGraph, loadTsconfigAliases } from '../src/knowledge/codegraph.js';
 
 let root: string;
 
@@ -64,6 +64,32 @@ describe('CodeGraph', () => {
     const restored = CodeGraph.fromJSON(graph.toJSON());
     expect(restored.node('a.ts')?.exports).toEqual(['a']);
     expect(restored.stats().files).toBe(1);
+  });
+
+  it('resolves non-relative imports through exact and wildcard aliases', async () => {
+    write('src/a.ts', `import { b } from '@app/b';\nimport '@lib/c';\nexport const a = 1;\nvoid b;\n`);
+    write('pkg/b.ts', `export const b = 2;\n`);
+    write('lib/c.ts', `export const c = 3;\n`);
+    const graph = await CodeGraph.scan({
+      root,
+      aliases: { '@app/b': ['pkg/b.ts'], '@lib/*': ['lib/*'] },
+    });
+    expect(graph.dependencies('src/a.ts').sort()).toEqual(['lib/c.ts', 'pkg/b.ts']);
+    expect(graph.externalDependencies()).not.toContain('@app/b');
+    expect(graph.dependents('pkg/b.ts')).toEqual(['src/a.ts']);
+  });
+
+  it('loads aliases from a tsconfig.json and resolves them', async () => {
+    write(
+      'tsconfig.json',
+      JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@app/*': ['pkg/*'] } } }),
+    );
+    write('src/a.ts', `import '@app/b';\n`);
+    write('pkg/b.ts', `export const b = 2;\n`);
+    const aliases = await loadTsconfigAliases(path.join(root, 'tsconfig.json'), root);
+    expect(aliases['@app/*']).toEqual(['pkg/*']);
+    const graph = await CodeGraph.scan({ root, aliases });
+    expect(graph.dependencies('src/a.ts')).toEqual(['pkg/b.ts']);
   });
 
   it('handles a very deep import chain without overflowing the stack', () => {
