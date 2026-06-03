@@ -15,6 +15,10 @@ export interface JsonMapperState {
   sentFirstToken: boolean;
   /** True once incremental text deltas have been emitted this run. */
   streamedText: boolean;
+  /** Codex item ids already emitted, so item.started/completed of the same message dedup without dropping distinct messages. */
+  emittedItemIds?: Set<string>;
+  /** Last full agent-message text emitted (dedup fallback when an item has no id). */
+  lastMessageText?: string;
   now(): number;
 }
 
@@ -153,11 +157,18 @@ export const codexJsonMapper: JsonEventMapper = (raw, state) => {
     const item = asRecord(obj.item)!;
     const it = item.type;
     if ((it === 'agent_message' || it === 'assistant_message') && typeof item.text === 'string') {
-      // Codex fires both item.started and item.completed for the same message,
-      // each carrying the full text. Arm the guard so we emit it only once.
-      if (!state.streamedText) {
+      // Codex fires both item.started and item.completed for the SAME message
+      // (same id), each carrying the full text — dedup those — but DISTINCT
+      // messages in one turn (different id) must still each be emitted.
+      const id = typeof item.id === 'string' ? item.id : undefined;
+      const isRepeat = id
+        ? (state.emittedItemIds?.has(id) ?? false)
+        : item.text === state.lastMessageText;
+      if (!isRepeat) {
         out.push(...firstTokenStatus(state));
         state.streamedText = true;
+        state.lastMessageText = item.text;
+        if (id) (state.emittedItemIds ??= new Set()).add(id);
         out.push({ type: 'text_delta', delta: item.text });
       }
     } else if (it === 'reasoning' && typeof item.text === 'string') {

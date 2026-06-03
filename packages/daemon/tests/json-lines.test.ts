@@ -50,4 +50,13 @@ describe('createJsonLineStream', () => {
   it('drops non-JSON noise lines but keeps valid neighbours', () => {
     expect(collect(['not json\n', '{"ok":true}\n'])).toEqual([{ ok: true }]);
   });
+
+  it('drops a runaway newline-less line and resyncs at the next newline', () => {
+    // A child that streams megabytes without a newline must not grow the
+    // internal buffer unbounded; the oversize fragment is dropped and parsing
+    // resumes on the next clean line.
+    const garbage = 'x'.repeat(5 * 1024 * 1024);
+    const out = collect([garbage, '\n{"ok":true}\n']);
+    expect(out).toEqual([{ ok: true }]);
+  });
 });

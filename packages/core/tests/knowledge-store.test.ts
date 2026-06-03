@@ -7,7 +7,7 @@ import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
 import { MemoryRunStore } from '../src/supervisor/run-store.js';
 import { FileKnowledgeStore, projectKnowledgeStore } from '../src/knowledge/store.js';
-import { ProjectWiki } from '../src/knowledge/wiki.js';
+import { ProjectWiki, type WikiEntry } from '../src/knowledge/wiki.js';
 import { CodeGraph } from '../src/knowledge/codegraph.js';
 import { createModelPolicy, type Router } from '../src/index.js';
 
@@ -39,6 +39,41 @@ describe('FileKnowledgeStore', () => {
     const cg = new CodeGraph(dir);
     await store.saveCodegraph(cg.toJSON());
     expect((await store.loadCodegraph())?.root).toBe(dir);
+  });
+
+  const entry = (id: string, title = id): WikiEntry => ({
+    id,
+    kind: 'fact',
+    title,
+    body: '',
+    tags: [],
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  it('mergeWiki unions concurrent writers without clobbering', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-merge-'));
+    // Two independent store instances merge disjoint entries at the same time.
+    // A naive load-merge-save would race (both read empty, last write wins) and
+    // drop one writer's entries; the per-dir lock serializes the cycles.
+    const a = new FileKnowledgeStore(dir);
+    const b = new FileKnowledgeStore(dir);
+    await Promise.all([
+      a.mergeWiki([entry('wiki-1'), entry('wiki-2')]),
+      b.mergeWiki([entry('wiki-3'), entry('wiki-4')]),
+    ]);
+    const ids = (await a.loadWiki())!.entries.map((e) => e.id).sort();
+    expect(ids).toEqual(['wiki-1', 'wiki-2', 'wiki-3', 'wiki-4']);
+  });
+
+  it('mergeWiki lets incoming entries win on id collision', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-merge-'));
+    const store = new FileKnowledgeStore(dir);
+    await store.mergeWiki([entry('x', 'old')]);
+    await store.mergeWiki([entry('x', 'new')]);
+    const entries = (await store.loadWiki())!.entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.title).toBe('new');
   });
 });
 

@@ -139,7 +139,12 @@ export async function applyMcpInjection(
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object') existing = parsed;
+          // A JSON array is `typeof 'object'` too; spreading it would corrupt
+          // the merged config (numeric keys, lost mcpServers). Only adopt a
+          // plain object.
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            existing = parsed;
+          }
         } catch {
           /* malformed existing file — fall back to writing fresh */
         }

@@ -704,11 +704,19 @@ class RunController implements RunHandle {
       // Merge against the on-disk wiki (union by entry id, this run's entries
       // win) rather than overwriting wholesale — otherwise a resumed run, or a
       // run that started before a sibling wrote, would clobber the shared
-      // cross-run accumulator.
-      const onDisk = await this.knowledgeStore.loadWiki();
-      const byId = new Map((onDisk?.entries ?? []).map((e) => [e.id, e] as const));
-      for (const entry of this.wiki.toJSON().entries) byId.set(entry.id, entry);
-      await this.knowledgeStore.saveWiki({ entries: [...byId.values()] });
+      // cross-run accumulator. Prefer the store's atomic, lock-serialized
+      // mergeWiki so two concurrent runs that checkpoint at once can't lose
+      // each other's entries through interleaved load-merge-save; fall back to
+      // a caller-side merge for stores that don't implement it.
+      const entries = this.wiki.toJSON().entries;
+      if (this.knowledgeStore.mergeWiki) {
+        await this.knowledgeStore.mergeWiki(entries);
+      } else {
+        const onDisk = await this.knowledgeStore.loadWiki();
+        const byId = new Map((onDisk?.entries ?? []).map((e) => [e.id, e] as const));
+        for (const entry of entries) byId.set(entry.id, entry);
+        await this.knowledgeStore.saveWiki({ entries: [...byId.values()] });
+      }
       if (this.codegraph) await this.knowledgeStore.saveCodegraph(this.codegraph.toJSON());
     } catch {
       // Best-effort persistence; never fail a run over it.

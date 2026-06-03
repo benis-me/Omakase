@@ -105,6 +105,22 @@ describe('CodeGraph', () => {
     expect(aliases['@app/*']).toEqual(['my pkg/*']);
   });
 
+  it('keeps a separator before the wildcard when baseUrl is a subdir', async () => {
+    // baseUrl points at src/ and the target is a bare '*' (wildcard at the
+    // baseUrl root). The rewritten target must be 'src/*', not 'src*' — the
+    // separator has to survive the prefix/wildcard rejoin.
+    write(
+      'tsconfig.json',
+      JSON.stringify({ compilerOptions: { baseUrl: 'src', paths: { '@app/*': ['*'] } } }),
+    );
+    write('src/a.ts', `import '@app/b';\n`);
+    write('src/b.ts', `export const b = 1;\n`);
+    const aliases = await loadTsconfigAliases(path.join(root, 'tsconfig.json'), root);
+    expect(aliases['@app/*']).toEqual(['src/*']);
+    const graph = await CodeGraph.scan({ root, aliases });
+    expect(graph.dependencies('src/a.ts')).toEqual(['src/b.ts']);
+  });
+
   it('handles a very deep import chain without overflowing the stack', () => {
     // A linear chain longer than the JS recursion limit (~4k) — the old
     // recursive cycles() crashed here; the iterative one must not.

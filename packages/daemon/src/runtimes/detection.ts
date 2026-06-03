@@ -123,16 +123,31 @@ interface VersionOutcome {
   version: string | null;
 }
 
+// AgentRuntimeError codes are NOT OS errnos; the real errno of a spawn failure
+// lives in detail.errno / cause. Consult those FIRST so an ENOENT/EACCES that
+// arrives wrapped as AgentSpawnError(code='spawn_failed') is classified as
+// not-invocable (no ghost-available agent) rather than slipping through.
+const AGENT_ERROR_CODES = new Set([
+  'not_installed',
+  'auth_missing',
+  'spawn_failed',
+  'protocol_error',
+  'timeout',
+  'cancelled',
+  'prompt_too_large',
+  'unknown',
+]);
+
 function extractErrno(err: unknown): string | undefined {
-  const direct = errnoCode(err);
-  if (direct) return direct;
   if (err && typeof err === 'object') {
     const detail = (err as { detail?: { errno?: unknown } }).detail;
     if (detail && typeof detail.errno === 'string') return detail.errno;
-    const cause = (err as { cause?: unknown }).cause;
-    if (cause) return errnoCode(cause);
+    const causeErrno = errnoCode((err as { cause?: unknown }).cause);
+    if (causeErrno) return causeErrno;
   }
-  return undefined;
+  const direct = errnoCode(err);
+  // Ignore our own discriminant codes — they are not OS errnos.
+  return direct && !AGENT_ERROR_CODES.has(direct) ? direct : undefined;
 }
 
 async function probeVersion(

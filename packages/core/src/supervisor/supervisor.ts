@@ -21,6 +21,9 @@ export const RESUMABLE_STATUSES: readonly RunStatus[] = [
   'incomplete',
 ];
 
+/** How many recently-finished runs to keep in the health snapshot. */
+const MAX_RECENT_COMPLETED = 200;
+
 export interface SupervisorOptions {
   orchestrator: Orchestrator;
   store: RunStore;
@@ -44,8 +47,15 @@ export class Supervisor {
   private readonly resumeQueue: string[] = [];
   private readonly active = new Map<string, RunHandle>();
   private readonly completed: Array<{ id: string; status: RunStatus }> = [];
-  /** Run ids this supervisor has already taken responsibility for (active, queued to resume, or done) — never resume them again. */
-  private readonly handled = new Set<string>();
+  private completedCount = 0;
+  /**
+   * Last checkpointSeq at which each run id was handled (resumed). A run is
+   * re-resumable only if its persisted record has advanced past this — so a
+   * stuck (no-progress) `incomplete` run is not re-resumed every cycle (no
+   * livelock), while a genuinely-progressing one is picked back up. Terminal
+   * runs are deleted, keeping the map bounded.
+   */
+  private readonly handledSeq = new Map<string, number>();
   private state: SupervisorState = 'idle';
   private lastHeartbeatAt = 0;
   private readonly clock: () => number;
@@ -69,12 +79,15 @@ export class Supervisor {
     const ids = await this.options.store.list();
     const toResume: string[] = [];
     for (const id of ids) {
-      if (this.handled.has(id) || this.active.has(id) || this.resumeQueue.includes(id)) continue;
+      if (this.active.has(id) || this.resumeQueue.includes(id)) continue;
       const record = await this.options.store.load(id);
-      if (record && RESUMABLE_STATUSES.includes(record.status)) {
-        this.handled.add(id);
-        toResume.push(id);
-      }
+      if (!record || !RESUMABLE_STATUSES.includes(record.status)) continue;
+      // Re-resume only if the run advanced since we last handled it; otherwise
+      // a perpetually-stuck `incomplete` run would be re-queued every cycle.
+      const lastSeq = this.handledSeq.get(id);
+      if (lastSeq !== undefined && record.checkpointSeq <= lastSeq) continue;
+      this.handledSeq.set(id, record.checkpointSeq);
+      toResume.push(id);
     }
     this.resumeQueue.push(...toResume);
     return toResume;
@@ -106,12 +119,18 @@ export class Supervisor {
   }
 
   private async track(handle: RunHandle): Promise<void> {
-    this.handled.add(handle.id);
     this.active.set(handle.id, handle);
     this.heartbeat();
     try {
       const result = await handle.result;
+      this.completedCount += 1;
       this.completed.push({ id: handle.id, status: result.status });
+      // Keep the recent-runs log bounded for a long-lived process.
+      if (this.completed.length > MAX_RECENT_COMPLETED) this.completed.shift();
+      // A terminal run can never be resumed again (status excludes it), so drop
+      // its handled entry to keep the map bounded; a still-resumable run keeps
+      // its seq so it is only re-resumed once it advances further.
+      if (!RESUMABLE_STATUSES.includes(result.status)) this.handledSeq.delete(handle.id);
       this.options.onRunFinished?.(handle.id, result.status);
     } finally {
       this.active.delete(handle.id);
@@ -145,7 +164,7 @@ export class Supervisor {
       state: this.state,
       queued: this.queue.length + this.resumeQueue.length,
       active: this.active.size,
-      completed: this.completed.length,
+      completed: this.completedCount,
       lastHeartbeatAt: this.lastHeartbeatAt,
       runs: [
         ...[...this.active.keys()].map((id) => ({ id, status: 'running' as const })),

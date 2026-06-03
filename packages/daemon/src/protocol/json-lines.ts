@@ -67,6 +67,8 @@ export interface JsonLineStream {
 
 const MAX_AGGREGATE_BYTES = 256 * 1024;
 const MAX_AGGREGATE_LINES = 512;
+/** Hard cap on a single not-yet-terminated line before we drop it and resync. */
+const MAX_LINE_BYTES = 4 * 1024 * 1024;
 
 /**
  * Create a streaming JSONL parser.
@@ -143,6 +145,13 @@ export function createJsonLineStream(
         buffer = buffer.slice(newlineIdx + 1);
         handleLine(line);
         newlineIdx = buffer.indexOf('\n');
+      }
+      // Guard against an unbounded line: a process that streams without a
+      // newline (or a multi-MB single line) must not grow `buffer` forever.
+      // Drop the oversize in-progress line and resync at the next newline.
+      if (buffer.length > MAX_LINE_BYTES) {
+        resetPending();
+        buffer = '';
       }
     },
     flush(): void {

@@ -10,14 +10,30 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CodeGraphSnapshot } from './codegraph.js';
-import type { WikiSnapshot } from './wiki.js';
+import type { WikiEntry, WikiSnapshot } from './wiki.js';
 
 export interface KnowledgeStore {
   loadWiki(): Promise<WikiSnapshot | null>;
   saveWiki(snapshot: WikiSnapshot): Promise<void>;
+  /**
+   * Atomically union `entries` into the persisted wiki (incoming entries win
+   * on id collision) under a writer lock, so concurrent runs that both checkpoint
+   * can't clobber each other's contributions via load-merge-save races. Optional:
+   * stores that don't implement it fall back to caller-side load+merge+save.
+   */
+  mergeWiki?(entries: WikiEntry[]): Promise<void>;
   loadCodegraph(): Promise<CodeGraphSnapshot | null>;
   saveCodegraph(snapshot: CodeGraphSnapshot): Promise<void>;
 }
+
+/**
+ * Per-directory write locks. Concurrent {@link FileKnowledgeStore} instances
+ * (e.g. several orchestrators under one Supervisor) pointed at the same
+ * `.omakase` dir serialize their read-merge-write cycles through one chain,
+ * so an interleaving can't drop entries. Keyed by resolved dir; bounded by the
+ * number of distinct project dirs touched in-process.
+ */
+const wikiWriteLocks = new Map<string, Promise<unknown>>();
 
 function isWikiSnapshot(value: unknown): value is WikiSnapshot {
   return Boolean(value) && Array.isArray((value as WikiSnapshot).entries);
@@ -68,6 +84,29 @@ export class FileKnowledgeStore implements KnowledgeStore {
 
   async saveWiki(snapshot: WikiSnapshot): Promise<void> {
     await this.writeJson('wiki.json', snapshot);
+  }
+
+  async mergeWiki(entries: WikiEntry[]): Promise<void> {
+    const key = path.resolve(this.dir);
+    const prev = wikiWriteLocks.get(key) ?? Promise.resolve();
+    // Chain regardless of whether the previous merge resolved or rejected, so
+    // one failed write doesn't stall the lock for every later writer.
+    const run = prev.then(
+      () => this.doMergeWiki(entries),
+      () => this.doMergeWiki(entries),
+    );
+    wikiWriteLocks.set(
+      key,
+      run.catch(() => undefined),
+    );
+    return run;
+  }
+
+  private async doMergeWiki(entries: WikiEntry[]): Promise<void> {
+    const onDisk = await this.loadWiki();
+    const byId = new Map((onDisk?.entries ?? []).map((e) => [e.id, e] as const));
+    for (const entry of entries) byId.set(entry.id, entry);
+    await this.saveWiki({ entries: [...byId.values()] });
   }
 
   async loadCodegraph(): Promise<CodeGraphSnapshot | null> {

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { detectAgent, detectAgents } from '../src/runtimes/detection.js';
+import { AgentSpawnError } from '../src/runtime/errors.js';
 import { resolveExecutable } from '../src/runtimes/executables.js';
 import { createRegistry, RuntimeRegistry } from '../src/runtimes/registry.js';
 import { claudeAgentDef } from '../src/runtimes/defs/claude.js';
@@ -192,6 +193,38 @@ describe('detectAgents', () => {
       claudeAgentDef,
       detectOpts({ transport }),
     );
+    expect(claude.available).toBe(false);
+  });
+
+  it('treats an ENOENT carried in detail.errno as not invocable', async () => {
+    // The version probe fails with our AgentSpawnError (code "spawn_failed"),
+    // but the real OS errno lives in detail.errno. extractErrno must consult
+    // detail/cause first — not the "spawn_failed" discriminant — so the agent
+    // is reported unavailable rather than a ghost-available binary.
+    const transport = createFakeTransport((ctrl) => {
+      if (path.basename(ctrl.request.command) === 'claude') {
+        ctrl.failSpawn(
+          new AgentSpawnError('spawn claude ENOENT', { detail: { errno: 'ENOENT' } }),
+        );
+      } else {
+        ctrl.exit(0);
+      }
+    });
+    const claude = await detectAgent(claudeAgentDef, detectOpts({ transport }));
+    expect(claude.available).toBe(false);
+  });
+
+  it('treats an EACCES carried in the error cause as not invocable', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (path.basename(ctrl.request.command) === 'claude') {
+        ctrl.failSpawn(
+          new AgentSpawnError('spawn failed', { cause: { code: 'EACCES' } }),
+        );
+      } else {
+        ctrl.exit(0);
+      }
+    });
+    const claude = await detectAgent(claudeAgentDef, detectOpts({ transport }));
     expect(claude.available).toBe(false);
   });
 

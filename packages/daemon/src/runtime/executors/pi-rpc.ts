@@ -69,6 +69,11 @@ async function piRpcDriver(
   };
   push({ type: 'status', label: 'initializing', model: input.model ?? null });
 
+  // Consume wait() eagerly: a spawn failure rejects exitPromise immediately,
+  // and the stdout loop would otherwise leave it dangling (unhandled rejection).
+  const exited = proc.wait();
+  exited.catch(() => undefined);
+
   let nextRpcId = 1;
   const promptId = nextRpcId++;
   let ended = false;
@@ -112,7 +117,7 @@ async function piRpcDriver(
     parser.flush();
     if (ended) proc.kill('SIGTERM');
 
-    const exit = await proc.wait();
+    const exit = await exited;
     if (timedOut) throw new AgentTimeoutError(input.timeoutMs!);
     if (rejected) return 'error';
     if (ac.signal.aborted && !ended) return 'cancelled';

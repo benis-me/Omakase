@@ -488,9 +488,12 @@ export async function loadTsconfigAliases(
         if (starIdx === -1) return toRel(target);
         const prefix = target.slice(0, starIdx);
         const suffix = target.slice(starIdx + 1);
-        const trailingSep = /[/\\]$/.test(prefix);
-        const relPrefix = prefix.replace(/[/\\]+$/, '') === '' ? toRel('.') : toRel(prefix);
-        const sep = trailingSep && relPrefix && !relPrefix.endsWith('/') ? '/' : '';
+        const strippedEmpty = prefix.replace(/[/\\]+$/, '') === '';
+        // The wildcard sits at a directory boundary when the prefix ends with a
+        // separator OR is empty (resolves to baseUrl) — so re-attach a '/'.
+        const atDirBoundary = /[/\\]$/.test(prefix) || strippedEmpty;
+        const relPrefix = strippedEmpty ? toRel('.') : toRel(prefix);
+        const sep = atDirBoundary && relPrefix && !relPrefix.endsWith('/') ? '/' : '';
         return `${relPrefix}${sep}*${suffix}`;
       });
     }

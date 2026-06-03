@@ -79,4 +79,33 @@ describe('node transport', () => {
     expect(exit.signal).toBe('SIGTERM');
     expect(exit.code).toBeNull();
   });
+
+  it('escalates to SIGKILL when a child ignores SIGTERM', async () => {
+    const prev = process.env.OMAKASE_KILL_GRACE_MS;
+    process.env.OMAKASE_KILL_GRACE_MS = '150';
+    try {
+      const transport = createNodeTransport();
+      const controller = new AbortController();
+      // Trap SIGTERM so it has no effect; only SIGKILL (uncatchable) can stop
+      // it. The child prints "ready" AFTER installing the trap so we can wait
+      // for it — aborting before the trap is installed would let the default
+      // SIGTERM action win the startup race.
+      const proc = transport.spawn({
+        command: node,
+        args: [
+          '-e',
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready\\n'); setInterval(() => {}, 1000)",
+        ],
+        signal: controller.signal,
+      });
+      const iterator = proc.stdout[Symbol.asyncIterator]();
+      await iterator.next(); // child has installed its SIGTERM trap
+      controller.abort();
+      const exit = await proc.wait();
+      expect(exit.signal).toBe('SIGKILL');
+    } finally {
+      if (prev === undefined) delete process.env.OMAKASE_KILL_GRACE_MS;
+      else process.env.OMAKASE_KILL_GRACE_MS = prev;
+    }
+  });
 });

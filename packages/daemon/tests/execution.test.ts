@@ -397,4 +397,27 @@ describe('runtime: error + lifecycle handling', () => {
     expect(result.status).toBe('error');
     expect(result.error).toMatch(/timed out/i);
   });
+
+  it('does not orphan the exit promise when the spawn fails mid-run', async () => {
+    // When the spawn rejects exitPromise and the stdout loop throws, the driver
+    // jumps to its catch without ever awaiting wait(). The eager exited.catch()
+    // must keep that rejection from surfacing as an unhandledRejection.
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => void rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    try {
+      const transport = createFakeTransport((ctrl) => {
+        if (isProbe(ctrl)) return answerProbe(ctrl);
+        ctrl.onStdinEnd(() => ctrl.failSpawn(new Error('stream broke mid-run')));
+      });
+      const runtime = runtimeWith(transport);
+      const result = await runtime.runAgent({ agentId: 'gemini', prompt: 'hi' });
+      expect(result.status).toBe('error');
+      // Give any orphaned rejection a couple of ticks to surface.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
 });

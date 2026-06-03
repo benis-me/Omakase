@@ -68,6 +68,25 @@ describe('applyMcpInjection', () => {
     expect(out.otherKey).toBe(1); // other top-level keys preserved
   });
 
+  it('ignores a malformed JSON-array .mcp.json and writes fresh', async () => {
+    // A JSON array is `typeof "object"` but spreading it would corrupt the
+    // merged config (numeric keys, no mcpServers). It must be discarded.
+    let written = '';
+    await applyMcpInjection({
+      strategy: 'claude-mcp-json',
+      servers: [fs],
+      cwd: '/proj',
+      env: {},
+      readProjectFile: async () => JSON.stringify([{ command: 'bogus' }]),
+      writeProjectFile: async (_p, c) => void (written = c),
+    });
+    const out = JSON.parse(written);
+    expect(out.mcpServers.fs.command).toBe('mcp-fs');
+    // No numeric keys leaked from spreading the array.
+    expect(out['0']).toBeUndefined();
+    expect(Array.isArray(out)).toBe(false);
+  });
+
   it('omits env on remote servers in both builders', () => {
     expect((buildClaudeMcpJson([remote]).mcpServers.web as Record<string, unknown>).env).toBeUndefined();
     const oc = JSON.parse(buildOpenCodeConfigContent([{ ...remote, env: { K: 'v' } }]));

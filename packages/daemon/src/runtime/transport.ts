@@ -44,6 +44,14 @@ export interface Transport {
   spawn(request: SpawnRequest): TransportProcess;
 }
 
+/** Default grace period before a SIGTERM is escalated to SIGKILL. */
+const DEFAULT_KILL_GRACE_MS = 5000;
+
+/** Read the escalation grace at terminate time so an env override applies. */
+function killGraceMs(): number {
+  return Number(process.env.OMAKASE_KILL_GRACE_MS) || DEFAULT_KILL_GRACE_MS;
+}
+
 export function createNodeTransport(): Transport {
   return {
     spawn(request: SpawnRequest): TransportProcess {
@@ -51,12 +59,42 @@ export function createNodeTransport(): Transport {
       const stderr = createPushStream<string>();
 
       let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
       let resolveExit!: (exit: ProcessExit) => void;
       let rejectExit!: (error: unknown) => void;
       const exitPromise = new Promise<ProcessExit>((resolve, reject) => {
         resolveExit = resolve;
         rejectExit = reject;
       });
+
+      // Send `signal`, then escalate to SIGKILL after a grace period if the
+      // child still hasn't closed — so a process that traps/ignores SIGTERM
+      // can't wedge the run forever. The guard is `settled` (did the process
+      // actually close), NOT `child.killed`: child.kill() flips `killed` to true
+      // merely because a signal was *sent*, so guarding the escalation on it
+      // would suppress the SIGKILL for exactly the trap-SIGTERM case it exists
+      // for. The timer is unref'd so it never keeps the event loop alive, and is
+      // cleared on close.
+      const terminate = (signal: NodeJS.Signals = 'SIGTERM'): void => {
+        if (settled) return;
+        try {
+          child.kill(signal);
+        } catch {
+          // Process already reaped between the check and the kill — nothing to do.
+        }
+        if (!killTimer) {
+          killTimer = setTimeout(() => {
+            if (!settled) {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                /* already gone */
+              }
+            }
+          }, killGraceMs());
+          killTimer.unref?.();
+        }
+      };
 
       const child = nodeSpawn(request.command, request.args, {
         cwd: request.cwd,
@@ -92,6 +130,7 @@ export function createNodeTransport(): Transport {
       });
 
       child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (killTimer) clearTimeout(killTimer);
         stdout.end();
         stderr.end();
         if (settled) return;
@@ -99,9 +138,7 @@ export function createNodeTransport(): Transport {
         resolveExit({ code, signal });
       });
 
-      const onAbort = (): void => {
-        if (!child.killed) child.kill('SIGTERM');
-      };
+      const onAbort = (): void => terminate('SIGTERM');
       if (request.signal) {
         if (request.signal.aborted) onAbort();
         else request.signal.addEventListener('abort', onAbort, { once: true });
@@ -123,7 +160,7 @@ export function createNodeTransport(): Transport {
           return exitPromise;
         },
         kill(signal: NodeJS.Signals = 'SIGTERM'): void {
-          if (!child.killed) child.kill(signal);
+          terminate(signal);
         },
       };
     },

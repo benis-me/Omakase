@@ -108,6 +108,58 @@ describe('Supervisor', () => {
     expect(await sup.resumeInterrupted()).toEqual([]);
   });
 
+  it('re-resumes a run that advanced since it was last handled', async () => {
+    const store = new MemoryRunStore();
+    const runtime = scriptedRuntime();
+    const chained: Planner = {
+      plan: (ctx) => {
+        const g = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+        const w1 = g.addTask({ title: 'w1', role: 'worker' });
+        const w2 = g.addTask({ title: 'w2', role: 'worker', dependsOn: [w1.id] });
+        g.addTask({ title: 'review', role: 'reviewer', dependsOn: [w2.id] });
+        g.refreshReadiness();
+        return g;
+      },
+    };
+    // Crash leaves it incomplete at some checkpointSeq.
+    const crashed = orchestrator(runtime, store, chained, { maxIterations: 1 });
+    const result = await crashed.start({ prompt: 'do work' }).result;
+    expect(result.status).toBe('incomplete');
+    const seqAfterCrash = (await store.load(result.id))!.checkpointSeq;
+
+    // The supervisor's orchestrator is ALSO capped, so the resume makes progress
+    // (advancing checkpointSeq) yet leaves the run incomplete.
+    const sup = new Supervisor({
+      orchestrator: orchestrator(runtime, store, chained, { maxIterations: 1 }),
+      store,
+      clock: () => 42,
+    });
+    expect(await sup.resumeInterrupted()).toEqual([result.id]);
+    await sup.drain();
+    const after = await store.load(result.id);
+    expect(after!.status).toBe('incomplete');
+    expect(after!.checkpointSeq).toBeGreaterThan(seqAfterCrash);
+
+    // Because the run advanced, the next scan re-resumes it (progress, not a
+    // livelock on a stuck run).
+    expect(await sup.resumeInterrupted()).toEqual([result.id]);
+  });
+
+  it('reports the true completed total even past the recent-runs cap', async () => {
+    const store = new MemoryRunStore();
+    const sup = new Supervisor({
+      orchestrator: orchestrator(scriptedRuntime(), store, new RulePlanner()),
+      store,
+      concurrency: 8,
+      clock: () => 1,
+    });
+    const N = 205;
+    for (let i = 0; i < N; i += 1) sup.enqueue({ prompt: `- task ${i}` });
+    const health = await sup.drain();
+    expect(health.completed).toBe(N); // counter is not capped
+    expect(health.runs.length).toBeLessThanOrEqual(200); // recent-runs log is bounded
+  });
+
   it('does not process work while paused, and resumes after', async () => {
     const store = new MemoryRunStore();
     const sup = new Supervisor({

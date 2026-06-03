@@ -82,6 +82,11 @@ async function spawnDriver(
     env,
     signal: ac.signal,
   });
+  // Attach a consumer to wait() eagerly: on a spawn failure the transport
+  // rejects exitPromise immediately, and the stdout loop below would jump to
+  // catch without ever awaiting wait() — leaving a dangling rejected promise.
+  const exited = proc.wait();
+  exited.catch(() => undefined);
 
   // Deliver the prompt.
   if (def.promptViaStdin) {
@@ -128,7 +133,7 @@ async function spawnDriver(
       }
     }
 
-    const exit = await proc.wait();
+    const exit = await exited;
     await stderrDone;
 
     if (timedOut) throw new AgentTimeoutError(input.timeoutMs!);

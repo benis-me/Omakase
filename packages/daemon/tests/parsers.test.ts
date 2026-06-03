@@ -117,6 +117,44 @@ describe('codexJsonMapper', () => {
     events.push(...codexJsonMapper({ type: 'item.completed', item: { type: 'agent_message', text: 'hello' } }, state));
     expect(fold(events).text).toBe('hello');
   });
+
+  it('dedupes by item id when the same message is echoed across events', () => {
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.started', item: { id: 'item_1', type: 'agent_message', text: 'hello' } },
+        state,
+      ),
+    );
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'hello' } },
+        state,
+      ),
+    );
+    expect(fold(events).text).toBe('hello');
+  });
+
+  it('keeps two distinct items even when their text is identical', () => {
+    // Two separate agent messages can legitimately carry the same text. Keying
+    // dedup on item id (not raw text) means the second is not swallowed.
+    const state = jsonState();
+    const events: AgentEvent[] = [];
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'Done' } },
+        state,
+      ),
+    );
+    events.push(
+      ...codexJsonMapper(
+        { type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'Done' } },
+        state,
+      ),
+    );
+    expect(fold(events).text).toBe('DoneDone');
+  });
 });
 
 describe('mapPiRpcEvent', () => {
