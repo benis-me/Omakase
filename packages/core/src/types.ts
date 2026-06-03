@@ -19,6 +19,12 @@ export interface OrchestrationRequest {
   prompt: string;
   cwd?: string;
   mode?: WorkMode;
+  /**
+   * Acceptance criteria the reviewer scores per-criterion (e.g. from a
+   * {@link SpecWorkflow}). When present the reviewer must mark each one met or
+   * unmet, and the run is only approved when all are met.
+   */
+  acceptanceCriteria?: string[];
   /** Free-form metadata threaded into hooks and persisted with the run. */
   metadata?: Record<string, unknown>;
 }

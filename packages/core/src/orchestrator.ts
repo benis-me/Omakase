@@ -34,11 +34,11 @@ import {
   type ReplanReason,
   type TaskNode,
 } from './plan/plan-graph.js';
-import { RulePlanner, type Planner } from './plan/planner.js';
+import { RulePlanner, extractJsonArray, type Planner } from './plan/planner.js';
 import { RuleRouter, type RouteDecision, type Router } from './router/router.js';
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
-import type { OrchestratorEvent, RunStatus } from './run-events.js';
+import type { OrchestratorEvent, ReviewCriterion, RunStatus } from './run-events.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
 export interface RunBudget {
@@ -108,6 +108,44 @@ export function parseReview(text: string): { approved: boolean; notes: string } 
   // Ambiguous non-empty text: default to approve to avoid livelock, unless an
   // explicit reject term appears.
   return { approved: !rejects, notes };
+}
+
+export interface StructuredReview {
+  approved: boolean;
+  criteria: ReviewCriterion[];
+  notes: string;
+}
+
+/**
+ * Parse a reviewer's per-criterion verdict. Expects a JSON array (same order as
+ * `criteria`) of `{ met: boolean, note?: string }`. Approved iff every criterion
+ * is met. Falls back to {@link parseReview} (applying the overall verdict to all
+ * criteria) when the JSON can't be parsed.
+ */
+export function parseStructuredReview(text: string, criteria: string[]): StructuredReview {
+  const arr = extractJsonArray(text);
+  if (arr && arr.length > 0) {
+    const results: ReviewCriterion[] = criteria.map((criterion, i) => {
+      const entry = arr[i] as { met?: unknown; note?: unknown } | undefined;
+      const met = entry?.met === true;
+      return {
+        criterion,
+        met,
+        ...(typeof entry?.note === 'string' ? { note: entry.note } : {}),
+      };
+    });
+    return {
+      approved: results.length > 0 && results.every((r) => r.met),
+      criteria: results,
+      notes: text.trim(),
+    };
+  }
+  const fallback = parseReview(text);
+  return {
+    approved: fallback.approved,
+    criteria: criteria.map((criterion) => ({ criterion, met: fallback.approved })),
+    notes: fallback.notes,
+  };
 }
 
 interface Deferred {
@@ -318,6 +356,22 @@ class RunController implements RunHandle {
         .filter((t): t is TaskNode => Boolean(t))
         .map((t) => `- ${t.title}: ${t.result?.summary ?? '(no summary)'}`)
         .join('\n');
+      const criteria = this.request.acceptanceCriteria ?? [];
+      if (criteria.length > 0) {
+        return [
+          'You are reviewing completed work against acceptance criteria.',
+          'For EACH criterion decide whether it is met. Respond with ONLY a JSON',
+          'array in the SAME order: [{"met": true|false, "note": "why"}].',
+          '',
+          'Acceptance criteria:',
+          ...criteria.map((c, i) => `${i + 1}. ${c}`),
+          '',
+          `Original request: ${this.request.prompt}`,
+          `Completed work:\n${completed || '(none)'}`,
+          knowledge ? `\n${knowledge}` : '',
+          skills,
+        ].join('\n');
+      }
       return [
         'You are reviewing completed work against the original request.',
         'Reply with APPROVE or REJECT and a one-line reason.',
@@ -508,7 +562,11 @@ class RunController implements RunHandle {
         else this.graph.setStatus(task.id, 'failed');
         return;
       }
-      const review = parseReview(result.text);
+      const criteria = this.request.acceptanceCriteria ?? [];
+      const review =
+        criteria.length > 0
+          ? parseStructuredReview(result.text, criteria)
+          : { ...parseReview(result.text), criteria: undefined as ReviewCriterion[] | undefined };
       this.graph.setResult(task.id, {
         success: review.approved,
         summary,
@@ -518,7 +576,13 @@ class RunController implements RunHandle {
       // For a reviewer, task-finished.success reflects the verdict, not just
       // that the agent ran — so the two events never contradict each other.
       this.emit({ type: 'task-finished', taskId: task.id, title: task.title, role: 'reviewer', success: review.approved, summary });
-      this.emit({ type: 'review', taskId: task.id, approved: review.approved, notes: review.notes.slice(0, 300) });
+      this.emit({
+        type: 'review',
+        taskId: task.id,
+        approved: review.approved,
+        notes: review.notes.slice(0, 300),
+        ...(review.criteria ? { criteria: review.criteria } : {}),
+      });
       if (review.approved) this.graph.setStatus(task.id, 'succeeded');
       else await this.handleReviewRejection(task, review.notes);
       return;

@@ -9,6 +9,12 @@ import type { PlanGraphSnapshot, ReplanReason, TaskStatus } from './plan/plan-gr
 import type { RouteDecision } from './router/router.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
+export interface ReviewCriterion {
+  criterion: string;
+  met: boolean;
+  note?: string;
+}
+
 export type RunStatus =
   | 'pending'
   | 'running'
@@ -54,7 +60,13 @@ export type OrchestratorEvent =
       success: boolean;
       summary: string;
     }
-  | { type: 'review'; taskId: string; approved: boolean; notes: string }
+  | {
+      type: 'review';
+      taskId: string;
+      approved: boolean;
+      notes: string;
+      criteria?: ReviewCriterion[];
+    }
   | { type: 'replanned'; reason: ReplanReason; snapshot: PlanGraphSnapshot }
   | { type: 'knowledge-updated'; wikiEntries: number; codegraphFiles: number | null }
   | {

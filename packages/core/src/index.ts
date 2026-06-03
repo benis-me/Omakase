@@ -81,12 +81,19 @@ export type {
   OrchestratorEvent,
   OrchestratorEventType,
   RunStatus,
+  ReviewCriterion,
   InboxItemSnapshot,
 } from './run-events.js';
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
-export { Orchestrator, parseReview } from './orchestrator.js';
-export type { OrchestratorOptions, RunHandle, RunResult, RunBudget } from './orchestrator.js';
+export { Orchestrator, parseReview, parseStructuredReview } from './orchestrator.js';
+export type {
+  OrchestratorOptions,
+  RunHandle,
+  RunResult,
+  RunBudget,
+  StructuredReview,
+} from './orchestrator.js';
 
 // ── Workflows: spec-driven + TDD ─────────────────────────────────────────────
 export { SpecWorkflow, SPEC_PHASES } from './workflows/spec.js';
