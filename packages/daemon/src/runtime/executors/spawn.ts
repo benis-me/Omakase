@@ -14,6 +14,7 @@ import {
   isAgentRuntimeError,
 } from '../errors.js';
 import { getJsonMapper, type JsonMapperState } from '../parsers.js';
+import { applyMcpInjection } from '../mcp.js';
 import type { AgentExecutor, ExecutorContext } from '../executor.js';
 import { streamFromDriver } from '../stream.js';
 
@@ -60,7 +61,20 @@ async function spawnDriver(
         }, input.timeoutMs)
       : undefined;
 
-  const env = { ...(input.env ?? process.env), ...(def.env ?? {}) };
+  let env: Record<string, string | undefined> = {
+    ...(input.env ?? process.env),
+    ...(def.env ?? {}),
+  };
+  // Forward external MCP servers via the adapter's declared injection strategy.
+  if (input.mcpServers && input.mcpServers.length > 0 && def.externalMcpInjection) {
+    const injected = await applyMcpInjection({
+      strategy: def.externalMcpInjection,
+      servers: input.mcpServers,
+      cwd: input.cwd,
+      env,
+    });
+    env = injected.env;
+  }
   const proc = transport.spawn({
     command: resolvedBin,
     args,

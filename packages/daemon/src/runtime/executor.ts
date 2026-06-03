@@ -8,6 +8,7 @@
  */
 import type { AgentEvent } from '../protocol/events.js';
 import type { DetectedAgent, RuntimeAgentDef } from '../runtimes/types.js';
+import type { McpServerConfig } from './mcp.js';
 import type { Transport } from './transport.js';
 
 export interface AgentRunInput {
@@ -22,6 +23,8 @@ export interface AgentRunInput {
   extraAllowedDirs?: string[];
   /** Absolute paths to images for multimodal input (adapters that support it). */
   imagePaths?: string[];
+  /** External MCP servers to forward to the agent via its declared strategy. */
+  mcpServers?: McpServerConfig[];
   signal?: AbortSignal;
   timeoutMs?: number;
   /** True when continuing an existing conversation rather than starting fresh. */

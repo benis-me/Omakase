@@ -127,6 +127,19 @@ export {
 export type { AgentRunInput, AgentExecutor, ExecutorContext } from './runtime/executor.js';
 export type { StreamDriver } from './runtime/stream.js';
 export { streamFromDriver, errorStream, deferStream } from './runtime/stream.js';
+export {
+  applyMcpInjection,
+  buildClaudeMcpJson,
+  buildOpenCodeConfigContent,
+  mergeAcpMcpServers,
+} from './runtime/mcp.js';
+export type {
+  McpServerConfig,
+  McpInjectionStrategy,
+  AcpMcpServer,
+  ApplyMcpInjectionContext,
+  ApplyMcpInjectionResult,
+} from './runtime/mcp.js';
 export { spawnExecutor } from './runtime/executors/spawn.js';
 export { piRpcExecutor } from './runtime/executors/pi-rpc.js';
 export {

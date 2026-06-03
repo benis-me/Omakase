@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -20,7 +20,7 @@ function makeBin(name: string): void {
 beforeAll(() => {
   binDir = mkdtempSync(path.join(os.tmpdir(), 'omakase-exec-bin-'));
   home = mkdtempSync(path.join(os.tmpdir(), 'omakase-exec-home-'));
-  for (const name of ['claude', 'codex', 'pi', 'gemini']) makeBin(name);
+  for (const name of ['claude', 'codex', 'pi', 'gemini', 'opencode']) makeBin(name);
 });
 
 function runtimeWith(transport: Transport) {
@@ -197,6 +197,50 @@ describe('runtime: pi RPC executor', () => {
   });
 });
 
+describe('runtime: external MCP injection', () => {
+  it('writes .mcp.json into cwd for the claude strategy', async () => {
+    const proj = mkdtempSync(path.join(os.tmpdir(), 'omakase-mcp-proj-'));
+    const transport = createFakeTransport((ctrl) => {
+      if (isProbe(ctrl)) return answerProbe(ctrl);
+      ctrl.onStdinEnd(() => {
+        ctrl.emitStdoutJson({ type: 'result', subtype: 'success' });
+        ctrl.exit(0);
+      });
+    });
+    await runtimeWith(transport).runAgent({
+      agentId: 'claude',
+      prompt: 'hi',
+      cwd: proj,
+      mcpServers: [{ name: 'fs', command: 'mcp-fs', args: ['--root', '.'] }],
+    });
+    const written = JSON.parse(readFileSync(path.join(proj, '.mcp.json'), 'utf8'));
+    expect(written.mcpServers.fs).toEqual({ command: 'mcp-fs', args: ['--root', '.'] });
+  });
+
+  it('sets OPENCODE_CONFIG_CONTENT in the spawn env for the opencode strategy', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) {
+        ctrl.emitStdout('1.0\n');
+        ctrl.exit(0);
+        return;
+      }
+      ctrl.onStdinEnd(() => {
+        ctrl.emitStdout('done');
+        ctrl.exit(0);
+      });
+    });
+    await runtimeWith(transport).runAgent({
+      agentId: 'opencode',
+      prompt: 'hi',
+      mcpServers: [{ name: 'fs', command: 'mcp-fs' }],
+    });
+    const runCall = transport.calls.find((c) => c.args.includes('run'));
+    const content = runCall?.env?.OPENCODE_CONFIG_CONTENT;
+    expect(content).toBeTruthy();
+    expect(JSON.parse(String(content)).mcp.fs.command).toContain('mcp-fs');
+  });
+});
+
 describe('runtime: builtin + custom executors', () => {
   it('summarizes a project offline via the builtin agent', async () => {
     const runtime = runtimeWith(createFakeTransport(() => {}));
@@ -227,7 +271,7 @@ describe('runtime: builtin + custom executors', () => {
 describe('runtime: error + lifecycle handling', () => {
   it('reports not-installed for an absent agent', async () => {
     const transport = createFakeTransport((ctrl) => {
-      // pi/opencode absent from PATH → resolveRuntime returns null without spawn.
+      // qwen/copilot absent from PATH → resolveRuntime returns null without spawn.
       ctrl.exit(0);
     });
     const runtime = createAgentRuntime({
@@ -235,7 +279,7 @@ describe('runtime: error + lifecycle handling', () => {
       transport,
       detection: { transport, env: { PATH: binDir }, includeWellKnownPathDirs: false, home },
     });
-    const result = await runtime.runAgent({ agentId: 'opencode', prompt: 'hi' });
+    const result = await runtime.runAgent({ agentId: 'qwen', prompt: 'hi' });
     expect(result.status).toBe('error');
     expect(result.error).toContain('not installed');
   });
