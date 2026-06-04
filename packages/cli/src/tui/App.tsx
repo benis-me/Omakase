@@ -1,26 +1,37 @@
 /**
- * The Omakase TUI. A thin Ink presentation layer over the {@link RunView}
- * reducer: it detects agents, optionally drives a run, and renders agents, the
- * task graph, the live event stream, knowledge status, and the active mode —
- * with pause/resume/cancel/replan keybindings. All run logic lives in
- * @omakase/core; this component only displays and forwards control intents.
+ * The Omakase TUI: a persistent run console. It is a pure CLIENT over a detached
+ * daemon ({@link RunControllerClient}) — it never owns an Orchestrator. Submitted
+ * runs live in the daemon, so quitting the TUI does NOT stop them; relaunching
+ * re-attaches and keeps showing live progress (replay + tail). Only an explicit
+ * stop ([x]) cancels a run.
+ *
+ * Layout mirrors a workflow monitor: a header (task + N/M agents + elapsed), a
+ * left "Phases" pane (stage + done/total), and a right "Detail · N agents" pane
+ * (per-task token/tool/elapsed rows), with keybindings in the footer.
  */
 import React, { useEffect, useRef, useState } from 'react';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import type { DetectedAgent } from '@omakase/daemon';
-import type { Orchestrator, RunHandle, WorkMode } from '@omakase/core';
-import type { AgentRuntime } from '@omakase/daemon';
-import { initialRunView, reduceRunView, type RunView, type TaskView } from '../view-model.js';
+import type { RunStatus, WorkMode } from '@omakase/core';
+import type { RunControllerClient, RunSummary } from '../run-client.js';
+import type { PhaseView, RunView, RunViewStatus, TaskView } from '../view-model.js';
 
 export interface AppProps {
-  runtime: AgentRuntime;
-  orchestrator: Orchestrator;
-  task?: string;
-  cwd?: string;
+  client: RunControllerClient;
+  cwd: string;
   mode: WorkMode;
+  /** Initial task already submitted by the CLI; its correlation token. */
+  token?: string;
+  /** Initial task text (for display / fallback submit). */
+  task?: string;
+  /** Local agent detection for the dashboard. */
+  detect?: () => Promise<DetectedAgent[]>;
 }
 
-const MODES: WorkMode[] = ['max-power', 'normal', 'custom'];
+type Screen = 'list' | 'run';
+const TERMINAL: ReadonlySet<RunStatus> = new Set(['succeeded', 'failed', 'cancelled']);
 
 function taskIcon(status: TaskView['status']): string {
   switch (status) {
@@ -28,103 +39,154 @@ function taskIcon(status: TaskView['status']): string {
       return '✓';
     case 'failed':
       return '✗';
+    case 'cancelled':
+      return '∅';
     case 'running':
       return '▸';
     case 'blocked':
       return '⊘';
-    case 'ready':
-      return '○';
-    case 'needs-review':
-      return '⚖';
-    case 'cancelled':
-      return '∅';
     default:
       return '·';
   }
 }
 
-function statusColor(status: RunView['status']): string {
+function statusColor(status: RunViewStatus | RunStatus): string {
   if (status === 'succeeded') return 'green';
   if (status === 'failed') return 'red';
-  if (status === 'cancelled' || status === 'incomplete') return 'yellow';
-  if (status === 'paused') return 'yellow';
+  if (status === 'cancelled' || status === 'incomplete' || status === 'paused') return 'yellow';
   if (status === 'running') return 'cyan';
   return 'gray';
 }
 
-type ComposeMode = 'new' | 'note';
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return '0s';
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+}
 
-export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: AppProps): React.ReactElement {
+function elapsedOf(view: RunView, nowMs: number): number {
+  if (view.startedAt == null) return 0;
+  const end = TERMINAL.has(view.status as RunStatus) ? view.updatedAt ?? view.startedAt : nowMs;
+  return Math.max(0, end - view.startedAt);
+}
+
+export function App({ client, cwd, token, task, detect }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
+  const active = useRef(true);
+
   const [agents, setAgents] = useState<DetectedAgent[]>([]);
-  const [mode, setMode] = useState<WorkMode>(initialMode);
-  const [view, setView] = useState<RunView>(() => initialRunView(initialMode));
-  const [compose, setCompose] = useState<{ active: boolean; mode: ComposeMode; buffer: string }>({
+  const [screen, setScreen] = useState<Screen>('list');
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [attachedId, setAttachedId] = useState<string | null>(null);
+  const [view, setView] = useState<RunView | null>(null);
+  const [compose, setCompose] = useState<{ active: boolean; kind: 'new' | 'note'; buffer: string }>({
     active: false,
-    mode: 'new',
+    kind: 'new',
     buffer: '',
   });
-  const handleRef = useRef<RunHandle | null>(null);
-  const activeRef = useRef(true);
-  // Read the latest selected mode without re-creating driveRun on every keypress.
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
+  const [notice, setNotice] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const driveRun = (taskText: string): void => {
-    if (handleRef.current) return; // one run per orchestrator instance
-    const handle = orchestrator.start({
-      prompt: taskText,
-      mode: modeRef.current,
-      ...(cwd ? { cwd } : {}),
-    });
-    handleRef.current = handle;
-    void (async () => {
-      try {
-        for await (const event of handle.events) {
-          if (!activeRef.current) break;
-          setView((v) => reduceRunView(v, event));
-        }
-      } catch {
-        /* stream ended */
-      } finally {
-        // Without a raw-mode TTY (piped stdin / CI) there is no way to press
-        // [q], so the app would hang forever after the run ends. Exit once the
-        // event stream completes. Interactive sessions stay open for review.
-        if (activeRef.current && !isRawModeSupported) exit();
-      }
-    })();
+  const refreshRuns = async (): Promise<RunSummary[]> => {
+    const list = await client.list();
+    if (active.current) setRuns(list);
+    return list;
   };
 
+  const attach = async (id: string): Promise<void> => {
+    if (!active.current) return;
+    setAttachedId(id);
+    setScreen('run');
+  };
+
+  // Mount: detect agents, then attach the initial task (if any) or show the list.
   useEffect(() => {
-    activeRef.current = true;
-    void runtime
-      .detect()
-      .then((list) => {
-        if (activeRef.current) setAgents(list);
-      })
-      .catch(() => undefined);
-
-    if (task) driveRun(task);
-
+    active.current = true;
+    if (detect) void detect().then((a) => active.current && setAgents(a)).catch(() => undefined);
+    void (async () => {
+      if (token) {
+        const id = await client.resolveRunId(token).catch(() => null);
+        if (id) await attach(id);
+        else {
+          setNotice('could not find the submitted run');
+          await refreshRuns();
+        }
+      } else if (task) {
+        const t = await client.submit(task);
+        const id = await client.resolveRunId(t).catch(() => null);
+        if (id) await attach(id);
+      } else {
+        await refreshRuns();
+      }
+    })();
     return () => {
-      activeRef.current = false;
-      handleRef.current?.cancel();
+      active.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Live-tail the attached run (replay + poll). Detach/quit does NOT stop it.
+  useEffect(() => {
+    if (!attachedId) return;
+    const stop = client.tail(attachedId, (v) => {
+      if (active.current) setView(v);
+    });
+    return () => stop();
+  }, [attachedId, client]);
+
+  // A 1s tick so live elapsed advances even when no events arrive.
+  useEffect(() => {
+    if (screen !== 'run') return;
+    const timer = setInterval(() => active.current && setNowMs(Date.now()), 1000);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }, [screen]);
+
+  const submitNew = async (text: string): Promise<void> => {
+    const t = await client.submit(text);
+    const id = await client.resolveRunId(t).catch(() => null);
+    if (id) {
+      setView(null);
+      await attach(id);
+    }
+  };
+
+  const back = (): void => {
+    setAttachedId(null);
+    setView(null);
+    setScreen('list');
+    void refreshRuns();
+  };
+
+  const save = (): void => {
+    if (!view || !attachedId) return;
+    const file = path.join(cwd, `omakase-run-${attachedId}.md`);
+    const lines = [
+      `# Run ${attachedId} — ${view.status}`,
+      view.title ? `\n${view.title}\n` : '',
+      ...view.events,
+    ];
+    try {
+      writeFileSync(file, lines.join('\n'), 'utf8');
+      setNotice(`saved ${file}`);
+    } catch {
+      setNotice('save failed');
+    }
+  };
+
   useInput(
     (input, key) => {
-      // Text-composer mode: accumulate a new task / a custom user-input note.
       if (compose.active) {
         if (key.return) {
           const text = compose.buffer.trim();
-          const composeMode = compose.mode;
-          setCompose({ active: false, mode: composeMode, buffer: '' });
+          const kind = compose.kind;
+          setCompose({ active: false, kind, buffer: '' });
           if (!text) return;
-          if (composeMode === 'new') driveRun(text);
-          else handleRef.current?.appendUserInput(text);
+          if (kind === 'new') void submitNew(text);
+          else if (attachedId) void client.sendInput(attachedId, text);
         } else if (key.escape) {
           setCompose((c) => ({ ...c, active: false, buffer: '' }));
         } else if (key.backspace || key.delete) {
@@ -136,123 +198,177 @@ export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: App
       }
 
       if (input === 'q') {
-        handleRef.current?.cancel();
-        exit();
-      } else if (input === 'p') {
-        handleRef.current?.pause();
-      } else if (input === 'r') {
-        handleRef.current?.resume();
-      } else if (input === 'c') {
-        handleRef.current?.cancel();
-      } else if (input === 'i' && handleRef.current === null && !task) {
-        // Idle with no preset task → compose one interactively.
-        setCompose({ active: true, mode: 'new', buffer: '' });
-      } else if (input === 'u' && handleRef.current !== null) {
-        // During a run → compose a custom note to feed the orchestrator.
-        setCompose({ active: true, mode: 'note', buffer: '' });
-      } else if (input === 'm') {
-        // A run's mode is fixed once it starts; only let the user pick a mode
-        // when no run has been started (gate on the handle, not transient
-        // view.status — run-started arrives a microtask after start()), so the
-        // header never claims a mode the orchestrator isn't actually using.
-        if (!task && handleRef.current === null) {
-          setMode((current) => MODES[(MODES.indexOf(current) + 1) % MODES.length]!);
+        exit(); // quitting NEVER cancels the run — the daemon keeps driving it
+        return;
+      }
+      if (input === 'i') {
+        setCompose({ active: true, kind: 'new', buffer: '' });
+        return;
+      }
+
+      if (screen === 'list') {
+        if (key.upArrow) setSelected((i) => Math.max(0, i - 1));
+        else if (key.downArrow) setSelected((i) => Math.min(runs.length - 1, i + 1));
+        else if (key.return && runs[selected]) void attach(runs[selected]!.id);
+        return;
+      }
+
+      // run screen
+      if (key.escape) back();
+      else if (input === 'x' && attachedId) {
+        setNotice('stopping…');
+        void client.stop(attachedId);
+      } else if (input === 'p' && attachedId) {
+        if (view?.status === 'paused') void client.resume(attachedId);
+        else {
+          setNotice('pausing…');
+          void client.pause(attachedId);
         }
+      } else if (input === 'u' && attachedId) {
+        setCompose({ active: true, kind: 'note', buffer: '' });
+      } else if (input === 's') {
+        save();
       }
     },
     { isActive: isRawModeSupported },
   );
 
   const availableCount = agents.filter((a) => a.available).length;
-  // Show the running mode once a run starts; the selectable mode only while idle.
-  const displayMode = view.status === 'idle' ? mode : view.mode;
 
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text bold color="magenta">
-          Omakase{' '}
-        </Text>
-        <Text>
-          mode=<Text color="cyan">{displayMode}</Text> · run=
-          <Text color={statusColor(view.status)}>{view.status}</Text>
-          {view.runId ? <Text dimColor> ({view.runId})</Text> : null}
-        </Text>
-      </Box>
-
-      <Box>
-        <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
-          <Text bold>Agents ({availableCount}/{agents.length})</Text>
-          {agents.length === 0 ? <Text dimColor>detecting…</Text> : null}
-          {agents.map((a) => (
-            <Text key={a.id}>
-              <Text color={a.available ? 'green' : 'gray'}>{a.available ? '●' : '○'}</Text> {a.id}
-              {a.version ? <Text dimColor> {a.version.split(' ')[0]}</Text> : null}
-            </Text>
-          ))}
-        </Box>
-
-        <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
-          <Text bold>Task graph</Text>
-          {view.tasks.length === 0 ? <Text dimColor>no plan yet</Text> : null}
-          {view.tasks.map((t) => (
-            <Text key={t.id}>
-              {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title}
-            </Text>
-          ))}
-          {view.route ? (
-            <Text dimColor>route: {view.route.kind}</Text>
-          ) : null}
-        </Box>
-      </Box>
-
-      <Box>
-        <Box borderStyle="round" paddingX={1} marginRight={1}>
-          <Text>
-            wiki=<Text color="cyan">{view.wikiEntries}</Text>
-            {view.codegraphFiles != null ? <Text> · files={view.codegraphFiles}</Text> : null}
-          </Text>
-        </Box>
-        {view.lastReview ? (
-          <Box borderStyle="round" paddingX={1}>
-            <Text>
-              review:{' '}
-              <Text color={view.lastReview.approved ? 'green' : 'red'}>
-                {view.lastReview.approved ? 'APPROVED' : 'REJECTED'}
-              </Text>
-            </Text>
-          </Box>
-        ) : null}
-      </Box>
-
-      <Box flexDirection="column" borderStyle="round" paddingX={1}>
-        <Text bold>Stream</Text>
-        {view.events.slice(-8).map((line, i) => (
-          <Text key={`${i}-${line.slice(0, 8)}`}>{line}</Text>
-        ))}
-      </Box>
-
-      {view.summary ? (
-        <Text color={statusColor(view.status)}>{view.summary}</Text>
-      ) : null}
-
+      <Header view={view} screen={screen} availableCount={availableCount} agentTotal={agents.length} nowMs={nowMs} task={task} />
+      {screen === 'list' ? (
+        <RunList runs={runs} selected={selected} agents={agents} />
+      ) : (
+        <RunDetail view={view} nowMs={nowMs} />
+      )}
       {compose.active ? (
         <Box>
           <Text>
-            {compose.mode === 'new' ? 'new task' : 'note'} ›{' '}
-            <Text color="cyan">{compose.buffer}</Text>
+            {compose.kind === 'new' ? 'new task' : 'note'} › <Text color="cyan">{compose.buffer}</Text>
             <Text inverse> </Text>
           </Text>
         </Box>
       ) : null}
-
-      <Text dimColor>{hints(compose.active, handleRef.current !== null)}</Text>
+      {notice ? <Text dimColor>{notice}</Text> : null}
+      <Text dimColor>{hints(compose.active, screen)}</Text>
     </Box>
   );
 }
 
-function hints(composing: boolean, running: boolean): string {
+function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
-  if (running) return '[p]ause [r]esume [c]ancel [u] add-input [q]uit';
-  return '[i] new task  [m] mode  [q]uit';
+  if (screen === 'list') return '↑↓ select · [enter] attach · [i] new task · [q]uit';
+  return '[x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
+}
+
+function Header({
+  view,
+  screen,
+  availableCount,
+  agentTotal,
+  nowMs,
+  task,
+}: {
+  view: RunView | null;
+  screen: Screen;
+  availableCount: number;
+  agentTotal: number;
+  nowMs: number;
+  task?: string;
+}): React.ReactElement {
+  const title = view?.title ?? task ?? 'Omakase';
+  const elapsed = view ? fmtDuration(elapsedOf(view, nowMs)) : '';
+  return (
+    <Box justifyContent="space-between">
+      <Box>
+        <Text bold color="magenta">
+          omakase{' '}
+        </Text>
+        <Text>{title.split('\n')[0]?.slice(0, 60)}</Text>
+        {view ? (
+          <Text>
+            {' '}
+            · <Text color={statusColor(view.status)}>{view.status}</Text>
+          </Text>
+        ) : null}
+      </Box>
+      <Text dimColor>
+        {screen === 'run' && view
+          ? `${view.activeAgents}/${view.totalAgents} agents · ${elapsed}`
+          : `${availableCount}/${agentTotal} agents`}
+      </Text>
+    </Box>
+  );
+}
+
+function RunList({
+  runs,
+  selected,
+  agents,
+}: {
+  runs: RunSummary[];
+  selected: number;
+  agents: DetectedAgent[];
+}): React.ReactElement {
+  return (
+    <Box>
+      <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1} marginRight={1}>
+        <Text bold>Runs ({runs.length})</Text>
+        {runs.length === 0 ? <Text dimColor>no runs yet — press [i] to start one</Text> : null}
+        {runs.map((r, i) => (
+          <Text key={r.id} inverse={i === selected}>
+            <Text color={statusColor(r.status)}>{r.status.padEnd(10)}</Text> {r.done}/{r.total}{' '}
+            {r.title.split('\n')[0]?.slice(0, 48)}
+          </Text>
+        ))}
+      </Box>
+      <Box flexDirection="column" borderStyle="round" paddingX={1} width={28}>
+        <Text bold>Agents</Text>
+        {agents.length === 0 ? <Text dimColor>detecting…</Text> : null}
+        {agents.map((a) => (
+          <Text key={a.id}>
+            <Text color={a.available ? 'green' : 'gray'}>{a.available ? '●' : '○'}</Text> {a.id}
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function RunDetail({ view, nowMs }: { view: RunView | null; nowMs: number }): React.ReactElement {
+  if (!view) return <Text dimColor>attaching…</Text>;
+  return (
+    <Box>
+      <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
+        <Text bold>Phases</Text>
+        {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}
+        {view.phases.map((p: PhaseView) => (
+          <Text key={p.stage}>
+            {p.done === p.total ? <Text color="green">✔</Text> : <Text dimColor>·</Text>} {p.stage}
+            <Text dimColor>
+              {'  '}
+              {p.done}/{p.total}
+            </Text>
+          </Text>
+        ))}
+      </Box>
+      <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
+        <Text bold>Detail · {view.totalAgents} agents</Text>
+        {view.tasks.map((t) => {
+          const el = t.startedAt != null ? fmtDuration((t.finishedAt ?? nowMs) - t.startedAt) : '—';
+          return (
+            <Text key={t.id}>
+              {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 40)}
+              <Text dimColor>
+                {'   '}
+                {t.tokens} tok · {t.toolCount} tools · {el}
+              </Text>
+            </Text>
+          );
+        })}
+      </Box>
+    </Box>
+  );
 }

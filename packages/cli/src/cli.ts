@@ -10,6 +10,7 @@ import {
   type DetectionOptions,
 } from '@omakase/daemon';
 import {
+  FileRunStore,
   MemoryRunStore,
   Orchestrator,
   createModelPolicy,
@@ -18,7 +19,9 @@ import {
 } from '@omakase/core';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
-import { touchHeartbeat, writeDaemonInfo } from './daemon-control.js';
+import { ensureDaemon, touchHeartbeat, writeDaemonInfo, type DaemonInfo } from './daemon-control.js';
+import { RunControllerClient } from './run-client.js';
+import type { LaunchTuiOptions } from './tui/index.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
 
@@ -101,14 +104,10 @@ export interface CliDeps {
   createRuntime?: () => AgentRuntime;
   createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode) => Orchestrator;
   detectionOptions?: DetectionOptions;
+  /** Ensure the project's detached daemon is running (injected for tests). */
+  ensureDaemon?: (cwd: string) => Promise<DaemonInfo>;
   /** Launch the TUI; injected so headless tests don't import Ink. */
-  launchTui?: (opts: {
-    task?: string;
-    cwd?: string;
-    mode: WorkMode;
-    runtime: AgentRuntime;
-    orchestrator: Orchestrator;
-  }) => Promise<void>;
+  launchTui?: (opts: LaunchTuiOptions) => Promise<void>;
 }
 
 function resolveMode(value: unknown): WorkMode {
@@ -336,37 +335,49 @@ export function createCli(deps: CliDeps = {}): Cli {
 
   async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
     const baseMode = resolveMode(options.mode);
-    const cwd = typeof options.cwd === 'string' ? options.cwd : undefined;
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
     const ab = parseAgentBudget(options);
     if (ab.error) {
       error(`omakase tui: ${ab.error}`);
       return 1;
     }
-    const { agentOverride, budget } = ab;
-    const mode = agentOverride ? 'custom' : baseMode;
+    const runsDir =
+      typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs');
+    const queueDir =
+      typeof options['queue-dir'] === 'string' ? options['queue-dir'] : path.join(cwd, '.omakase', 'queue');
+
+    // The TUI is a pure client: ensure a detached daemon owns the runs (so they
+    // survive quitting), then talk to it over the store + control files.
+    const ensure = deps.ensureDaemon ?? ((c: string) => ensureDaemon(c));
+    await ensure(cwd);
+
+    const client = new RunControllerClient({
+      store: new FileRunStore(runsDir),
+      controlDir: runsDir,
+      queueDir,
+    });
+    // Submit the initial task (if any) so the daemon starts it; the App attaches.
+    const token = task.trim() ? await client.submit(task.trim()) : undefined;
+
+    // Local agent detection for the dashboard (cheap, no run involved).
     const runtime = createRuntime();
-    // Honor --offline/--agent/--max-tokens/--max-cost here too, so the TUI's
-    // auto-started run uses the requested agent and budget (not the default).
-    const orchestrator =
-      agentOverride || budget
-        ? new Orchestrator({
-            runtime,
-            store: new MemoryRunStore(),
-            defaultMode: mode,
-            ...(agentOverride
-              ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
-              : {}),
-            ...(budget ? { budget } : {}),
-            ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
-          })
-        : createOrchestrator(runtime, baseMode);
+    const detect = (): ReturnType<AgentRuntime['detect']> =>
+      runtime.detect(deps.detectionOptions);
+
     const launch =
       deps.launchTui ??
       (async (opts) => {
         const { launchTui } = await import('./tui/index.js');
         await launchTui(opts);
       });
-    await launch({ task: task.trim() || undefined, cwd, mode, runtime, orchestrator });
+    await launch({
+      client,
+      cwd,
+      mode: baseMode,
+      detect,
+      ...(task.trim() ? { task: task.trim() } : {}),
+      ...(token ? { token } : {}),
+    });
     return 0;
   }
 

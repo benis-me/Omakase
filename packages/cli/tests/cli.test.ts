@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -142,34 +142,57 @@ describe('omakase serve', () => {
 });
 
 describe('omakase tui', () => {
-  it('forwards --cwd and --mode to the TUI launcher', async () => {
-    let captured: { task?: string; cwd?: string; mode?: string } = {};
+  it('ensures a daemon, submits the task, and launches the client TUI', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
+    let ensured: string | undefined;
+    let captured: { hasClient: boolean; task?: string; token?: string; cwd?: string; mode?: string } = {
+      hasClient: false,
+    };
     const cli = createCli({
       write: () => {},
       detectionOptions: OFFLINE,
       createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      ensureDaemon: async (c) => {
+        ensured = c;
+        return { pid: 1, startedAt: 0, version: '0', cwd: c };
+      },
       launchTui: async (opts) => {
-        captured = { task: opts.task, cwd: opts.cwd, mode: opts.mode };
+        captured = {
+          hasClient: Boolean(opts.client),
+          task: opts.task,
+          token: opts.token,
+          cwd: opts.cwd,
+          mode: opts.mode,
+        };
       },
     });
-    const code = await cli.main(['tui', 'do a thing', '--cwd', '/some/dir', '--mode', 'max-power']);
+    const code = await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power']);
     expect(code).toBe(0);
-    expect(captured).toMatchObject({ task: 'do a thing', cwd: '/some/dir', mode: 'max-power' });
+    expect(ensured).toBe(cwd); // a detached daemon was ensured
+    expect(captured).toMatchObject({ hasClient: true, task: 'do a thing', cwd, mode: 'max-power' });
+    expect(captured.token).toBeTruthy(); // initial task submitted → correlation token
+    // a queue file was dropped for the daemon (no in-process Orchestrator)
+    const queue = path.join(cwd, '.omakase', 'queue');
+    expect(readdirSync(queue).some((f) => f.endsWith('.prompt'))).toBe(true);
   });
 
-  it('honors --offline by forwarding a custom mode (not the default agent)', async () => {
-    let captured: { mode?: string } = {};
+  it('launches the run-list TUI when given no task (nothing submitted)', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
+    let captured: { hasClient: boolean; task?: string; token?: string } = { hasClient: false };
     const cli = createCli({
       write: () => {},
       detectionOptions: OFFLINE,
       createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
       launchTui: async (opts) => {
-        captured = { mode: opts.mode };
+        captured = { hasClient: Boolean(opts.client), task: opts.task, token: opts.token };
       },
     });
-    const code = await cli.main(['tui', 'do a thing', '--offline']);
+    const code = await cli.main(['tui', '--cwd', cwd]);
     expect(code).toBe(0);
-    expect(captured.mode).toBe('custom');
+    expect(captured.hasClient).toBe(true);
+    expect(captured.task).toBeUndefined();
+    expect(captured.token).toBeUndefined();
   });
 });
 

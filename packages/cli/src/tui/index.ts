@@ -4,17 +4,10 @@
  */
 import React from 'react';
 import { render } from 'ink';
-import type { AgentRuntime } from '@omakase/daemon';
-import type { Orchestrator, WorkMode } from '@omakase/core';
-import { App } from './App.js';
+import { App, type AppProps } from './App.js';
 
-export interface LaunchTuiOptions {
-  runtime: AgentRuntime;
-  orchestrator: Orchestrator;
-  task?: string;
-  cwd?: string;
-  mode: WorkMode;
-}
+/** Options for launching the TUI — it is a pure client over a detached daemon. */
+export type LaunchTuiOptions = AppProps;
 
 export async function launchTui(options: LaunchTuiOptions): Promise<void> {
   const instance = render(React.createElement(App, options));
