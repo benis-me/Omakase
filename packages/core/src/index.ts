@@ -81,7 +81,12 @@ export { MemoryRunStore, FileRunStore } from './supervisor/run-store.js';
 export type { RunStore, RunRecord } from './supervisor/run-store.js';
 export { Supervisor, RESUMABLE_STATUSES } from './supervisor/supervisor.js';
 export type { SupervisorOptions, SupervisorHealth, SupervisorState } from './supervisor/supervisor.js';
-export { FakeControlSource, isValidControlCommand } from './supervisor/control.js';
+export {
+  FakeControlSource,
+  FileControlSource,
+  writeControl,
+  isValidControlCommand,
+} from './supervisor/control.js';
 export type { ControlSource, ControlCommand, ControlCommandKind, ControlPoll } from './supervisor/control.js';
 export type {
   OrchestratorEvent,

@@ -14,11 +14,13 @@ import {
   type DetectionOptions,
 } from '@omakase/daemon';
 import {
+  FileControlSource,
   FileRunStore,
   Orchestrator,
   Supervisor,
   createModelPolicy,
   projectKnowledgeStore,
+  type ControlPoll,
   type RunBudget,
   type RunStatus,
   type SupervisorHealth,
@@ -64,10 +66,19 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
       ...(config.detectionOptions ? { detection: config.detectionOptions } : {}),
     });
   const store = new FileRunStore(config.runsDir);
+  // Cross-process control: the TUI/desktop app writes <runsDir>/<id>.control.json;
+  // each run polls it (unref'd, so it never keeps the daemon alive on its own).
+  const controlPoll: ControlPoll = (tick) => {
+    const timer = setInterval(tick, 250);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  };
   const orchestrator = new Orchestrator({
     runtime,
     store,
     knowledgeStore: projectKnowledgeStore(config.cwd),
+    control: new FileControlSource(config.runsDir),
+    controlPoll,
     defaultMode: config.agentOverride ? 'custom' : config.mode,
     ...(config.agentOverride
       ? { policy: createModelPolicy('custom', { custom: { default: { agentId: config.agentOverride } } }) }

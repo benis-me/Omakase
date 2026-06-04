@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createAgentRuntime,
@@ -6,7 +9,12 @@ import {
 } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
 import { MemoryRunStore } from '../src/supervisor/run-store.js';
-import { FakeControlSource, type ControlPoll } from '../src/supervisor/control.js';
+import {
+  FakeControlSource,
+  FileControlSource,
+  writeControl,
+  type ControlPoll,
+} from '../src/supervisor/control.js';
 import { createModelPolicy } from '../src/modes/policy.js';
 import { createIdGenerator } from '../src/ids.js';
 import type { Router } from '../src/router/router.js';
@@ -136,5 +144,18 @@ describe('cross-process run control', () => {
     expect(pausedCount).toBe(1);
     expect(resumedCount).toBe(1); // the same-seq resume did not double-apply
     expect(result.status).toBe('succeeded');
+  });
+});
+
+describe('FileControlSource', () => {
+  it('round-trips a command written atomically and tolerates missing/torn files', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-control-'));
+    const src = new FileControlSource(dir);
+    expect(await src.read('run-1')).toBeNull(); // no file yet
+    await writeControl(dir, 'run-1', { seq: 3, command: 'stop' });
+    expect(await src.read('run-1')).toEqual({ seq: 3, command: 'stop' });
+    // A torn / not-yet-renamed write reads as null, never throws.
+    writeFileSync(path.join(dir, 'run-2.control.json'), '{ not json');
+    expect(await src.read('run-2')).toBeNull();
   });
 });

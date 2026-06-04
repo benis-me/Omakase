@@ -11,8 +11,11 @@
  *
  * The seam is injectable so the whole control path is unit-testable in-process
  * with {@link FakeControlSource} and a manually-pumped poll — no daemon, no real
- * timers, no model calls.
+ * timers, no model calls. {@link FileControlSource} + {@link writeControl} are the
+ * real, cross-process wiring over `<runsDir>/<id>.control.json`.
  */
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export type ControlCommandKind = 'stop' | 'pause' | 'resume' | 'input';
 
@@ -61,4 +64,49 @@ export class FakeControlSource implements ControlSource {
   async read(runId: string): Promise<ControlCommand | null> {
     return this.commands.get(runId) ?? null;
   }
+}
+
+function controlPath(dir: string, runId: string): string {
+  return path.join(dir, `${runId}.control.json`);
+}
+
+/**
+ * Reads the latest control command for a run from `<dir>/<id>.control.json`.
+ * Tolerant: a missing, torn, or malformed file reads as null (no pending
+ * command), so a poll never throws on a half-written file.
+ */
+export class FileControlSource implements ControlSource {
+  constructor(private readonly dir: string) {}
+
+  async read(runId: string): Promise<ControlCommand | null> {
+    let raw: string;
+    try {
+      raw = await readFile(controlPath(this.dir, runId), 'utf8');
+    } catch {
+      return null; // no command file yet
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      return isValidControlCommand(parsed) ? parsed : null;
+    } catch {
+      return null; // torn / not-yet-renamed write
+    }
+  }
+}
+
+/**
+ * Atomically write a control command for a run (temp + rename), so a reader
+ * never observes a partially-written file. The TUI/desktop app is the SOLE
+ * writer of the `.control.json`; the daemon is the SOLE writer of the run record.
+ */
+export async function writeControl(
+  dir: string,
+  runId: string,
+  command: ControlCommand,
+): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  const target = controlPath(dir, runId);
+  const tmp = `${target}.${process.pid}.${command.seq}.tmp`;
+  await writeFile(tmp, JSON.stringify(command), 'utf8');
+  await rename(tmp, target);
 }

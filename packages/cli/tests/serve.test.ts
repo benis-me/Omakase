@@ -3,8 +3,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
-import { FileRunStore, Orchestrator, PlanGraph, createModelPolicy, type Router } from '@omakase/core';
+import { FileRunStore, Orchestrator, PlanGraph, createModelPolicy, writeControl, type Router } from '@omakase/core';
 import { createServer, type ServeConfig } from '../src/serve.js';
+
+async function waitFor<T>(fn: () => Promise<T | undefined>, timeoutMs = 4000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v !== undefined) return v;
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 15));
+  }
+}
 
 const OFFLINE = { env: { PATH: '' }, includeWellKnownPathDirs: false } as const;
 
@@ -48,6 +58,34 @@ describe('createServer', () => {
     expect(health.completed).toBe(1);
     expect(existsSync(path.join(queue, 'processed', 't1.txt'))).toBe(true);
     expect(existsSync(path.join(queue, 't1.txt'))).toBe(false);
+  });
+
+  it('a stop control file cancels a mid-flight detached run', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-control-'));
+    const runsDir = path.join(cwd, '.omakase', 'runs');
+    // A worker that blocks until its run is aborted (the stop path interrupts it).
+    const exec = createScriptedAgent(async (input) => {
+      await new Promise<void>((resolve) => {
+        if (input.signal?.aborted) return resolve();
+        input.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const server = createServer(config(cwd, { agentOverride: 'scripted' }), {
+      write: () => {},
+      createRuntime: () => createAgentRuntime({ executors: { scripted: exec }, detection: OFFLINE }),
+    });
+    server.supervisor.enqueue({ prompt: 'do work', cwd });
+    const draining = server.supervisor.drain(); // background — blocks on the run
+    const id = await waitFor(async () => {
+      for (const i of await server.store.list()) {
+        if ((await server.store.load(i))?.status === 'running') return i;
+      }
+      return undefined;
+    });
+    await writeControl(runsDir, id, { seq: 1, command: 'stop' });
+    await draining; // the 250ms control poll applies the stop → cancel → settles
+    expect((await server.store.load(id))?.status).toBe('cancelled');
   });
 
   it('re-ingests a claimed queue file that never produced a run record', async () => {
