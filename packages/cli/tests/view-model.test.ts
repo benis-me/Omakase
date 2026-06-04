@@ -58,6 +58,51 @@ describe('view-model', () => {
     expect(view).toEqual(buildRunView(result.events, 'normal'));
   });
 
+  it('accumulates per-task token/tool/agent stats, phases, and header — surviving replan', async () => {
+    let reviewerCalls = 0;
+    const exec = createScriptedAgent((input) => {
+      if (String(input.metadata?.role) === 'reviewer') {
+        reviewerCalls += 1;
+        return [{ type: 'text_delta', delta: reviewerCalls === 1 ? 'REJECT: more needed' : 'APPROVE' }];
+      }
+      return [
+        { type: 'text_delta', delta: 'done' },
+        { type: 'tool_use', id: 'a', name: 'read', input: {} },
+        { type: 'tool_use', id: 'b', name: 'write', input: {} },
+        { type: 'usage', usage: { inputTokens: 80, outputTokens: 40 } },
+      ];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 5 });
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      planner: new RulePlanner(),
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 5,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+    const result = await orch.start({ prompt: '- add a parser\n- add a CLI' }).result;
+    expect(result.status).toBe('succeeded');
+    const view = buildRunView(result.events, 'normal');
+
+    const workers = view.tasks.filter((t) => t.role === 'worker');
+    expect(workers.length).toBeGreaterThan(0);
+    for (const w of workers) {
+      // 120 tokens + 2 tools accumulated, and SURVIVED the rejection→replan
+      // (upsert merges by id rather than replacing — which would zero them).
+      expect(w.tokens).toBe(120);
+      expect(w.toolCount).toBe(2);
+      expect(w.agentId).toBe('scripted');
+      expect(w.finishedAt).toBe(5);
+    }
+    expect(view.totalTokens).toBeGreaterThanOrEqual(120 * workers.length);
+    expect(view.phases.length).toBeGreaterThan(0);
+    expect(view.phases.reduce((s, p) => s + p.total, 0)).toBe(view.tasks.length);
+    expect(view.totalAgents).toBe(view.tasks.length);
+    expect(view.title).toContain('add a parser');
+  });
+
   it('formats event lines for humans', () => {
     expect(formatEventLine({ type: 'paused' })).toBe('⏸ paused');
     expect(
