@@ -258,3 +258,15 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
 export function buildRunView(events: OrchestratorEvent[], mode: WorkMode = 'normal'): RunView {
   return events.reduce(reduceRunView, initialRunView(mode));
 }
+
+/**
+ * Overlay a run's authoritative plan snapshot onto a folded view, preserving
+ * event-derived per-task stats (merge by id). This is how a client reconstructs
+ * the current task graph even when the persisted event log doesn't carry it —
+ * e.g. a simple-route run (no `planned` event) or a long task still in flight
+ * whose status changes haven't been checkpointed yet.
+ */
+export function applyPlanSnapshot(view: RunView, plan: PlanGraphSnapshot): RunView {
+  if (!plan || plan.tasks.length === 0) return view;
+  return derive({ ...view, tasks: upsertTasks(view.tasks, plan) });
+}

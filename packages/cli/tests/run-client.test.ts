@@ -35,6 +35,16 @@ function scriptedServer(cwd: string) {
   });
 }
 
+async function waitFor<T>(fn: () => Promise<T | undefined>, timeoutMs = 4000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v !== undefined) return v;
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 15));
+  }
+}
+
 describe('RunControllerClient', () => {
   it('submits a task, correlates the daemon-allocated run id, and tails its view', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-client-'));
@@ -56,6 +66,45 @@ describe('RunControllerClient', () => {
 
     const summaries = await client.list();
     expect(summaries.some((s) => s.id === id)).toBe(true);
+  });
+
+  it('shows the plan + running task while a simple-route task is still in flight', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-client-live-'));
+    const runsDir = path.join(cwd, '.omakase', 'runs');
+    const queueDir = path.join(cwd, '.omakase', 'queue');
+    // A worker that blocks until aborted — stands in for a long real-agent task.
+    const exec = createScriptedAgent(async (input) => {
+      await new Promise<void>((resolve) => {
+        if (input.signal?.aborted) return resolve();
+        input.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const server = createServer(config(cwd), {
+      write: () => {},
+      createRuntime: () => createAgentRuntime({ executors: { scripted: exec }, detection: OFFLINE }),
+    });
+    const client = new RunControllerClient({ store: server.store, controlDir: runsDir, queueDir });
+    await client.submit('hi'); // short prompt → simple route (no `planned` event)
+    const draining = server.cycle(); // background; ingests the queue file, blocks on the worker
+
+    const id = await waitFor(async () => {
+      for (const i of await server.store.list()) {
+        const r = await server.store.load(i);
+        if (r?.plan.tasks.some((t) => t.status === 'running')) return i;
+      }
+      return undefined;
+    });
+    // The bug: with no `planned` event, folding events alone yields no tasks.
+    const rec = await server.store.load(id);
+    expect(rec?.routeDecision?.kind).toBe('simple'); // exercise the simple path
+    const view = await client.snapshot(id);
+    expect(view?.tasks.length).toBeGreaterThan(0); // NOT empty
+    expect(view?.tasks.some((t) => t.status === 'running')).toBe(true);
+    expect(view?.phases.length).toBeGreaterThan(0); // NOT "no plan yet"
+
+    await client.stop(id); // cleanup: cancel the blocked worker
+    await draining;
   });
 
   it('writes control files with a monotonic seq', async () => {

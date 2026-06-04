@@ -18,7 +18,7 @@ import {
   type RunStatus,
   type RunStore,
 } from '@omakase/core';
-import { buildRunView, type RunView } from './view-model.js';
+import { applyPlanSnapshot, buildRunView, type RunView } from './view-model.js';
 
 export interface RunSummary {
   id: string;
@@ -89,7 +89,7 @@ export class RunControllerClient {
   async snapshot(runId: string): Promise<RunView | null> {
     const rec = await this.store.load(runId);
     if (!rec) return null;
-    return { ...buildRunView(rec.events, rec.mode), runId };
+    return { ...applyPlanSnapshot(buildRunView(rec.events, rec.mode), rec.plan), runId };
   }
 
   /** Summaries of all known runs (most-recently-updated first). */
@@ -119,16 +119,20 @@ export class RunControllerClient {
     let stopped = false;
     let lastLen = -1;
     let lastStatus = '';
+    let lastSeq = -1;
     const poll = async (): Promise<void> => {
       if (stopped) return;
       const rec = await this.store.load(runId);
       // Re-check AFTER the await: the consumer may have disposed (e.g. switched
       // runs) while the load was in flight — never emit a now-stale view.
       if (stopped || !rec) return;
-      if (rec.events.length !== lastLen || rec.status !== lastStatus) {
+      // Re-fold on any advance: more events, a new status, OR a new checkpoint
+      // (the plan snapshot — e.g. a task's status — can change without new events).
+      if (rec.events.length !== lastLen || rec.status !== lastStatus || rec.checkpointSeq !== lastSeq) {
         lastLen = rec.events.length;
         lastStatus = rec.status;
-        onView({ ...buildRunView(rec.events, rec.mode), runId });
+        lastSeq = rec.checkpointSeq;
+        onView({ ...applyPlanSnapshot(buildRunView(rec.events, rec.mode), rec.plan), runId });
       }
     };
     void poll();

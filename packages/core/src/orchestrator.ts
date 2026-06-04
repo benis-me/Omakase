@@ -631,6 +631,10 @@ class RunController implements RunHandle {
     const assignment = this.policy.select(task.role, { available: this.available });
     this.graph.incrementAttempts(task.id);
     this.graph.setStatus(task.id, 'running');
+    // Persist the 'running' transition NOW (the next checkpoint is only after the
+    // task finishes, which may be minutes away): so an attached client sees the
+    // task go live immediately instead of staring at a stale/empty view.
+    await this.checkpoint();
 
     const input: AgentRunInput = {
       agentId: assignment.agentId,
