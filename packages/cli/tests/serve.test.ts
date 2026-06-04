@@ -77,7 +77,11 @@ describe('createServer', () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-control-'));
     const runsDir = path.join(cwd, '.omakase', 'runs');
     // A worker that blocks until its run is aborted (the stop path interrupts it).
+    // Answer the agent-router's classification quickly so only the worker blocks.
     const exec = createScriptedAgent(async (input) => {
+      if (input.prompt.includes('Classify the following request')) {
+        return [{ type: 'text_delta', delta: 'SIMPLE' }];
+      }
       await new Promise<void>((resolve) => {
         if (input.signal?.aborted) return resolve();
         input.signal?.addEventListener('abort', () => resolve(), { once: true });

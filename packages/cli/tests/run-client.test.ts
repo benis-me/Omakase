@@ -73,7 +73,11 @@ describe('RunControllerClient', () => {
     const runsDir = path.join(cwd, '.omakase', 'runs');
     const queueDir = path.join(cwd, '.omakase', 'queue');
     // A worker that blocks until aborted — stands in for a long real-agent task.
+    // Answer the agent-router's classification quickly so only the worker blocks.
     const exec = createScriptedAgent(async (input) => {
+      if (input.prompt.includes('Classify the following request')) {
+        return [{ type: 'text_delta', delta: 'SIMPLE' }];
+      }
       await new Promise<void>((resolve) => {
         if (input.signal?.aborted) return resolve();
         input.signal?.addEventListener('abort', () => resolve(), { once: true });

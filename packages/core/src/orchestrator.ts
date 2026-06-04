@@ -27,7 +27,7 @@ import { createIdGenerator, type IdGenerator } from './ids.js';
 import { CodeGraph } from './knowledge/codegraph.js';
 import { ProjectWiki } from './knowledge/wiki.js';
 import type { KnowledgeStore } from './knowledge/store.js';
-import { createModelPolicy, type ModelPolicy } from './modes/policy.js';
+import { BUILTIN_AGENT_ID, createModelPolicy, type ModelPolicy } from './modes/policy.js';
 import { Inbox, type InboxAppendOptions } from './inbox.js';
 import {
   PlanGraph,
@@ -35,7 +35,7 @@ import {
   type TaskNode,
 } from './plan/plan-graph.js';
 import { RulePlanner, extractJsonArray, type Planner } from './plan/planner.js';
-import { RuleRouter, type RouteDecision, type Router } from './router/router.js';
+import { RuleRouter, createAgentRouter, type RouteDecision, type Router } from './router/router.js';
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
 import type { ControlPoll, ControlSource } from './supervisor/control.js';
@@ -231,7 +231,11 @@ class RunController implements RunHandle {
     this.request = request;
     this.runtime = options.runtime;
     this.mode = resumeFrom?.mode ?? request.mode ?? options.defaultMode ?? 'normal';
-    this.router = options.router ?? new RuleRouter();
+    // Default to AGENT-driven routing (the policy's router-role agent classifies
+    // the request), not a rule heuristic — falling back to rules when offline
+    // (built-in agent) or when the agent's answer can't be parsed. Inject an
+    // explicit `router` (e.g. new RuleRouter()) to override.
+    this.router = options.router ?? this.makeAgentRouter();
     this.planner = options.planner ?? new RulePlanner();
     // A per-request agent override (e.g. picked in the TUI) wins over the
     // configured policy, so a single task can be pinned to a chosen agent
@@ -360,6 +364,31 @@ class RunController implements RunHandle {
       if (!this.pauseGate) this.pauseGate = deferred();
       await this.pauseGate.promise;
     }
+  }
+
+  /**
+   * The default router: ask the policy's `router`-role agent to classify the
+   * request (SIMPLE/COMPLEX). Resolves the agent lazily at route time (after
+   * detection) and falls back to the rule router when the built-in agent is the
+   * only option (it has no model) or the agent's answer can't be parsed.
+   */
+  private makeAgentRouter(): Router {
+    const fallback = new RuleRouter();
+    return {
+      route: async (request) => {
+        const assignment = this.policy.select('router', { available: this.available });
+        if (assignment.agentId === BUILTIN_AGENT_ID) return fallback.route(request);
+        try {
+          return await createAgentRouter(this.runtime, {
+            agentId: assignment.agentId,
+            model: assignment.model,
+            fallback,
+          }).route(request);
+        } catch {
+          return fallback.route(request);
+        }
+      },
+    };
   }
 
   /**

@@ -277,6 +277,56 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(result.status).toBe('succeeded');
   });
 
+  it('routes via an agent by default (agent classification overrides the rule heuristic)', async () => {
+    // The rule router would score "just do a thing" SIMPLE; the agent says COMPLEX.
+    const exec = createScriptedAgent((input) => {
+      if (input.prompt.includes('Classify the following request')) {
+        return [{ type: 'text_delta', delta: 'COMPLEX' }];
+      }
+      if (String(input.metadata?.role) === 'reviewer') return [{ type: 'text_delta', delta: 'APPROVE' }];
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      runtime, // NO router injected → default agent router
+      planner: new RulePlanner(),
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+    const events = await collect(orch.start({ prompt: 'just do a thing' }));
+    const routed = events.find((e) => e.type === 'routed');
+    expect(routed).toMatchObject({ decision: { kind: 'complex' } });
+    expect((routed as Extract<OrchestratorEvent, { type: 'routed' }>).decision.reason).toMatch(/classified/i);
+    expect(events.some((e) => e.type === 'planned')).toBe(true); // complex → planner ran
+  });
+
+  it('falls back to the rule router when the agent answer is unparseable', async () => {
+    const exec = createScriptedAgent((input) => {
+      if (input.prompt.includes('Classify the following request')) {
+        return [{ type: 'text_delta', delta: 'uhh, not sure' }]; // no SIMPLE/COMPLEX
+      }
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      runtime,
+      planner: new RulePlanner(),
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+    const events = await collect(orch.start({ prompt: 'summarize the project' }));
+    const routed = events.find((e) => e.type === 'routed');
+    // Unparseable → rule fallback decided (its reason cites the complexity score).
+    expect((routed as Extract<OrchestratorEvent, { type: 'routed' }>).decision.reason).toMatch(/score/i);
+    expect(events.some((e) => e.type === 'planned')).toBe(false); // rules → simple
+  });
+
   it('honors a per-request agent override (metadata.agentOverride)', async () => {
     const labeled = (label: string) => createScriptedAgent(() => [{ type: 'text_delta', delta: label }]);
     const runtime = createAgentRuntime({ executors: { a: labeled('AAA'), b: labeled('BBB') }, now: () => 0 });
