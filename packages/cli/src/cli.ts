@@ -18,6 +18,7 @@ import {
 } from '@omakase/core';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
+import { touchHeartbeat, writeDaemonInfo } from './daemon-control.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
 
@@ -300,14 +301,24 @@ export function createCli(deps: CliDeps = {}): Cli {
     if (options.watch) {
       const intervalMs = Number(options.interval) || 2000;
       write(`omakase serve: watching ${config.queueDir} every ${intervalMs}ms (Ctrl-C to stop)`);
+      // Register as the project's daemon so a TUI/desktop client can discover and
+      // attach to it (and not spawn a second one).
+      await writeDaemonInfo(config.cwd, {
+        pid: process.pid,
+        startedAt: Date.now(),
+        version: CLI_VERSION,
+        cwd: config.cwd,
+      });
       const ac = new AbortController();
       const onSignal = (): void => {
         ac.abort();
         server.supervisor.stop();
       };
       process.once('SIGINT', onSignal);
+      process.once('SIGTERM', onSignal);
       while (!ac.signal.aborted) {
         const health = await server.cycle();
+        await touchHeartbeat(config.cwd, Date.now());
         write(`heartbeat @ ${health.lastHeartbeatAt}: ${health.completed} done, ${health.queued} queued`);
         if (ac.signal.aborted) break;
         await sleep(intervalMs, ac.signal);
