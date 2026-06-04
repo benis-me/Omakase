@@ -4,6 +4,14 @@
   "description": "Omakase agent runtime daemon — detect local agent CLIs, run them through a unified streaming protocol, and load skills. Dependency-free base layer for any Omakase agent.",
   "type": "module",
   "license": "MIT",
+  "keywords": ["agent", "ai", "cli", "claude", "codex", "runtime", "mcp"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/omakase.git",
+    "directory": "packages/daemon"
+  },
+  "homepage": "https://github.com/your-org/omakase#readme",
+  "bugs": "https://github.com/your-org/omakase/issues",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

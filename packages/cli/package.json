@@ -4,6 +4,14 @@
   "description": "Omakase command-line + TUI entrypoint. Detect agents, run tasks, and drive the orchestrator interactively — all on top of @omakase/core.",
   "type": "module",
   "license": "MIT",
+  "keywords": ["agent", "ai", "cli", "tui", "ink", "omakase"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/omakase.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/your-org/omakase#readme",
+  "bugs": "https://github.com/your-org/omakase/issues",
   "bin": {
     "omakase": "./bin/omakase.mjs"
   },

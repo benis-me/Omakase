@@ -14,14 +14,8 @@ where the edges are and what would deepen each layer.
   `opencode`, `cursor-agent`, `qwen`, and `copilot` use `plain-text` streaming
   and best-effort flags.
 - **Auth detection is heuristic.** Presence of an env var or a home-dir
-  credential file implies `ok`; it does not verify the token is valid or
+  *credential* file implies `ok`; it does not verify the token is valid or
   unexpired. A real probe (a cheap authenticated call) would be more accurate.
-- **MCP injection is declared, not performed.** `externalMcpInjection` is
-  surfaced on `DetectedAgent` but the daemon does not yet write `.mcp.json` /
-  merge ACP configs at spawn time.
-- **No detection cache.** `streamAgentEvents` re-resolves the binary
-  (`resolveRuntime`: version + help probe) per run. Fine for interactive use;
-  a short-TTL cache would help tight loops.
 - **Codex/Gemini stream mapping** covers the common event shapes; uncommon or
   newest event variants fall through to no-ops.
 
@@ -64,8 +58,9 @@ where the edges are and what would deepen each layer.
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
 `refreshDetection()`), `--offline`/`--agent`, a token/cost budget (`budget` /
-`--max-tokens` / `--max-cost`), atomic checkpoint writes, unique run ids, the 14
-adversarial-review fixes, **cross-run persisted knowledge** (`KnowledgeStore` /
+`--max-tokens` / `--max-cost`), atomic checkpoint writes, unique run ids, **62
+fixes across four adversarial-review rounds** (each finding fixed with a
+regression test), **cross-run persisted knowledge** (`KnowledgeStore` /
 `projectKnowledgeStore` under `.omakase/`), **structured per-criterion review**
 (`acceptanceCriteria` + `parseStructuredReview`), **live MCP injection** (three
 strategies via `applyMcpInjection`), **codegraph tsconfig path-alias

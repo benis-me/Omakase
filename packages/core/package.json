@@ -4,6 +4,14 @@
   "description": "Omakase orchestration core — router, plan graph, hooks, knowledge (wiki + codegraph), spec/TDD workflows, and a resumable Ralph-loop supervisor built on @omakase/daemon.",
   "type": "module",
   "license": "MIT",
+  "keywords": ["agent", "ai", "orchestration", "multi-agent", "ralph-loop", "planner"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/omakase.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/your-org/omakase#readme",
+  "bugs": "https://github.com/your-org/omakase/issues",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

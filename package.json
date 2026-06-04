@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "description": "Omakase — agent runtime, multi-agent orchestration core, and CLI/TUI for autonomous software work.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/omakase.git"
+  },
+  "homepage": "https://github.com/your-org/omakase#readme",
+  "bugs": "https://github.com/your-org/omakase/issues",
   "engines": {
     "node": ">=20"
   },
