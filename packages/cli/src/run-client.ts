@@ -122,7 +122,9 @@ export class RunControllerClient {
     const poll = async (): Promise<void> => {
       if (stopped) return;
       const rec = await this.store.load(runId);
-      if (!rec) return;
+      // Re-check AFTER the await: the consumer may have disposed (e.g. switched
+      // runs) while the load was in flight — never emit a now-stale view.
+      if (stopped || !rec) return;
       if (rec.events.length !== lastLen || rec.status !== lastStatus) {
         lastLen = rec.events.length;
         lastStatus = rec.status;

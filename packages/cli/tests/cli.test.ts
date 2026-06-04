@@ -176,6 +176,42 @@ describe('omakase tui', () => {
     expect(readdirSync(queue).some((f) => f.endsWith('.prompt'))).toBe(true);
   });
 
+  it('forwards the resolved dirs + flags to the spawned daemon (serveArgs)', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
+    let serveArgs: string[] | undefined;
+    const cli = createCli({
+      write: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      ensureDaemon: async (c, sa) => {
+        serveArgs = sa;
+        return { pid: 1, startedAt: 0, version: '0', cwd: c };
+      },
+      launchTui: async () => {},
+    });
+    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power', '--offline']);
+    expect(serveArgs).toContain('--mode');
+    expect(serveArgs).toContain('max-power');
+    expect(serveArgs).toContain('--offline');
+    expect(serveArgs).toContain('--runs-dir');
+    expect(serveArgs).toContain('--queue-dir');
+  });
+
+  it('does not hang the TUI without an interactive terminal', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
+    const out: string[] = [];
+    const cli = createCli({
+      write: (t) => out.push(t),
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
+      // launchTui NOT injected → exercises the real launcher's non-TTY guard
+    });
+    const code = await cli.main(['tui', 'do a thing', '--cwd', cwd]);
+    expect(code).toBe(0);
+    expect(out.join('\n')).toMatch(/no interactive terminal/);
+  });
+
   it('launches the run-list TUI when given no task (nothing submitted)', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
     let captured: { hasClient: boolean; task?: string; token?: string } = { hasClient: false };

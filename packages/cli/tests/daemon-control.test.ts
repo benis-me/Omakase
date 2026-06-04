@@ -65,6 +65,69 @@ describe('ensureDaemon', () => {
     expect(spawned).toBe(1);
     expect(info.pid).toBe(222);
   });
+
+  it('respawns when the pid is alive but the daemon is stale (pid reuse / wedged)', async () => {
+    const cwd = tmp();
+    // startedAt long ago, no heartbeat file → not fresh, even though pid "alive".
+    await writeDaemonInfo(cwd, { pid: 999, startedAt: 1, version: '0.1.0', cwd });
+    let spawned = 0;
+    const spawn = (): SpawnedDaemon => {
+      spawned += 1;
+      return { pid: 222, unref: () => {} };
+    };
+    const info = await ensureDaemon(cwd, {
+      spawn,
+      isAlive: () => true,
+      now: () => 10_000_000,
+      execPath: '/usr/bin/node',
+      scriptPath: '/opt/omakase/bin/omakase.mjs',
+    });
+    expect(spawned).toBe(1);
+    expect(info.pid).toBe(222);
+  });
+
+  it('forwards serveArgs to the spawned daemon', async () => {
+    const cwd = tmp();
+    let captured: string[] = [];
+    const spawn = (_c: string, args: string[]): SpawnedDaemon => {
+      captured = args;
+      return { pid: 7, unref: () => {} };
+    };
+    await ensureDaemon(
+      cwd,
+      { ...base, spawn, isAlive: () => true },
+      { serveArgs: ['--runs-dir', '/r', '--mode', 'max-power'] },
+    );
+    expect(captured).toEqual([
+      '/opt/omakase/bin/omakase.mjs',
+      'serve',
+      '--watch',
+      '--cwd',
+      cwd,
+      '--runs-dir',
+      '/r',
+      '--mode',
+      'max-power',
+    ]);
+  });
+
+  it('runs a .ts dev entry through the tsx loader', async () => {
+    const cwd = tmp();
+    let captured: { command: string; args: string[] } = { command: '', args: [] };
+    const spawn = (command: string, args: string[]): SpawnedDaemon => {
+      captured = { command, args };
+      return { pid: 8, unref: () => {} };
+    };
+    await ensureDaemon(cwd, {
+      ...base,
+      scriptPath: '/repo/packages/cli/src/dev.ts',
+      spawn,
+      isAlive: () => true,
+    });
+    expect(captured.command).toBe('/usr/bin/node');
+    expect(captured.args.slice(0, 3)).toEqual(['--import', 'tsx', '/repo/packages/cli/src/dev.ts']);
+    expect(captured.args).toContain('serve');
+  });
 });
 
 describe('daemon registration helpers', () => {

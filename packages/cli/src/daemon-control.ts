@@ -12,11 +12,13 @@
  * processes.
  */
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { openSync } from 'node:fs';
+import { closeSync, existsSync, openSync } from 'node:fs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import path from 'node:path';
 
 const DAEMON_VERSION = '0.1.0';
+/** Reuse a daemon whose pid is alive AND whose heartbeat/startup is within this. */
+const REUSE_WINDOW_MS = 30_000;
 
 export interface DaemonInfo {
   pid: number;
@@ -30,7 +32,12 @@ export interface SpawnedDaemon {
   unref(): void;
 }
 
-export type DaemonSpawn = (command: string, args: string[], logPath: string) => SpawnedDaemon;
+export type DaemonSpawn = (
+  command: string,
+  args: string[],
+  logPath: string,
+  cwd?: string,
+) => SpawnedDaemon;
 
 export interface EnsureDaemonDeps {
   spawn?: DaemonSpawn;
@@ -38,6 +45,11 @@ export interface EnsureDaemonDeps {
   now?: () => number;
   execPath?: string;
   scriptPath?: string;
+}
+
+export interface EnsureDaemonOptions {
+  /** Extra args appended after `serve --watch --cwd <cwd>` (dirs, mode, agent…). */
+  serveArgs?: string[];
 }
 
 /** True if a process with this pid exists (EPERM = exists but not ours). */
@@ -89,12 +101,66 @@ export async function touchHeartbeat(cwd: string, at: number): Promise<void> {
   await writeFile(p.heartbeat, String(at), 'utf8');
 }
 
-const defaultSpawn: DaemonSpawn = (command, args, logPath) => {
+const defaultSpawn: DaemonSpawn = (command, args, logPath, cwd) => {
   const fd = openSync(logPath, 'a');
-  const child = nodeSpawn(command, args, { detached: true, stdio: ['ignore', fd, fd] });
-  child.unref();
-  return { pid: child.pid, unref: () => undefined };
+  try {
+    const child = nodeSpawn(command, args, {
+      detached: true,
+      stdio: ['ignore', fd, fd],
+      ...(cwd ? { cwd } : {}),
+    });
+    child.unref();
+    return { pid: child.pid, unref: () => undefined };
+  } finally {
+    closeSync(fd); // the child dup'd the fd; close the parent's copy (no leak)
+  }
 };
+
+interface SpawnPlan {
+  command: string;
+  args: string[];
+  cwd?: string;
+}
+
+/** Walk up from a script to the dir whose node_modules has tsx (dev launcher). */
+function findTsxRoot(scriptPath: string): string | undefined {
+  let dir = path.dirname(scriptPath);
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(path.join(dir, 'node_modules', '.bin', 'tsx'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+/**
+ * Build the spawn command for the daemon. A built entry (`.mjs`/`.js`) runs
+ * directly under node; a TypeScript entry (the tsx live launcher) is run via
+ * node's tsx loader from the repo whose node_modules has tsx, so it actually
+ * starts regardless of which project the daemon operates on.
+ */
+function buildServeArgs(execPath: string, scriptPath: string, cwd: string, extra: string[]): SpawnPlan {
+  const serve = ['serve', '--watch', '--cwd', cwd, ...extra];
+  if (scriptPath.endsWith('.ts') || scriptPath.endsWith('.tsx')) {
+    const root = findTsxRoot(scriptPath);
+    return {
+      command: execPath,
+      args: ['--import', 'tsx', scriptPath, ...serve],
+      ...(root ? { cwd: root } : {}),
+    };
+  }
+  return { command: execPath, args: [scriptPath, ...serve] };
+}
+
+async function readHeartbeat(heartbeatPath: string): Promise<number | null> {
+  try {
+    const v = Number(await readFile(heartbeatPath, 'utf8'));
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 async function waitForDaemon(
   infoPath: string,
@@ -115,7 +181,11 @@ async function waitForDaemon(
  * a live one; otherwise spawns `serve --watch` detached, guarded by an exclusive
  * lock so concurrent clients converge on a single daemon.
  */
-export async function ensureDaemon(cwd: string, deps: EnsureDaemonDeps = {}): Promise<DaemonInfo> {
+export async function ensureDaemon(
+  cwd: string,
+  deps: EnsureDaemonDeps = {},
+  opts: EnsureDaemonOptions = {},
+): Promise<DaemonInfo> {
   const p = paths(cwd);
   const isAlive = deps.isAlive ?? isDaemonAlive;
   const now = deps.now ?? (() => Date.now());
@@ -123,28 +193,44 @@ export async function ensureDaemon(cwd: string, deps: EnsureDaemonDeps = {}): Pr
   const execPath = deps.execPath ?? process.execPath;
   const scriptPath = deps.scriptPath ?? process.argv[1] ?? '';
 
+  // Reuse only a daemon whose pid is alive AND that is fresh — a recent
+  // heartbeat, or (during startup) a recent startedAt. This guards against a
+  // reused OS pid or a wedged daemon masquerading as live.
   const existing = await readDaemonInfo(p.info);
-  if (existing && isAlive(existing.pid)) return existing;
+  if (existing && isAlive(existing.pid)) {
+    const hb = await readHeartbeat(p.heartbeat);
+    const fresh =
+      hb != null ? now() - hb < REUSE_WINDOW_MS : now() - existing.startedAt < REUSE_WINDOW_MS;
+    if (fresh) return existing;
+  }
 
   await mkdir(p.dir, { recursive: true });
 
-  // Claim the spawn so two clients don't start two daemons on the same runs dir.
-  let claimed = false;
+  // Claim the spawn so two clients don't start two daemons on one runs dir.
+  // `owned` tracks whether WE hold the lock, so the finally never deletes a
+  // peer's lock (which would open a double-spawn window).
+  let owned = false;
   try {
     await writeFile(p.lock, String(now()), { flag: 'wx' });
-    claimed = true;
+    owned = true;
   } catch {
-    // Another client is spawning — wait for its daemon.json, else take over a
+    // Another client is spawning — wait for its daemon.json; else take over a
     // stale lock left by a spawner that died mid-start.
     const info = await waitForDaemon(p.info, isAlive, 3000);
     if (info) return info;
     await rm(p.lock, { force: true });
-    await writeFile(p.lock, String(now()), { flag: 'wx' }).catch(() => undefined);
+    owned = await writeFile(p.lock, String(now()), { flag: 'wx' })
+      .then(() => true)
+      .catch(() => false);
+    if (!owned) {
+      const info2 = await waitForDaemon(p.info, isAlive, 3000);
+      if (info2) return info2;
+    }
   }
 
   try {
-    const args = [scriptPath, 'serve', '--watch', '--cwd', cwd];
-    const child = spawnFn(execPath, args, p.log);
+    const plan = buildServeArgs(execPath, scriptPath, cwd, opts.serveArgs ?? []);
+    const child = spawnFn(plan.command, plan.args, p.log, plan.cwd);
     const info: DaemonInfo = {
       pid: child.pid ?? -1,
       startedAt: now(),
@@ -154,7 +240,6 @@ export async function ensureDaemon(cwd: string, deps: EnsureDaemonDeps = {}): Pr
     await writeDaemonInfo(cwd, info);
     return info;
   } finally {
-    void claimed; // (claimed only documents which branch took the lock)
-    await rm(p.lock, { force: true });
+    if (owned) await rm(p.lock, { force: true });
   }
 }

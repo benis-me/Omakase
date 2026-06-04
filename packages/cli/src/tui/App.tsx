@@ -31,7 +31,6 @@ export interface AppProps {
 }
 
 type Screen = 'list' | 'run';
-const TERMINAL: ReadonlySet<RunStatus> = new Set(['succeeded', 'failed', 'cancelled']);
 
 function taskIcon(status: TaskView['status']): string {
   switch (status) {
@@ -67,7 +66,10 @@ function fmtDuration(ms: number): string {
 
 function elapsedOf(view: RunView, nowMs: number): number {
   if (view.startedAt == null) return 0;
-  const end = TERMINAL.has(view.status as RunStatus) ? view.updatedAt ?? view.startedAt : nowMs;
+  // Only a genuinely-advancing run (running/paused) ticks; anything else
+  // (succeeded/failed/cancelled AND incomplete) freezes at its last update.
+  const advancing = view.status === 'running' || view.status === 'paused';
+  const end = advancing ? nowMs : view.updatedAt ?? view.startedAt;
   return Math.max(0, end - view.startedAt);
 }
 
@@ -151,6 +153,11 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
     if (id) {
       setView(null);
       await attach(id);
+    } else {
+      // The daemon hasn't picked it up yet — tell the user and show the list so
+      // they can attach once it appears, rather than silently doing nothing.
+      setNotice('submitted — waiting for the daemon to start it; press [esc] for the run list');
+      await refreshRuns();
     }
   };
 

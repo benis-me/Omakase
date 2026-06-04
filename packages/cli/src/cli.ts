@@ -105,7 +105,7 @@ export interface CliDeps {
   createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode) => Orchestrator;
   detectionOptions?: DetectionOptions;
   /** Ensure the project's detached daemon is running (injected for tests). */
-  ensureDaemon?: (cwd: string) => Promise<DaemonInfo>;
+  ensureDaemon?: (cwd: string, serveArgs?: string[]) => Promise<DaemonInfo>;
   /** Launch the TUI; injected so headless tests don't import Ink. */
   launchTui?: (opts: LaunchTuiOptions) => Promise<void>;
 }
@@ -308,20 +308,29 @@ export function createCli(deps: CliDeps = {}): Cli {
         version: CLI_VERSION,
         cwd: config.cwd,
       });
+      // Heartbeat on an INDEPENDENT timer, not after each cycle: a control-paused
+      // run blocks drain()/cycle() until resumed, and we must still look alive to
+      // clients (else ensureDaemon would judge the daemon dead and respawn it).
+      await touchHeartbeat(config.cwd, Date.now());
+      const hbTimer = setInterval(() => {
+        void touchHeartbeat(config.cwd, Date.now());
+      }, Math.min(intervalMs, 2000));
+      hbTimer.unref?.();
       const ac = new AbortController();
       const onSignal = (): void => {
         ac.abort();
+        clearInterval(hbTimer);
         server.supervisor.stop();
       };
       process.once('SIGINT', onSignal);
       process.once('SIGTERM', onSignal);
       while (!ac.signal.aborted) {
         const health = await server.cycle();
-        await touchHeartbeat(config.cwd, Date.now());
         write(`heartbeat @ ${health.lastHeartbeatAt}: ${health.completed} done, ${health.queued} queued`);
         if (ac.signal.aborted) break;
         await sleep(intervalMs, ac.signal);
       }
+      clearInterval(hbTimer);
       return 0;
     }
 
@@ -347,9 +356,17 @@ export function createCli(deps: CliDeps = {}): Cli {
       typeof options['queue-dir'] === 'string' ? options['queue-dir'] : path.join(cwd, '.omakase', 'queue');
 
     // The TUI is a pure client: ensure a detached daemon owns the runs (so they
-    // survive quitting), then talk to it over the store + control files.
-    const ensure = deps.ensureDaemon ?? ((c: string) => ensureDaemon(c));
-    await ensure(cwd);
+    // survive quitting), then talk to it over the store + control files. Forward
+    // the resolved dirs and run-shaping flags so the spawned daemon uses the SAME
+    // dirs/config the client does (a reused daemon keeps its own config).
+    const serveArgs = ['--runs-dir', runsDir, '--queue-dir', queueDir];
+    if (typeof options.mode === 'string') serveArgs.push('--mode', options.mode);
+    if (options.offline) serveArgs.push('--offline');
+    if (typeof options.agent === 'string') serveArgs.push('--agent', options.agent);
+    if (options['max-tokens'] !== undefined) serveArgs.push('--max-tokens', String(options['max-tokens']));
+    if (options['max-cost'] !== undefined) serveArgs.push('--max-cost', String(options['max-cost']));
+    const ensure = deps.ensureDaemon ?? ((c: string, sa?: string[]) => ensureDaemon(c, {}, { serveArgs: sa }));
+    await ensure(cwd, serveArgs);
 
     const client = new RunControllerClient({
       store: new FileRunStore(runsDir),
@@ -367,6 +384,17 @@ export function createCli(deps: CliDeps = {}): Cli {
     const launch =
       deps.launchTui ??
       (async (opts) => {
+        // Without an interactive TTY the Ink UI could never be quit (useInput is
+        // inactive). Don't launch it — the run is already detached in the daemon;
+        // report and return so the command doesn't hang forever.
+        if (!process.stdin.isTTY) {
+          write(
+            opts.token
+              ? 'omakase tui: no interactive terminal — task submitted to the detached daemon; re-run `omakase tui` in a terminal to attach.'
+              : 'omakase tui: no interactive terminal — run `omakase tui` in a terminal to manage runs.',
+          );
+          return;
+        }
         const { launchTui } = await import('./tui/index.js');
         await launchTui(opts);
       });

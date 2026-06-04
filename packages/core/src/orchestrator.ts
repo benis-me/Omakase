@@ -215,6 +215,7 @@ class RunController implements RunHandle {
   private readonly control: ControlSource | undefined;
   private readonly controlPoll: ControlPoll | undefined;
   private lastControlSeq = 0;
+  private controlInFlight = false;
   private controlDisposer: (() => void) | undefined;
 
   get events(): AsyncIterable<OrchestratorEvent> {
@@ -361,12 +362,17 @@ class RunController implements RunHandle {
    * — so it takes effect mid-run, not at a task boundary.
    */
   private async applyControl(): Promise<void> {
-    if (!this.control) return;
+    // Serialize: a fire-and-forget poll tick must not overlap a prior read and
+    // re-apply the same command across the seq-check await window.
+    if (!this.control || this.controlInFlight) return;
+    this.controlInFlight = true;
     let command;
     try {
       command = await this.control.read(this.id);
     } catch {
       return; // a torn/unreadable control file is non-fatal
+    } finally {
+      this.controlInFlight = false;
     }
     if (!command || command.seq <= this.lastControlSeq) return;
     this.lastControlSeq = command.seq;
