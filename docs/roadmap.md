@@ -40,20 +40,21 @@ where the edges are and what would deepen each layer.
 - `omakase run` uses real installed agents by default (it will spend real model
   calls). Pass `--offline` (or `--agent builtin`) to force the built-in agent
   and run with no model calls.
-- The TUI auto-runs a task passed on the command line and exposes
-  pause/resume/cancel/replan; it does not yet have an in-TUI text input for
-  composing a brand-new task interactively.
+- The TUI auto-runs a task passed on the command line, exposes
+  pause/resume/cancel/replan, and has an in-TUI composer (`[i]` to start a new
+  task when idle, `[u]` to type a custom note during a run).
 
 ## Planned enhancements
 
-1. **Adapter conformance tests** that record real CLI output as fixtures and
-   replay them through the parsers, keeping argv/stream mapping honest per
-   release.
-2. **Codegraph depth**: symbol-level edges, call graphs, and a watch-mode that
-   feeds incremental `update()` from a file watcher (path-alias resolution is
-   done).
-3. **Host integrations**: an in-TUI text input for composing new tasks, and a
-   service-manager unit (systemd/launchd) around `omakase serve --watch`.
+1. **Codegraph semantic depth**: symbol-level edges and call graphs. This is
+   intentionally *not* attempted from regex (it would be unsound). The graph is a
+   pluggable seam — back it with an OSS tool (dependency-cruiser/madge/ts-morph)
+   via `CodeGraph.fromJSON`. The syntactic graph, incremental `update()`, and a
+   debounced `createCodeGraphWatcher` are shipped.
+2. **Real auth probing**: replace the credential-file/env-var heuristic with a
+   cheap authenticated call per adapter to verify a token is valid/unexpired.
+3. **Adapter argv fidelity**: keep the recorded conformance fixtures current as
+   each agent CLI releases, and expand them to cover more event variants.
 
 **Shipped since first cut:** bounded-parallel task execution
 (`maxConcurrency`), a TTL detection cache (`detectionCacheTtlMs` +
@@ -65,5 +66,9 @@ regression test), **cross-run persisted knowledge** (`KnowledgeStore` /
 (`acceptanceCriteria` + `parseStructuredReview`), **live MCP injection** (three
 strategies via `applyMcpInjection`), **codegraph tsconfig path-alias
 resolution** (`loadTsconfigAliases`), the **Supervisor daemon** (queue +
-`resumeInterrupted()` + heartbeat), **skill-aware planning**, and **`omakase
-serve`** — a file-backed supervisor CLI (queue dir + `--watch` + resume).
+`resumeInterrupted()` + heartbeat), **skill-aware planning**, **`omakase
+serve`** — a file-backed supervisor CLI (queue dir + `--watch` + resume, with
+crash-recovery of claimed-but-unstarted tasks), **adapter stream-conformance
+fixtures** (recorded output replayed through the parsers), a debounced
+**`createCodeGraphWatcher`** for incremental codegraph updates, an **in-TUI task
+composer**, and **systemd/launchd service units** under `deploy/`.

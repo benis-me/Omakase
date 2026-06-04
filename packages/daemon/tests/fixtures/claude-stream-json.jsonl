@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"sess-1","tools":["read","write"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the README to summarize."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"read","input":{"path":"README.md"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"# Omakase","is_error":false}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":" It is the Omakase project."}]}}
+{"type":"result","subtype":"success","total_cost_usd":0.0123,"usage":{"input_tokens":1200,"output_tokens":42}}

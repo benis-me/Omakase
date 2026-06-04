@@ -1,8 +1,9 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CodeGraph, loadTsconfigAliases } from '../src/knowledge/codegraph.js';
+import { createCodeGraphWatcher } from '../src/knowledge/watch.js';
 
 let root: string;
 
@@ -153,5 +154,52 @@ describe('CodeGraph', () => {
     const graph = CodeGraph.fromJSON({ root: '/x', nodes });
     expect(() => graph.cycles()).not.toThrow();
     expect(graph.cycles()).toEqual([]);
+  });
+});
+
+describe('createCodeGraphWatcher', () => {
+  it('applies debounced incremental updates and removes vanished files', async () => {
+    write('src/a.ts', `import './b.js';\nexport const a = 1;\n`);
+    write('src/b.ts', `export const b = 2;\n`);
+    const graph = await CodeGraph.scan({ root });
+    expect(graph.dependencies('src/a.ts')).toEqual(['src/b.ts']);
+
+    const applied: string[][] = [];
+    const watcher = createCodeGraphWatcher(graph, { onUpdate: (p) => applied.push(p) });
+
+    // Drop the dependency, then notify + flush.
+    write('src/a.ts', `export const a = 1;\n`);
+    watcher.notify('src/a.ts');
+    await watcher.flush();
+    expect(graph.dependencies('src/a.ts')).toEqual([]);
+
+    // Point a.ts at a brand-new file.
+    write('src/a.ts', `import './c.js';\nexport const a = 1;\n`);
+    write('src/c.ts', `export const c = 3;\n`);
+    watcher.notify('src/a.ts', 'src/c.ts');
+    await watcher.flush();
+    expect(graph.dependencies('src/a.ts')).toEqual(['src/c.ts']);
+
+    // Delete b.ts; the watcher removes the vanished node.
+    rmSync(path.join(root, 'src/b.ts'));
+    watcher.notify('src/b.ts');
+    await watcher.flush();
+    expect(graph.node('src/b.ts')).toBeUndefined();
+
+    expect(applied).toHaveLength(3);
+    watcher.stop();
+  });
+
+  it('coalesces a burst of notifications into a single batch', async () => {
+    write('src/a.ts', `export const a = 1;\n`);
+    const graph = await CodeGraph.scan({ root });
+    let batches = 0;
+    const watcher = createCodeGraphWatcher(graph, { onUpdate: () => { batches += 1; } });
+    watcher.notify('src/a.ts');
+    watcher.notify('src/a.ts');
+    watcher.notify('src/a.ts');
+    await watcher.flush();
+    expect(batches).toBe(1);
+    watcher.stop();
   });
 });

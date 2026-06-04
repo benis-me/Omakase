@@ -1,0 +1,31 @@
+# Omakase serve — run the autonomous supervisor as a systemd *user* service.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/omakase-serve.service ~/.config/systemd/user/
+#   # edit WorkingDirectory + credentials below, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now omakase-serve.service
+#   journalctl --user -u omakase-serve -f      # follow logs
+#
+# `omakase serve --watch` polls <cwd>/.omakase/queue for task files and resumes
+# any run a previous process left unfinished, so the service is crash-safe.
+
+[Unit]
+Description=Omakase serve — autonomous agent supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The project whose .omakase/{queue,runs} this supervisor drives:
+WorkingDirectory=%h/projects/your-project
+ExecStart=/usr/bin/env omakase serve --watch --interval 5000
+Restart=on-failure
+RestartSec=10
+# Credentials for the underlying agent CLIs (pick what your agents need):
+# Environment=ANTHROPIC_API_KEY=sk-...
+# EnvironmentFile=%h/.config/omakase/env
+
+[Install]
+WantedBy=default.target

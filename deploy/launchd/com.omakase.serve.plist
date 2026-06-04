@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Omakase serve — run the autonomous supervisor as a launchd user agent (macOS).
+
+  Install:
+    cp deploy/launchd/com.omakase.serve.plist ~/Library/LaunchAgents/
+    # edit WorkingDirectory + the PATH/credentials EnvironmentVariables below, then:
+    launchctl load -w ~/Library/LaunchAgents/com.omakase.serve.plist
+    tail -f /tmp/omakase-serve.log
+
+  Uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/com.omakase.serve.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.omakase.serve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>omakase</string>
+    <string>serve</string>
+    <string>--watch</string>
+    <string>--interval</string>
+    <string>5000</string>
+  </array>
+  <!-- The project whose .omakase/{queue,runs} this supervisor drives: -->
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/projects/your-project</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts with a minimal PATH; include where omakase + your agents live. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- <key>ANTHROPIC_API_KEY</key><string>sk-...</string> -->
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/omakase-serve.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/omakase-serve.err</string>
+</dict>
+</plist>

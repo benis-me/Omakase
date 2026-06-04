@@ -6,6 +6,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Adapter stream-conformance fixtures (`packages/daemon/tests/fixtures/`) replayed
+  through the parsers, pinning argv/stream mapping per release.
+- `createCodeGraphWatcher` (`@omakase/core`): a debounced, batched driver for
+  incremental `CodeGraph.update()` from any file watcher.
+- In-TUI task composer: `[i]` starts a new task when idle, `[u]` types a custom
+  note during a run.
+- `deploy/` systemd + launchd service units for `omakase serve --watch`.
+- CI (GitHub Actions), CHANGELOG, and `repository`/`homepage`/`bugs` package
+  metadata.
+
+### Fixed
+- 21 findings from a fourth adversarial review round (terminal-save outcome flip,
+  codex tool/reasoning double-emit, signal-death-as-completed, run-record
+  validation, unguarded supervisor resume, TUI no-TTY hang, serve task-loss
+  window, transitive plan blocking, and more) — each with a regression test.
+- `binEnvVar` overrides that don't resolve now fail closed *and* surface a clear
+  reason in `omakase agents`.
+
 ## [0.1.0]
 
 First public cut: a complete, tested implementation of the agent runtime, the

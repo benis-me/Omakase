@@ -69,6 +69,8 @@ export type {
   CodeGraphSnapshot,
   ScanOptions,
 } from './knowledge/codegraph.js';
+export { createCodeGraphWatcher } from './knowledge/watch.js';
+export type { CodeGraphWatcher, CodeGraphWatchOptions } from './knowledge/watch.js';
 export { FileKnowledgeStore, projectKnowledgeStore } from './knowledge/store.js';
 export type { KnowledgeStore } from './knowledge/store.js';
 

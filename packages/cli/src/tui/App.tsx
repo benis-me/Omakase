@@ -52,56 +52,89 @@ function statusColor(status: RunView['status']): string {
   return 'gray';
 }
 
+type ComposeMode = 'new' | 'note';
+
 export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
   const [agents, setAgents] = useState<DetectedAgent[]>([]);
   const [mode, setMode] = useState<WorkMode>(initialMode);
   const [view, setView] = useState<RunView>(() => initialRunView(initialMode));
+  const [compose, setCompose] = useState<{ active: boolean; mode: ComposeMode; buffer: string }>({
+    active: false,
+    mode: 'new',
+    buffer: '',
+  });
   const handleRef = useRef<RunHandle | null>(null);
+  const activeRef = useRef(true);
+  // Read the latest selected mode without re-creating driveRun on every keypress.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+
+  const driveRun = (taskText: string): void => {
+    if (handleRef.current) return; // one run per orchestrator instance
+    const handle = orchestrator.start({
+      prompt: taskText,
+      mode: modeRef.current,
+      ...(cwd ? { cwd } : {}),
+    });
+    handleRef.current = handle;
+    void (async () => {
+      try {
+        for await (const event of handle.events) {
+          if (!activeRef.current) break;
+          setView((v) => reduceRunView(v, event));
+        }
+      } catch {
+        /* stream ended */
+      } finally {
+        // Without a raw-mode TTY (piped stdin / CI) there is no way to press
+        // [q], so the app would hang forever after the run ends. Exit once the
+        // event stream completes. Interactive sessions stay open for review.
+        if (activeRef.current && !isRawModeSupported) exit();
+      }
+    })();
+  };
 
   useEffect(() => {
-    let active = true;
+    activeRef.current = true;
     void runtime
       .detect()
       .then((list) => {
-        if (active) setAgents(list);
+        if (activeRef.current) setAgents(list);
       })
       .catch(() => undefined);
 
-    if (task) {
-      const handle = orchestrator.start({
-        prompt: task,
-        mode: initialMode,
-        ...(cwd ? { cwd } : {}),
-      });
-      handleRef.current = handle;
-      void (async () => {
-        try {
-          for await (const event of handle.events) {
-            if (!active) break;
-            setView((v) => reduceRunView(v, event));
-          }
-        } catch {
-          /* stream ended */
-        } finally {
-          // Without a raw-mode TTY (piped stdin / CI) there is no way to press
-          // [q], so the app would hang forever after the run ends. Exit once the
-          // event stream completes. Interactive sessions stay open for review.
-          if (active && !isRawModeSupported) exit();
-        }
-      })();
-    }
+    if (task) driveRun(task);
 
     return () => {
-      active = false;
+      activeRef.current = false;
       handleRef.current?.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useInput(
-    (input) => {
+    (input, key) => {
+      // Text-composer mode: accumulate a new task / a custom user-input note.
+      if (compose.active) {
+        if (key.return) {
+          const text = compose.buffer.trim();
+          const composeMode = compose.mode;
+          setCompose({ active: false, mode: composeMode, buffer: '' });
+          if (!text) return;
+          if (composeMode === 'new') driveRun(text);
+          else handleRef.current?.appendUserInput(text);
+        } else if (key.escape) {
+          setCompose((c) => ({ ...c, active: false, buffer: '' }));
+        } else if (key.backspace || key.delete) {
+          setCompose((c) => ({ ...c, buffer: c.buffer.slice(0, -1) }));
+        } else if (input && !key.ctrl && !key.meta) {
+          setCompose((c) => ({ ...c, buffer: c.buffer + input }));
+        }
+        return;
+      }
+
       if (input === 'q') {
         handleRef.current?.cancel();
         exit();
@@ -111,8 +144,12 @@ export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: App
         handleRef.current?.resume();
       } else if (input === 'c') {
         handleRef.current?.cancel();
-      } else if (input === 'u') {
-        handleRef.current?.appendUserInput('Reviewer note: keep going and harden edge cases.');
+      } else if (input === 'i' && handleRef.current === null && !task) {
+        // Idle with no preset task → compose one interactively.
+        setCompose({ active: true, mode: 'new', buffer: '' });
+      } else if (input === 'u' && handleRef.current !== null) {
+        // During a run → compose a custom note to feed the orchestrator.
+        setCompose({ active: true, mode: 'note', buffer: '' });
       } else if (input === 'm') {
         // A run's mode is fixed once it starts; only let the user pick a mode
         // when no run has been started (gate on the handle, not transient
@@ -199,7 +236,23 @@ export function App({ runtime, orchestrator, task, cwd, mode: initialMode }: App
         <Text color={statusColor(view.status)}>{view.summary}</Text>
       ) : null}
 
-      <Text dimColor>[p]ause [r]esume [c]ancel [u] add-input [m] mode [q]uit</Text>
+      {compose.active ? (
+        <Box>
+          <Text>
+            {compose.mode === 'new' ? 'new task' : 'note'} ›{' '}
+            <Text color="cyan">{compose.buffer}</Text>
+            <Text inverse> </Text>
+          </Text>
+        </Box>
+      ) : null}
+
+      <Text dimColor>{hints(compose.active, handleRef.current !== null)}</Text>
     </Box>
   );
+}
+
+function hints(composing: boolean, running: boolean): string {
+  if (composing) return '[enter] submit  [esc] cancel';
+  if (running) return '[p]ause [r]esume [c]ancel [u] add-input [q]uit';
+  return '[i] new task  [m] mode  [q]uit';
 }

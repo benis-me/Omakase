@@ -1,0 +1,5 @@
+{"type":"item.started","item":{"id":"it_1","type":"agent_message","text":"Let me check the files."}}
+{"type":"item.completed","item":{"id":"it_1","type":"agent_message","text":"Let me check the files."}}
+{"type":"item.completed","item":{"id":"it_2","type":"command_execution","command":"ls -la"}}
+{"type":"item.completed","item":{"id":"it_3","type":"agent_message","text":" Done — 3 files."}}
+{"msg":{"type":"token_count","info":{"input_tokens":900,"output_tokens":30}}}
