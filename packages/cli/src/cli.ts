@@ -412,6 +412,7 @@ export function createCli(deps: CliDeps = {}): Cli {
       cwd,
       mode: baseMode,
       detect,
+      daemonStatus: () => daemonStatus(cwd),
       ...(task.trim() ? { task: task.trim() } : {}),
       ...(token ? { token } : {}),
     });

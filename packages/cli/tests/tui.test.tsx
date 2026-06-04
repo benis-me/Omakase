@@ -79,7 +79,8 @@ describe('TUI App (persistent client)', () => {
     await tick();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Phases');
-    expect(frame).toContain('Detail · 1 agents');
+    expect(frame).toContain('Detail · logic'); // detail filtered to the selected phase
+    expect(frame).toContain('1 agents');
     expect(frame).toContain('worker one');
     expect(frame).toContain('120 tok');
     expect(frame).toContain('2 tools');
@@ -108,6 +109,60 @@ describe('TUI App (persistent client)', () => {
     stdin.write('q');
     await tick(20);
     expect(client.stop).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('shows the daemon status in the header', async () => {
+    const client = fakeClient();
+    const daemonStatus = async () => ({
+      running: true,
+      pid: 4242,
+      startedAt: 0,
+      version: '0.1.0',
+      heartbeatAt: 0,
+      cwd: '/p',
+    });
+    const { lastFrame, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" daemonStatus={daemonStatus} />,
+    );
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/daemon ● up \(4242\)/);
+    unmount();
+  });
+
+  it('↑↓ selects a phase and the Detail pane filters to it', async () => {
+    const twoPhase: RunView = {
+      ...sampleView(),
+      tasks: [
+        { id: 't1', title: 'build it', role: 'worker', status: 'succeeded', tags: ['logic'], tokens: 10, toolCount: 1, startedAt: 0, finishedAt: 0, agentId: 'codex' },
+        { id: 't2', title: 'review it', role: 'reviewer', status: 'running', tags: ['review'], tokens: 5, toolCount: 0, startedAt: 0, finishedAt: null, agentId: 'claude' },
+      ],
+      phases: [
+        { stage: 'logic', done: 1, total: 1 },
+        { stage: 'review', done: 0, total: 1 },
+      ],
+      totalAgents: 2,
+    };
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(twoPhase);
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" />,
+    );
+    await tick();
+    // Phase 0 ('logic') selected → Detail shows the logic task only.
+    expect(lastFrame() ?? '').toContain('Detail · logic');
+    expect(lastFrame() ?? '').toContain('build it');
+    expect(lastFrame() ?? '').not.toContain('review it');
+    stdin.write('[B'); // down arrow → select phase 1 ('review')
+    await tick(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Detail · review');
+    expect(frame).toContain('review it');
+    expect(frame).not.toContain('build it');
     unmount();
   });
 });

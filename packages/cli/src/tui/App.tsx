@@ -15,6 +15,7 @@ import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import type { DetectedAgent } from '@omakase/daemon';
 import type { RunStatus, WorkMode } from '@omakase/core';
+import type { DaemonStatus } from '../daemon-control.js';
 import type { RunControllerClient, RunSummary } from '../run-client.js';
 import type { PhaseView, RunView, RunViewStatus, TaskView } from '../view-model.js';
 
@@ -45,6 +46,13 @@ export interface AppProps {
   task?: string;
   /** Local agent detection for the dashboard. */
   detect?: () => Promise<DetectedAgent[]>;
+  /** Poll the project's daemon status for the header indicator. */
+  daemonStatus?: () => Promise<DaemonStatus>;
+}
+
+/** A task's phase/stage — must match view-model's computePhases grouping. */
+function stageOf(t: TaskView): string {
+  return t.tags[0] ?? t.role ?? 'Plan';
 }
 
 type Screen = 'list' | 'run';
@@ -90,7 +98,7 @@ function elapsedOf(view: RunView, nowMs: number): number {
   return Math.max(0, end - view.startedAt);
 }
 
-export function App({ client, cwd, token, task, detect }: AppProps): React.ReactElement {
+export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
   const { columns, rows } = useTerminalSize();
@@ -100,6 +108,8 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
   const [screen, setScreen] = useState<Screen>('list');
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState(0);
+  const [selectedPhase, setSelectedPhase] = useState(0);
+  const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [attachedId, setAttachedId] = useState<string | null>(null);
   const [view, setView] = useState<RunView | null>(null);
   const [compose, setCompose] = useState<{ active: boolean; kind: 'new' | 'note'; buffer: string }>({
@@ -119,6 +129,7 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
   const attach = async (id: string): Promise<void> => {
     if (!active.current) return;
     setAttachedId(id);
+    setSelectedPhase(0);
     setScreen('run');
   };
 
@@ -164,6 +175,18 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
     timer.unref?.();
     return () => clearInterval(timer);
   }, [screen]);
+
+  // Poll the daemon's status for the header indicator (it can die independently).
+  useEffect(() => {
+    if (!daemonStatus) return;
+    const poll = (): void => {
+      void daemonStatus().then((s) => active.current && setDaemon(s)).catch(() => undefined);
+    };
+    poll();
+    const timer = setInterval(poll, 3000);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }, [daemonStatus]);
 
   const submitNew = async (text: string): Promise<void> => {
     const t = await client.submit(text);
@@ -239,7 +262,10 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
       }
 
       // run screen
-      if (key.escape) back();
+      if (key.upArrow) setSelectedPhase((i) => Math.max(0, i - 1));
+      else if (key.downArrow)
+        setSelectedPhase((i) => Math.min(Math.max(0, (view?.phases.length ?? 1) - 1), i + 1));
+      else if (key.escape) back();
       else if (input === 'x' && attachedId) {
         setNotice('stopping…');
         void client.stop(attachedId);
@@ -262,12 +288,20 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header view={view} screen={screen} availableCount={availableCount} agentTotal={agents.length} nowMs={nowMs} task={task} />
+      <Header
+        view={view}
+        screen={screen}
+        availableCount={availableCount}
+        agentTotal={agents.length}
+        nowMs={nowMs}
+        task={task}
+        daemon={daemon}
+      />
       <Box flexGrow={1} flexDirection="column">
         {screen === 'list' ? (
           <RunList runs={runs} selected={selected} agents={agents} />
         ) : (
-          <RunDetail view={view} nowMs={nowMs} />
+          <RunDetail view={view} nowMs={nowMs} selectedPhase={selectedPhase} />
         )}
       </Box>
       {compose.active ? (
@@ -287,7 +321,14 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
   if (screen === 'list') return '↑↓ select · [enter] attach · [i] new task · [q]uit';
-  return '[x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
+  return '↑↓ phase · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
+}
+
+function daemonLabel(d: DaemonStatus | null): { text: string; color: string } {
+  if (!d) return { text: 'daemon ?', color: 'gray' };
+  return d.running
+    ? { text: `daemon ● up (${d.pid})`, color: 'green' }
+    : { text: 'daemon ○ down', color: 'red' };
 }
 
 function Header({
@@ -297,6 +338,7 @@ function Header({
   agentTotal,
   nowMs,
   task,
+  daemon,
 }: {
   view: RunView | null;
   screen: Screen;
@@ -304,16 +346,18 @@ function Header({
   agentTotal: number;
   nowMs: number;
   task?: string;
+  daemon: DaemonStatus | null;
 }): React.ReactElement {
   const title = view?.title ?? task ?? 'Omakase';
   const elapsed = view ? fmtDuration(elapsedOf(view, nowMs)) : '';
+  const dl = daemonLabel(daemon);
   return (
     <Box justifyContent="space-between">
       <Box>
         <Text bold color="magenta">
           omakase{' '}
         </Text>
-        <Text>{title.split('\n')[0]?.slice(0, 60)}</Text>
+        <Text>{title.split('\n')[0]?.slice(0, 56)}</Text>
         {view ? (
           <Text>
             {' '}
@@ -322,6 +366,8 @@ function Header({
         ) : null}
       </Box>
       <Text dimColor>
+        <Text color={dl.color}>{dl.text}</Text>
+        {'  '}
         {screen === 'run' && view
           ? `${view.activeAgents}/${view.totalAgents} agents · ${elapsed}`
           : `${availableCount}/${agentTotal} agents`}
@@ -364,16 +410,30 @@ function RunList({
   );
 }
 
-function RunDetail({ view, nowMs }: { view: RunView | null; nowMs: number }): React.ReactElement {
+function RunDetail({
+  view,
+  nowMs,
+  selectedPhase,
+}: {
+  view: RunView | null;
+  nowMs: number;
+  selectedPhase: number;
+}): React.ReactElement {
   if (!view) return <Text dimColor>attaching…</Text>;
+  const phaseIdx = view.phases.length > 0 ? Math.min(selectedPhase, view.phases.length - 1) : 0;
+  const stage = view.phases[phaseIdx]?.stage;
+  // Show the tasks of the SELECTED phase (↑↓ moves the cursor) — matching the
+  // reference monitor where the right pane reflects the chosen phase.
+  const tasks = stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks;
   return (
     <Box flexGrow={1}>
       <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
         <Text bold>Phases</Text>
         {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}
-        {view.phases.map((p: PhaseView) => (
-          <Text key={p.stage}>
-            {p.done === p.total ? <Text color="green">✔</Text> : <Text dimColor>·</Text>} {p.stage}
+        {view.phases.map((p: PhaseView, i) => (
+          <Text key={p.stage} color={i === phaseIdx ? 'cyan' : undefined}>
+            {i === phaseIdx ? '›' : ' '}
+            {p.done === p.total && p.total > 0 ? <Text color="green">✔</Text> : <Text dimColor>·</Text>} {p.stage}
             <Text dimColor>
               {'  '}
               {p.done}/{p.total}
@@ -382,8 +442,10 @@ function RunDetail({ view, nowMs }: { view: RunView | null; nowMs: number }): Re
         ))}
       </Box>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
-        <Text bold>Detail · {view.totalAgents} agents</Text>
-        {view.tasks.map((t) => {
+        <Text bold>
+          Detail{stage != null ? ` · ${stage}` : ''} · {tasks.length} agents
+        </Text>
+        {tasks.map((t) => {
           const el = t.startedAt != null ? fmtDuration((t.finishedAt ?? nowMs) - t.startedAt) : '—';
           return (
             <Text key={t.id}>
