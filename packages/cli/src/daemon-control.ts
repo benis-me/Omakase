@@ -243,3 +243,54 @@ export async function ensureDaemon(
     if (owned) await rm(p.lock, { force: true });
   }
 }
+
+export interface DaemonStatus {
+  running: boolean;
+  pid: number | null;
+  startedAt: number | null;
+  version: string | null;
+  heartbeatAt: number | null;
+  cwd: string;
+}
+
+/** Inspect the project's daemon: is it recorded + alive, and how fresh? */
+export async function daemonStatus(
+  cwd: string,
+  deps: { isAlive?: (pid: number) => boolean } = {},
+): Promise<DaemonStatus> {
+  const p = paths(cwd);
+  const isAlive = deps.isAlive ?? isDaemonAlive;
+  const info = await readDaemonInfo(p.info);
+  const heartbeatAt = await readHeartbeat(p.heartbeat);
+  return {
+    running: Boolean(info && isAlive(info.pid)),
+    pid: info?.pid ?? null,
+    startedAt: info?.startedAt ?? null,
+    version: info?.version ?? null,
+    heartbeatAt,
+    cwd,
+  };
+}
+
+/** Stop the project's daemon (SIGTERM) and clear its registration files. */
+export async function stopDaemon(
+  cwd: string,
+  deps: { isAlive?: (pid: number) => boolean; kill?: (pid: number, signal: NodeJS.Signals) => void } = {},
+): Promise<{ stopped: boolean; pid: number | null }> {
+  const p = paths(cwd);
+  const isAlive = deps.isAlive ?? isDaemonAlive;
+  const kill = deps.kill ?? ((pid, signal) => process.kill(pid, signal));
+  const info = await readDaemonInfo(p.info);
+  const alive = Boolean(info && isAlive(info.pid));
+  if (info && alive) {
+    try {
+      kill(info.pid, 'SIGTERM');
+    } catch {
+      /* exited between the check and the signal */
+    }
+  }
+  // Clear stale registration either way so `status` reflects reality.
+  await rm(p.info, { force: true }).catch(() => undefined);
+  await rm(p.heartbeat, { force: true }).catch(() => undefined);
+  return { stopped: alive, pid: info?.pid ?? null };
+}

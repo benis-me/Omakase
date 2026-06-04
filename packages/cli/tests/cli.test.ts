@@ -232,6 +232,24 @@ describe('omakase tui', () => {
   });
 });
 
+describe('omakase daemon', () => {
+  it('status reports not-running for a project with no daemon', async () => {
+    const { cli, out } = harness();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-daemon-'));
+    const code = await cli.main(['daemon', 'status', '--cwd', cwd]);
+    expect(code).toBe(0);
+    expect(out()).toMatch(/not running/);
+  });
+
+  it('stop is a no-op when nothing is running', async () => {
+    const { cli, out } = harness();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-daemon-'));
+    const code = await cli.main(['daemon', 'stop', '--cwd', cwd]);
+    expect(code).toBe(0);
+    expect(out()).toMatch(/no running daemon/);
+  });
+});
+
 describe('omakase misc', () => {
   it('prints version', async () => {
     const { cli, out } = harness();

@@ -12,11 +12,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { Box, Text, useApp, useInput, useStdin } from 'ink';
+import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import type { DetectedAgent } from '@omakase/daemon';
 import type { RunStatus, WorkMode } from '@omakase/core';
 import type { RunControllerClient, RunSummary } from '../run-client.js';
 import type { PhaseView, RunView, RunViewStatus, TaskView } from '../view-model.js';
+
+/** Terminal size, kept in sync on resize so the UI fills and adapts. */
+function useTerminalSize(): { columns: number; rows: number } {
+  const { stdout } = useStdout();
+  const [size, setSize] = useState({ columns: stdout?.columns ?? 80, rows: stdout?.rows ?? 24 });
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = (): void =>
+      setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 });
+    onResize();
+    stdout.on('resize', onResize);
+    return () => {
+      stdout.off('resize', onResize);
+    };
+  }, [stdout]);
+  return size;
+}
 
 export interface AppProps {
   client: RunControllerClient;
@@ -76,6 +93,7 @@ function elapsedOf(view: RunView, nowMs: number): number {
 export function App({ client, cwd, token, task, detect }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
+  const { columns, rows } = useTerminalSize();
   const active = useRef(true);
 
   const [agents, setAgents] = useState<DetectedAgent[]>([]);
@@ -243,13 +261,15 @@ export function App({ client, cwd, token, task, detect }: AppProps): React.React
   const availableCount = agents.filter((a) => a.available).length;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={columns} height={rows}>
       <Header view={view} screen={screen} availableCount={availableCount} agentTotal={agents.length} nowMs={nowMs} task={task} />
-      {screen === 'list' ? (
-        <RunList runs={runs} selected={selected} agents={agents} />
-      ) : (
-        <RunDetail view={view} nowMs={nowMs} />
-      )}
+      <Box flexGrow={1} flexDirection="column">
+        {screen === 'list' ? (
+          <RunList runs={runs} selected={selected} agents={agents} />
+        ) : (
+          <RunDetail view={view} nowMs={nowMs} />
+        )}
+      </Box>
       {compose.active ? (
         <Box>
           <Text>
@@ -320,7 +340,7 @@ function RunList({
   agents: DetectedAgent[];
 }): React.ReactElement {
   return (
-    <Box>
+    <Box flexGrow={1}>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1} marginRight={1}>
         <Text bold>Runs ({runs.length})</Text>
         {runs.length === 0 ? <Text dimColor>no runs yet — press [i] to start one</Text> : null}
@@ -347,7 +367,7 @@ function RunList({
 function RunDetail({ view, nowMs }: { view: RunView | null; nowMs: number }): React.ReactElement {
   if (!view) return <Text dimColor>attaching…</Text>;
   return (
-    <Box>
+    <Box flexGrow={1}>
       <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
         <Text bold>Phases</Text>
         {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}

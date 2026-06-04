@@ -19,7 +19,14 @@ import {
 } from '@omakase/core';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
-import { ensureDaemon, touchHeartbeat, writeDaemonInfo, type DaemonInfo } from './daemon-control.js';
+import {
+  daemonStatus,
+  ensureDaemon,
+  stopDaemon,
+  touchHeartbeat,
+  writeDaemonInfo,
+  type DaemonInfo,
+} from './daemon-control.js';
 import { RunControllerClient } from './run-client.js';
 import type { LaunchTuiOptions } from './tui/index.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
@@ -167,7 +174,9 @@ Usage:
   omakase serve ["<task>"...] [opts]   Supervise a queue of runs (24/7), resuming
                                        anything left unfinished. Reads task files
                                        from .omakase/queue. --watch to keep polling.
-  omakase tui ["<task>"] [options]     Open the interactive TUI
+  omakase tui ["<task>"] [options]     Open the interactive TUI (attaches to the
+                                       detached daemon; quitting never stops a run)
+  omakase daemon status|stop [--cwd]   Inspect or stop the project's run daemon
   omakase --version
 
 Options:
@@ -409,6 +418,24 @@ export function createCli(deps: CliDeps = {}): Cli {
     return 0;
   }
 
+  async function daemonCommand(sub: string | undefined, options: ParsedArgs['options']): Promise<number> {
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+    if (sub === 'stop') {
+      const r = await stopDaemon(cwd);
+      write(r.stopped ? `omakase: stopped daemon (pid ${r.pid})` : 'omakase: no running daemon');
+      return 0;
+    }
+    // default: status
+    const s = await daemonStatus(cwd);
+    if (!s.running) {
+      write('omakase daemon: not running');
+      return 0;
+    }
+    const age = s.heartbeatAt != null ? `${Math.round((Date.now() - s.heartbeatAt) / 1000)}s ago` : 'unknown';
+    write(`omakase daemon: running (pid ${s.pid}, v${s.version ?? '?'}) — last heartbeat ${age}`);
+    return 0;
+  }
+
   return {
     async main(argv: string[]): Promise<number> {
       const { command, positionals, options } = parseArgs(argv);
@@ -436,6 +463,8 @@ export function createCli(deps: CliDeps = {}): Cli {
           case 'tui':
           case 'dev':
             return await tuiCommand(positionals.slice(1).join(' '), options);
+          case 'daemon':
+            return await daemonCommand(positionals[1], options);
           default:
             if (options.version) {
               write(`omakase ${CLI_VERSION}`);
