@@ -204,6 +204,15 @@ describe('detectAgents', () => {
     expect(ok.authStatus).toBe('ok');
   });
 
+  it('surfaces a clear reason when a binEnvVar override is unresolvable', async () => {
+    const claude = await detectAgent(
+      claudeAgentDef,
+      detectOpts({ env: { PATH: binDir, CLAUDE_BIN: '/nonexistent/claude-pinned' } }),
+    );
+    expect(claude.available).toBe(false);
+    expect(claude.unavailableReason).toMatch(/CLAUDE_BIN.*not an executable/);
+  });
+
   it('does not treat ~/.claude.json (a config file) as a credential', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'omakase-claudehome-'));
     // A general config file, present even on unauthenticated installs.

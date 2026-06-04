@@ -148,4 +148,10 @@ export interface DetectedAgent {
   capabilities: RuntimeCapabilityMap;
   authStatus: AuthStatus;
   authMessage: string | undefined;
+  /**
+   * When `available` is false for a surfaceable reason — e.g. a `binEnvVar`
+   * override was set but doesn't resolve to an executable — a short
+   * human-readable explanation. Undefined when the agent is simply not found.
+   */
+  unavailableReason?: string;
 }

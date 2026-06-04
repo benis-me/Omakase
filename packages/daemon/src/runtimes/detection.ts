@@ -104,7 +104,7 @@ function baseDetected(
   };
 }
 
-function unavailable(def: RuntimeAgentDef): DetectedAgent {
+function unavailable(def: RuntimeAgentDef, reason?: string): DetectedAgent {
   return {
     ...baseDetected(def),
     available: false,
@@ -115,6 +115,7 @@ function unavailable(def: RuntimeAgentDef): DetectedAgent {
     capabilities: { ...(def.capabilities ?? {}) },
     authStatus: 'unknown',
     authMessage: undefined,
+    ...(reason ? { unavailableReason: reason } : {}),
   };
 }
 
@@ -278,7 +279,14 @@ async function probe(
   ctx: ResolvedDetectionContext,
 ): Promise<DetectedAgent> {
   const resolution = resolveExecutable(def, ctx.resolveCtx);
-  if (!resolution.selectedPath) return unavailable(def);
+  if (!resolution.selectedPath) {
+    // Distinguish "not installed" from "pinned via binEnvVar but the override
+    // doesn't resolve" so the operator can see why a pinned agent is absent.
+    const reason = resolution.overrideUnresolved
+      ? `${def.binEnvVar ?? 'override'} is set to "${resolution.overrideUnresolved}" but it is not an executable file`
+      : undefined;
+    return unavailable(def, reason);
+  }
 
   const env = probeEnv(def, ctx.env);
   const version = await probeVersion(def, resolution.selectedPath, env, ctx);

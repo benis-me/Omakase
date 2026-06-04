@@ -177,6 +177,27 @@ describe('runtime: pi RPC executor', () => {
     expect(result.error).toMatch(/prompt rejected/);
   });
 
+  it('does not discard a cleanly-ended turn as a timeout when the timer races exit', async () => {
+    const transport = createFakeTransport((ctrl) => {
+      if (ctrl.request.args.includes('--version')) return answerProbe(ctrl);
+      ctrl.onStdin((data) => {
+        const msg = JSON.parse(data.trim()) as { type: string; id: number };
+        if (msg.type !== 'prompt') return;
+        ctrl.emitStdoutJson({ type: 'response', id: msg.id, success: true });
+        ctrl.emitStdoutJson({ type: 'agent_start' });
+        ctrl.emitStdoutJson({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'done fast' } });
+        ctrl.emitStdoutJson({ type: 'agent_end' }); // turn ends cleanly, immediately
+      });
+      // Exit only well AFTER the timeout fires, so `timedOut` becomes true while
+      // `ended` is already true — the exact race the !ended guard protects.
+      ctrl.onKill(() => setTimeout(() => ctrl.exit(0), 60));
+      ctrl.onStdinEnd(() => undefined);
+    });
+    const result = await runtimeWith(transport).runAgent({ agentId: 'pi', prompt: 'hi', timeoutMs: 20 });
+    expect(result.status).toBe('completed');
+    expect(result.text).toBe('done fast');
+  });
+
   it('auto-resolves extension-ui requests without hanging', async () => {
     const transport = createFakeTransport((ctrl) => {
       if (ctrl.request.args.includes('--version')) return answerProbe(ctrl);

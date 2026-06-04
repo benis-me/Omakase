@@ -1,5 +1,7 @@
 import React from 'react';
+import { EventEmitter } from 'node:events';
 import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink';
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
 import { MemoryRunStore, Orchestrator, createModelPolicy, type Router } from '@omakase/core';
@@ -52,5 +54,46 @@ describe('TUI App', () => {
     expect(frame).toContain('Task graph');
     expect(frame).toMatch(/succeeded/);
     unmount();
+  });
+
+  it('exits when the run ends and raw mode is unsupported (piped stdin / CI)', async () => {
+    const exec = createScriptedAgent((input) =>
+      String(input.metadata?.role) === 'reviewer'
+        ? [{ type: 'text_delta', delta: 'APPROVE' }]
+        : [{ type: 'text_delta', delta: 'done' }],
+    );
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, detection: OFFLINE, now: () => 0 });
+    const orchestrator = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: OFFLINE,
+    });
+    // ink-testing-library hardcodes isTTY=true, so use ink's own render with a
+    // NON-TTY stdin → isRawModeSupported is false, exercising the real exit path.
+    const sink = () =>
+      Object.assign(new EventEmitter(), { columns: 80, rows: 24, write: () => true });
+    const stdin = Object.assign(new EventEmitter(), {
+      isTTY: false,
+      read: () => null,
+      ref: () => {},
+      unref: () => {},
+      resume: () => {},
+      pause: () => {},
+      setEncoding: () => {},
+      setRawMode: () => {},
+    });
+    const instance = inkRender(
+      <App runtime={runtime} orchestrator={orchestrator} task={'- a\n- b'} mode="normal" />,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { stdout: sink() as any, stderr: sink() as any, stdin: stdin as any, patchConsole: false },
+    );
+    const outcome = await Promise.race([
+      instance.waitUntilExit().then(() => 'exited'),
+      tick(2000).then(() => 'timeout'),
+    ]);
+    expect(outcome).toBe('exited');
   });
 });

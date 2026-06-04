@@ -33,6 +33,13 @@ export function formatAgentsTable(agents: DetectedAgent[]): string {
   const availableCount = agents.filter((a) => a.available).length;
   lines.push('');
   lines.push(`${availableCount}/${agents.length} agents available`);
+  // Surface why a pinned-but-unavailable agent is absent (e.g. a bad binEnvVar
+  // override), so the operator isn't left guessing.
+  const reasons = agents.filter((a) => !a.available && a.unavailableReason);
+  if (reasons.length > 0) {
+    lines.push('');
+    for (const a of reasons) lines.push(`! ${a.id}: ${a.unavailableReason}`);
+  }
   return lines.join('\n');
 }
 

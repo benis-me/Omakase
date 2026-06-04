@@ -25,6 +25,7 @@ import { spawnExecutor } from './executors/spawn.js';
 import type { AgentExecutor, AgentRunInput, ExecutorContext } from './executor.js';
 import { deferStream, errorStream } from './stream.js';
 import { createNodeTransport, type Transport } from './transport.js';
+import { createTtlCache } from './ttl-cache.js';
 
 export const BUILTIN_AGENT_ID = 'builtin';
 
@@ -75,7 +76,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunt
   );
   const builtinExecutor = options.builtinExecutor ?? localResponderAgent;
   const cacheTtl = options.detectionCacheTtlMs ?? 0;
-  const resolveCache = new Map<string, { at: number; resolved: ResolvedRuntime }>();
+  const resolveCache = createTtlCache<ResolvedRuntime>(cacheTtl, now);
 
   const baseCtx = (input: AgentRunInput): ExecutorContext => ({
     input,
@@ -94,26 +95,18 @@ export function createAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunt
     const binOverride = def.binEnvVar ? env?.[def.binEnvVar] ?? '' : '';
     const path = env?.PATH ?? env?.Path ?? '';
     const key = JSON.stringify([input.agentId, input.cwd ?? '', binOverride, path]);
-    if (cacheTtl > 0) {
-      const hit = resolveCache.get(key);
-      if (hit && now() - hit.at < cacheTtl) return hit.resolved;
-    }
+    const hit = resolveCache.get(key);
+    if (hit) return hit;
     const resolved = await resolveRuntime(def, {
       ...detectionOptions,
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.env ? { env: input.env } : {}),
     });
     // Only memoize successful resolutions: a missing binary must be re-probed
-    // each run so installing it mid-TTL takes effect immediately.
-    if (cacheTtl > 0 && resolved) {
-      const at = now();
-      // Evict expired entries so a long-lived multi-cwd/env daemon stays bounded
-      // by the number of currently-fresh tuples, not every tuple ever seen.
-      for (const [k, v] of resolveCache) {
-        if (at - v.at >= cacheTtl) resolveCache.delete(k);
-      }
-      resolveCache.set(key, { at, resolved });
-    }
+    // each run so installing it mid-TTL takes effect immediately. The cache
+    // expires reads past the TTL and sweeps stale keys on write, so a long-lived
+    // multi-cwd/env daemon stays bounded by currently-fresh tuples.
+    if (resolved) resolveCache.set(key, resolved);
     return resolved;
   };
 
