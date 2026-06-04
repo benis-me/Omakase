@@ -17,10 +17,12 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "pnpm -r build",
+    "build:watch": "pnpm -r --parallel exec tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "check": "pnpm -r typecheck && pnpm -r test",
-    "clean": "pnpm -r exec rm -rf dist *.tsbuildinfo"
+    "clean": "pnpm -r exec rm -rf dist *.tsbuildinfo",
+    "link:global": "mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/scripts/omakase.sh\" \"$HOME/.local/bin/omakase\" && echo \"linked: $HOME/.local/bin/omakase -> $PWD/scripts/omakase.sh\""
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

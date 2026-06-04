@@ -54,6 +54,37 @@ During development you can skip the build and run from source via tsx:
 pnpm --filter @omakase/cli dev agents
 ```
 
+## Install `omakase` globally (auto-tracks your code)
+
+Put `omakase` on your `PATH` as a live launcher that runs the TypeScript source
+via tsx — so any edit to the code takes effect immediately, with **no rebuild**:
+
+```bash
+pnpm install            # once, so node_modules/.bin/tsx exists
+pnpm run link:global    # symlinks ~/.local/bin/omakase → scripts/omakase.sh
+```
+
+Then from any project directory (the CLI operates on the current working dir):
+
+```bash
+cd ~/some-project
+omakase agents
+omakase run "summarize this project" --offline
+omakase serve --watch
+```
+
+`~/.local/bin` must be on your `PATH`. The launcher is a symlink into this repo,
+so both the launcher and the code it runs stay in sync with your checkout; after
+a dependency change run `pnpm install` again. Uninstall with
+`rm ~/.local/bin/omakase`.
+
+Prefer a compiled global binary instead (faster startup, no tsx)? Build and let
+pnpm link it — but then rebuild (or run `pnpm run build:watch`) after edits:
+
+```bash
+pnpm -r build && pnpm --filter @omakase/cli link --global
+```
+
 ## Use it as a library
 
 ```ts
