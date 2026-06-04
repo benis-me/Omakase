@@ -10,7 +10,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CodeGraphSnapshot } from './codegraph.js';
-import type { WikiEntry, WikiSnapshot } from './wiki.js';
+import { ProjectWiki, type WikiEntry, type WikiSnapshot } from './wiki.js';
 
 export interface KnowledgeStore {
   loadWiki(): Promise<WikiSnapshot | null>;
@@ -77,13 +77,27 @@ export class FileKnowledgeStore implements KnowledgeStore {
     await rename(tmp, target);
   }
 
+  private async writeText(file: string, value: string): Promise<void> {
+    await mkdir(this.dir, { recursive: true });
+    const target = path.join(this.dir, file);
+    this.seq += 1;
+    const tmp = `${target}.${this.seq}.tmp`;
+    await writeFile(tmp, value, 'utf8');
+    await rename(tmp, target);
+  }
+
+  private async writeWikiArtifacts(snapshot: WikiSnapshot): Promise<void> {
+    await this.writeJson('wiki.json', snapshot);
+    await this.writeText('wiki.md', `${ProjectWiki.fromJSON(snapshot).toMarkdown()}\n`);
+  }
+
   async loadWiki(): Promise<WikiSnapshot | null> {
     const value = await this.readJson('wiki.json');
     return isWikiSnapshot(value) ? value : null;
   }
 
   async saveWiki(snapshot: WikiSnapshot): Promise<void> {
-    await this.writeJson('wiki.json', snapshot);
+    await this.writeWikiArtifacts(snapshot);
   }
 
   async mergeWiki(entries: WikiEntry[]): Promise<void> {

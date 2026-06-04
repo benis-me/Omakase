@@ -44,6 +44,8 @@ export type OrchestratorEvent =
       title: string;
       from: TaskStatus;
       to: TaskStatus;
+      /** Clock timestamp for the transition, used by file-backed clients before the next heartbeat. */
+      at?: number;
     }
   | {
       type: 'agent-event';

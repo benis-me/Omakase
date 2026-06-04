@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,6 +75,13 @@ describe('FileKnowledgeStore', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]!.title).toBe('new');
   });
+
+  it('writes a human-readable wiki.md beside wiki.json', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-wiki-md-'));
+    const store = new FileKnowledgeStore(dir);
+    await store.mergeWiki([entry('wiki-1', 'Uses pnpm')]);
+    expect(readFileSync(path.join(dir, 'wiki.md'), 'utf8')).toContain('Uses pnpm');
+  });
 });
 
 describe('orchestrator cross-run knowledge persistence', () => {
@@ -103,5 +110,32 @@ describe('orchestrator cross-run knowledge persistence', () => {
     // A second run loads the persisted wiki and adds to it.
     const second = await makeOrch().start({ prompt: '- task c' }).result;
     expect(second.wiki.entries.length).toBeGreaterThan(firstEntries);
+  });
+
+  it('records useful agent metadata in task wiki entries', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-proj-wiki-agent-'));
+    const exec = createScriptedAgent((input) =>
+      String(input.metadata?.role) === 'reviewer'
+        ? [{ type: 'text_delta', delta: 'APPROVE' }]
+        : [
+            { type: 'text_delta', delta: 'implemented durable state' },
+            { type: 'tool_use', id: 'read-1', name: 'read', input: {} },
+            { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } },
+          ],
+    );
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      knowledgeStore: projectKnowledgeStore(cwd),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+    const result = await orch.start({ prompt: '- task a' }).result;
+    const task = result.wiki.entries.find((e) => e.kind === 'task');
+    expect(task?.body).toContain('Agent: scripted');
+    expect(task?.body).toContain('Tokens: 7');
+    expect(task?.body).toContain('Tools: 1');
   });
 });

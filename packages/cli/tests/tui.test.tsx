@@ -1,4 +1,7 @@
 import React from 'react';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import type { DetectedAgent } from '@omakase/daemon';
@@ -179,6 +182,71 @@ describe('TUI App (persistent client)', () => {
     stdin.write('\r'); // submit
     await tick(20);
     expect(client.submit).toHaveBeenCalledWith('build it', 'codex');
+    unmount();
+  });
+
+  it('shows a pending run immediately after submitting a new task', async () => {
+    const client = fakeClient({
+      resolveRunId: vi.fn(async () => null),
+      list: vi.fn(async () => []),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    stdin.write('i');
+    await tick(20);
+    stdin.write('ship it');
+    await tick(20);
+    stdin.write('\r');
+    await tick(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('ship it');
+    expect(frame).toContain('pending');
+    unmount();
+  });
+
+  it('persists the selected main agent per project', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-tui-prefs-'));
+    const first = render(
+      <App client={fakeClient()} cwd={cwd} mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    first.stdin.write('a'); // auto -> codex
+    await tick(20);
+    expect(first.lastFrame()).toContain('main agent: codex');
+    first.unmount();
+
+    const second = render(
+      <App client={fakeClient()} cwd={cwd} mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    expect(second.lastFrame()).toContain('main agent: codex');
+    second.unmount();
+  });
+
+  it('clears the stopping notice when a stopped run reaches a terminal status', async () => {
+    let push!: (v: RunView) => void;
+    const running = sampleView();
+    const cancelled: RunView = { ...running, status: 'cancelled', updatedAt: 100 };
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        push = onView;
+        onView(running);
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" />,
+    );
+    await tick();
+    stdin.write('x');
+    await tick(20);
+    expect(lastFrame()).toContain('stopping');
+    push(cancelled);
+    await tick(20);
+    expect(lastFrame()).toContain('cancelled');
+    expect(lastFrame()).not.toContain('stopping');
     unmount();
   });
 

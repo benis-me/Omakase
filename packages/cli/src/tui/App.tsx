@@ -17,7 +17,8 @@ import type { DetectedAgent } from '@omakase/daemon';
 import type { RunStatus, WorkMode } from '@omakase/core';
 import type { DaemonStatus } from '../daemon-control.js';
 import type { RunControllerClient, RunSummary } from '../run-client.js';
-import type { PhaseView, RunView, RunViewStatus, TaskView } from '../view-model.js';
+import { initialRunView, type PhaseView, type RunView, type RunViewStatus, type TaskView } from '../view-model.js';
+import { loadTuiPreferences, saveTuiPreferences } from './preferences.js';
 
 /** Terminal size, kept in sync on resize so the UI fills and adapts. */
 function useTerminalSize(): { columns: number; rows: number } {
@@ -112,6 +113,7 @@ function elapsedOf(view: RunView, nowMs: number): number {
 export function App({
   client,
   cwd,
+  mode,
   token,
   task,
   detect,
@@ -129,7 +131,9 @@ export function App({
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState(0);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null); // null = auto
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(
+    () => loadTuiPreferences(cwd).selectedAgent,
+  ); // null = auto
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [attachedId, setAttachedId] = useState<string | null>(null);
   const [view, setView] = useState<RunView | null>(null);
@@ -152,6 +156,7 @@ export function App({
     setAttachedId(id);
     setSelectedPhase(0);
     setScreen('run');
+    await refreshRuns();
   };
 
   // Mount: detect agents, then attach the initial task (if any) or show the list.
@@ -184,10 +189,22 @@ export function App({
   useEffect(() => {
     if (!attachedId) return;
     const stop = client.tail(attachedId, (v) => {
-      if (active.current) setView(v);
+      if (active.current) {
+        setView(v);
+        void refreshRuns();
+      }
     });
     return () => stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachedId, client]);
+
+  useEffect(() => {
+    if (!view || !notice) return;
+    const terminal = view.status === 'succeeded' || view.status === 'failed' || view.status === 'cancelled';
+    if (notice.startsWith('stopping') && terminal) setNotice(null);
+    if (notice.startsWith('pausing') && view.status === 'paused') setNotice(null);
+    if (notice.startsWith('resuming') && view.status === 'running') setNotice(null);
+  }, [notice, view]);
 
   // A 1s tick so live elapsed advances even when no events arrive.
   useEffect(() => {
@@ -211,6 +228,19 @@ export function App({
 
   const submitNew = async (text: string): Promise<void> => {
     const t = await client.submit(text, selectedAgent ?? undefined);
+    const pending = {
+      ...initialRunView(mode),
+      status: 'pending' as const,
+      title: text,
+      events: [`queued ${t}`],
+      phrases: [`queued: ${text}`],
+    };
+    setAttachedId(null);
+    setSelectedPhase(0);
+    setView(pending);
+    setScreen('run');
+    setNotice('submitted — waiting for the daemon to start it');
+    void refreshRuns();
     const id = await client.resolveRunId(t).catch(() => null);
     if (id) {
       setView(null);
@@ -276,7 +306,11 @@ export function App({
       }
       if (input === 'a') {
         // Switch the "main agent" used for the NEXT task you start here.
-        setSelectedAgent((cur) => cycleAgent(cur, agents));
+        setSelectedAgent((cur) => {
+          const next = cycleAgent(cur, agents);
+          saveTuiPreferences(cwd, { selectedAgent: next });
+          return next;
+        });
         return;
       }
 
@@ -469,6 +503,7 @@ function RunDetail({
   // Show the tasks of the SELECTED phase (↑↓ moves the cursor) — matching the
   // reference monitor where the right pane reflects the chosen phase.
   const tasks = stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks;
+  const phrases = (view.phrases.length > 0 ? view.phrases : view.events).slice(-6);
   return (
     <Box flexGrow={1}>
       <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
@@ -486,6 +521,13 @@ function RunDetail({
         ))}
       </Box>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
+        <Text bold>Phrases</Text>
+        {phrases.length === 0 ? <Text dimColor>waiting for planner…</Text> : null}
+        {phrases.map((p, i) => (
+          <Text key={`${i}-${p.slice(0, 12)}`} dimColor>
+            {p.slice(0, 82)}
+          </Text>
+        ))}
         <Text bold>
           Detail{stage != null ? ` · ${stage}` : ''} · {tasks.length} agents
         </Text>

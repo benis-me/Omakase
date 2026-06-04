@@ -103,6 +103,41 @@ describe('view-model', () => {
     expect(view.title).toContain('add a parser');
   });
 
+  it('uses task-status timestamps for live task elapsed before the next heartbeat', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'task-status',
+      taskId: 'task-1',
+      title: 'stream work',
+      from: 'ready',
+      to: 'running',
+      at: 123,
+    } as any);
+    expect(view.tasks[0]?.startedAt).toBe(123);
+  });
+
+  it('collects planner phrases from streamed agent events', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'planner',
+      taskId: null,
+      assignment: { role: 'planner', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'thinking_delta', delta: 'Inspecting project structure' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'planner',
+      taskId: null,
+      assignment: { role: 'planner', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'text_delta', delta: 'Plan: add tests first' },
+    } as any);
+    expect((view as any).phrases).toEqual([
+      'planner/codex thinking: Inspecting project structure',
+      'planner/codex: Plan: add tests first',
+    ]);
+  });
+
   it('formats event lines for humans', () => {
     expect(formatEventLine({ type: 'paused' })).toBe('⏸ paused');
     expect(

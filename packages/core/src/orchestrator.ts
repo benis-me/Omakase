@@ -169,6 +169,11 @@ function deferred(): Deferred {
   return { promise, resolve };
 }
 
+function usageTokens(usage: AgentRunResult['usage']): number {
+  if (!usage) return 0;
+  return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+}
+
 class RunController implements RunHandle {
   readonly id: string;
   readonly result: Promise<RunResult>;
@@ -178,6 +183,7 @@ class RunController implements RunHandle {
   private readonly runtime: AgentRuntime;
   private readonly router: Router;
   private readonly planner: Planner;
+  private readonly defaultPlanner: boolean;
   private readonly policy: ModelPolicy;
   private readonly hooks: OrchestrationHookBus;
   private readonly store: RunStore;
@@ -236,6 +242,7 @@ class RunController implements RunHandle {
     // (built-in agent) or when the agent's answer can't be parsed. Inject an
     // explicit `router` (e.g. new RuleRouter()) to override.
     this.router = options.router ?? this.makeAgentRouter();
+    this.defaultPlanner = !options.planner;
     this.planner = options.planner ?? new RulePlanner();
     // A per-request agent override (e.g. picked in the TUI) wins over the
     // configured policy, so a single task can be pinned to a chosen agent
@@ -350,6 +357,7 @@ class RunController implements RunHandle {
         title: change.task.title,
         from: change.from,
         to: change.to,
+        at: this.clock(),
       });
       void this.hooks.emit('onTaskStatusChange', {
         task: change.task,
@@ -443,6 +451,111 @@ class RunController implements RunHandle {
     } catch {
       return [];
     }
+  }
+
+  private plannerPrompt(): string {
+    const knowledge = this.knowledgeContext();
+    const skills =
+      this.skills.length > 0
+        ? selectSkillsForPrompt(this.skills, this.request.prompt, {
+            role: 'planner',
+            limit: 3,
+          })
+        : [];
+    return [
+      'Break the following request into an ordered implementation plan.',
+      'Respond with ONLY a JSON array of objects.',
+      'Each object must be: {"title": string, "description": string, "dependsOn": number[]}.',
+      'dependsOn uses zero-based indices of earlier tasks.',
+      '',
+      `Request: ${this.request.prompt}`,
+      knowledge ? `\nProject context:\n${knowledge}` : '',
+      skills.length > 0 ? `\nApplicable skills:\n${renderSkillContext(skills)}` : '',
+    ].join('\n');
+  }
+
+  private graphFromAgentPlan(text: string): PlanGraph | null {
+    const arr = extractJsonArray(text);
+    if (!arr || arr.length === 0) return null;
+    const graph = new PlanGraph({ idGenerator: this.ids, clock: this.clock });
+    const ids: string[] = [];
+    for (const raw of arr) {
+      const item = raw as { title?: unknown; description?: unknown; dependsOn?: unknown };
+      const title =
+        typeof item.title === 'string' && item.title.trim()
+          ? item.title.replace(/\s+/g, ' ').trim().slice(0, 72)
+          : 'Task';
+      const description =
+        typeof item.description === 'string' && item.description.trim()
+          ? item.description
+          : title;
+      const dependsOn = Array.isArray(item.dependsOn)
+        ? item.dependsOn
+            .map((idx) => (typeof idx === 'number' ? ids[idx] : undefined))
+            .filter((id): id is string => Boolean(id))
+        : [];
+      const task = graph.addTask({
+        title,
+        description,
+        role: 'worker',
+        dependsOn,
+        tags: ['implementation'],
+      });
+      ids.push(task.id);
+    }
+    graph.addTask({
+      title: 'Review and verify the work',
+      description: 'Review the completed work against the original request.',
+      role: 'reviewer',
+      dependsOn: ids,
+      tags: ['review'],
+    });
+    graph.refreshReadiness();
+    return graph;
+  }
+
+  private async planWithDefaultPlanner(): Promise<PlanGraph> {
+    const fallback = async (): Promise<PlanGraph> =>
+      this.planner.plan({
+        request: this.request,
+        idGenerator: this.ids,
+        clock: this.clock,
+        knowledge: this.knowledgeContext(),
+        skills:
+          this.skills.length > 0
+            ? selectSkillsForPrompt(this.skills, this.request.prompt, {
+                role: 'planner',
+                limit: 3,
+              })
+            : [],
+      });
+
+    const assignment = this.policy.select('planner', { available: this.available });
+    if (assignment.agentId === BUILTIN_AGENT_ID) return fallback();
+
+    const input: AgentRunInput = {
+      agentId: assignment.agentId,
+      prompt: this.plannerPrompt(),
+      ...(this.request.cwd ? { cwd: this.request.cwd } : {}),
+      model: assignment.model,
+      reasoning: assignment.reasoning,
+      metadata: { role: 'planner' },
+    };
+    const acc = createResultAccumulator();
+    try {
+      for await (const event of this.runtime.streamAgentEvents(input)) {
+        acc.push(event);
+        this.emit({ type: 'agent-event', role: 'planner', taskId: null, assignment, event });
+        await this.checkpointProgress();
+      }
+    } catch (err) {
+      this.emit({ type: 'error', phase: 'planner', message: errorMessage(err) });
+      return fallback();
+    }
+    const result = acc.result();
+    this.accountUsage(result);
+    const graph = result.status === 'completed' ? this.graphFromAgentPlan(result.text) : null;
+    return graph ?? fallback();
   }
 
   private knowledgeContext(): string {
@@ -545,19 +658,21 @@ class RunController implements RunHandle {
             tags: ['simple'],
           });
         } else {
-          this.graph = await this.planner.plan({
-            request: this.request,
-            idGenerator: this.ids,
-            clock: this.clock,
-            knowledge: this.knowledgeContext(),
-            skills:
-              this.skills.length > 0
-                ? selectSkillsForPrompt(this.skills, this.request.prompt, {
-                    role: 'planner',
-                    limit: 3,
-                  })
-                : [],
-          });
+          this.graph = this.defaultPlanner
+            ? await this.planWithDefaultPlanner()
+            : await this.planner.plan({
+                request: this.request,
+                idGenerator: this.ids,
+                clock: this.clock,
+                knowledge: this.knowledgeContext(),
+                skills:
+                  this.skills.length > 0
+                    ? selectSkillsForPrompt(this.skills, this.request.prompt, {
+                        role: 'planner',
+                        limit: 3,
+                      })
+                    : [],
+              });
           this.attachGraphListener();
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         }
@@ -695,6 +810,7 @@ class RunController implements RunHandle {
       for await (const event of this.runtime.streamAgentEvents(input)) {
         acc.push(event);
         this.emit({ type: 'agent-event', role: task.role, taskId: task.id, assignment, event });
+        await this.checkpointProgress();
       }
     } finally {
       this.activeAborts.delete(abort);
@@ -706,7 +822,12 @@ class RunController implements RunHandle {
       .emit('afterAgentRun', { role: task.role, input, result, task })
       .catch(() => undefined);
 
-    this.wiki.recordTask(task.id, task.title, result.status, result.text.slice(0, 500));
+    this.wiki.recordTask(task.id, task.title, result.status, result.text.slice(0, 500), {
+      role: task.role,
+      agentId: assignment.agentId,
+      tokens: usageTokens(result.usage),
+      toolCount: result.toolCalls.length,
+    });
     this.emitKnowledge();
 
     // The task's run was aborted — a sibling lane failed (runBatch aborts its
@@ -894,6 +1015,13 @@ class RunController implements RunHandle {
     this.emit({ type: 'heartbeat', at: this.clock() });
     await this.store.save(this.buildRecord('running', this.computeSummary('running')));
     await this.persistKnowledge();
+  }
+
+  private async checkpointProgress(): Promise<void> {
+    if (this.finished) return;
+    this.checkpointSeq += 1;
+    this.emit({ type: 'heartbeat', at: this.clock() });
+    await this.store.save(this.buildRecord('running', this.computeSummary('running'))).catch(() => undefined);
   }
 
   private computeFinalStatus(): RunStatus {

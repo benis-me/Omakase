@@ -31,6 +31,13 @@ export interface WikiInput {
   source?: string;
 }
 
+export interface TaskWikiMetadata {
+  role?: string;
+  agentId?: string | null;
+  tokens?: number;
+  toolCount?: number;
+}
+
 export interface ProjectWikiOptions {
   idGenerator?: IdGenerator;
   clock?: () => number;
@@ -126,9 +133,21 @@ export class ProjectWiki {
   }
 
   /** Upsert a task-status entry keyed by task id. */
-  recordTask(taskId: string, title: string, status: string, summary = ''): WikiEntry {
+  recordTask(
+    taskId: string,
+    title: string,
+    status: string,
+    summary = '',
+    metadata: TaskWikiMetadata = {},
+  ): WikiEntry {
     const existingId = this.taskIndex.get(taskId);
-    const body = `Status: ${status}${summary ? `\n${summary}` : ''}`;
+    const lines = [`Status: ${status}`];
+    if (metadata.role) lines.push(`Role: ${metadata.role}`);
+    if (metadata.agentId) lines.push(`Agent: ${metadata.agentId}`);
+    if (metadata.tokens != null) lines.push(`Tokens: ${metadata.tokens}`);
+    if (metadata.toolCount != null) lines.push(`Tools: ${metadata.toolCount}`);
+    if (summary) lines.push('', summary);
+    const body = lines.join('\n');
     if (existingId && this.entries.has(existingId)) {
       return this.update(existingId, { title, body, tags: ['task', status] });
     }

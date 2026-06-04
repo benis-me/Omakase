@@ -57,6 +57,8 @@ export interface RunView {
   startedAt: number | null;
   updatedAt: number | null;
   events: string[];
+  /** Human-readable streamed planner/agent phrases, separate from structural events. */
+  phrases: string[];
   wikiEntries: number;
   codegraphFiles: number | null;
   lastReview: { approved: boolean; notes: string } | null;
@@ -64,6 +66,7 @@ export interface RunView {
 }
 
 const MAX_EVENT_LINES = 200;
+const MAX_PHRASES = 120;
 
 export function initialRunView(mode: WorkMode = 'normal'): RunView {
   return {
@@ -80,11 +83,38 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
     startedAt: null,
     updatedAt: null,
     events: [],
+    phrases: [],
     wikiEntries: 0,
     codegraphFiles: null,
     lastReview: null,
     summary: null,
   };
+}
+
+function phraseLine(event: OrchestratorEvent): string {
+  if (event.type !== 'agent-event') return '';
+  const role = event.role;
+  const agent = event.assignment.agentId;
+  const inner = event.event;
+  if (inner.type === 'thinking_delta' && inner.delta.trim()) {
+    return `${role}/${agent} thinking: ${inner.delta.trim()}`;
+  }
+  if (inner.type === 'text_delta' && inner.delta.trim()) {
+    return `${role}/${agent}: ${inner.delta.trim()}`;
+  }
+  if (inner.type === 'status') {
+    return `${role}/${agent} status: ${inner.label}`;
+  }
+  if (inner.type === 'tool_use') {
+    return `${role}/${agent} tool: ${inner.name ?? inner.id ?? 'tool'}`;
+  }
+  if (inner.type === 'usage') {
+    return `${role}/${agent} usage: ${tokensOf(inner.usage)} tok`;
+  }
+  if (inner.type === 'error') {
+    return `${role}/${agent} error: ${inner.message}`;
+  }
+  return '';
 }
 
 export function formatEventLine(event: OrchestratorEvent): string {
@@ -178,7 +208,9 @@ function tokensOf(usage: { totalTokens?: number; inputTokens?: number; outputTok
 export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView {
   const line = formatEventLine(event);
   const events = line ? [...view.events, line].slice(-MAX_EVENT_LINES) : view.events;
-  const next: RunView = { ...view, events };
+  const phrase = phraseLine(event);
+  const phrases = phrase ? [...view.phrases, phrase].slice(-MAX_PHRASES) : view.phrases;
+  const next: RunView = { ...view, events, phrases };
 
   switch (event.type) {
     case 'run-started':
@@ -190,8 +222,9 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
     case 'replanned':
       return derive({ ...next, tasks: upsertTasks(view.tasks, event.snapshot) });
     case 'task-status': {
-      const startStamp = event.to === 'running' ? view.updatedAt : null;
-      const endStamp = TERMINAL.has(event.to) ? view.updatedAt : null;
+      const stamp = event.at ?? view.updatedAt;
+      const startStamp = event.to === 'running' ? stamp : null;
+      const endStamp = TERMINAL.has(event.to) ? stamp : null;
       const existing = view.tasks.find((t) => t.id === event.taskId);
       const tasks = existing
         ? view.tasks.map((t) =>

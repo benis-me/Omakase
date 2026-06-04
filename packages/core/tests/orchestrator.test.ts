@@ -42,6 +42,16 @@ async function collect(handle: { events: AsyncIterable<OrchestratorEvent> }): Pr
   return out;
 }
 
+async function waitFor<T>(fn: () => Promise<T | undefined>, timeoutMs = 500): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v !== undefined) return v;
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function baseOptions(runtime: ReturnType<typeof scriptedRuntime>, planner: Planner) {
   return {
     runtime,
@@ -325,6 +335,78 @@ describe('Orchestrator (Ralph loop)', () => {
     // Unparseable → rule fallback decided (its reason cites the complexity score).
     expect((routed as Extract<OrchestratorEvent, { type: 'routed' }>).decision.reason).toMatch(/score/i);
     expect(events.some((e) => e.type === 'planned')).toBe(false); // rules → simple
+  });
+
+  it('checkpoints streaming agent events while a task is still running', async () => {
+    const store = new MemoryRunStore();
+    let release!: () => void;
+    const blocker = new Promise<void>((r) => {
+      release = r;
+    });
+    const exec = createScriptedAgent(async function* (input) {
+      if (String(input.metadata?.role) === 'reviewer') {
+        yield { type: 'text_delta', delta: 'APPROVE' };
+        return;
+      }
+      yield { type: 'text_delta', delta: 'working' };
+      yield { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } };
+      await blocker;
+      yield { type: 'text_delta', delta: 'done' };
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      ...baseOptions(runtime, new RulePlanner()),
+      store,
+      maxConcurrency: 1,
+    });
+    const handle = orch.start({ prompt: '- long task' });
+    try {
+      const id = await waitFor(async () => (await store.list())[0]);
+      await waitFor(async () => {
+        const rec = await store.load(id);
+        return rec?.plan.tasks.some((t) => t.status === 'running') ? rec : undefined;
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      const mid = await store.load(id);
+      expect(mid?.events.some((e) => e.type === 'agent-event')).toBe(true);
+    } finally {
+      release();
+      await handle.result.catch(() => undefined);
+    }
+  });
+
+  it('uses an agent-backed planner by default and streams planner events before planned', async () => {
+    const exec = createScriptedAgent((input) => {
+      const role = String(input.metadata?.role ?? 'worker');
+      if (role === 'planner') {
+        return [
+          {
+            type: 'text_delta',
+            delta:
+              '[{"title":"Agent planned implementation","description":"Implement from the agent plan","dependsOn":[]}]',
+          },
+        ];
+      }
+      if (role === 'reviewer') return [{ type: 'text_delta', delta: 'APPROVE' }];
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: customPolicy,
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+    const events = await collect(orch.start({ prompt: 'build a real feature' }));
+    const plannerIdx = events.findIndex((e) => e.type === 'agent-event' && e.role === 'planner');
+    const plannedIdx = events.findIndex((e) => e.type === 'planned');
+    expect(plannerIdx).toBeGreaterThan(-1);
+    expect(plannerIdx).toBeLessThan(plannedIdx);
+    const planned = events.find((e): e is Extract<OrchestratorEvent, { type: 'planned' }> => e.type === 'planned');
+    expect(planned?.snapshot.tasks.some((t) => t.title === 'Agent planned implementation')).toBe(true);
   });
 
   it('honors a per-request agent override (metadata.agentOverride)', async () => {
