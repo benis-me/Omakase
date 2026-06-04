@@ -4,11 +4,14 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createAgentRuntime,
+  createScriptedAgent,
   type AgentEvent,
   type AgentExecutor,
 } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
-import { MemoryRunStore } from '../src/supervisor/run-store.js';
+import { PlanGraph } from '../src/plan/plan-graph.js';
+import type { Planner } from '../src/plan/planner.js';
+import { FileRunStore, MemoryRunStore } from '../src/supervisor/run-store.js';
 import {
   FakeControlSource,
   FileControlSource,
@@ -144,6 +147,72 @@ describe('cross-process run control', () => {
     expect(pausedCount).toBe(1);
     expect(resumedCount).toBe(1); // the same-seq resume did not double-apply
     expect(result.status).toBe('succeeded');
+  });
+});
+
+const complexRouter: Router = {
+  route: () => ({ kind: 'complex', reason: 't', confidence: 1, signals: [], suggestedRole: 'worker' }),
+};
+const chained: Planner = {
+  plan: (ctx) => {
+    const g = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+    const w1 = g.addTask({ title: 'w1', role: 'worker' });
+    const w2 = g.addTask({ title: 'w2', role: 'worker', dependsOn: [w1.id] });
+    g.addTask({ title: 'review', role: 'reviewer', dependsOn: [w2.id] });
+    g.refreshReadiness();
+    return g;
+  },
+};
+function scriptedRuntime() {
+  const exec = createScriptedAgent((input) =>
+    String(input.metadata?.role) === 'reviewer'
+      ? [{ type: 'text_delta', delta: 'APPROVE' }]
+      : [{ type: 'text_delta', delta: 'done' }],
+  );
+  return createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+}
+function resumeOpts(store: FileRunStore, extra = {}) {
+  return {
+    runtime: scriptedRuntime(),
+    router: complexRouter,
+    planner: chained,
+    policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+    store,
+    clock: () => 0,
+    detectionOptions: OFFLINE,
+    ...extra,
+  };
+}
+
+describe('control across resume/restart', () => {
+  it('honors a stop issued while the run was only persisted-as-running', async () => {
+    const runsDir = mkdtempSync(path.join(os.tmpdir(), 'omakase-ctl-resume-'));
+    const store = new FileRunStore(runsDir);
+    // Run A stops after one iteration (incomplete), having applied no control.
+    const resA = await new Orchestrator(resumeOpts(store, { maxIterations: 1 })).start({ prompt: 'do work' }).result;
+    expect(resA.status).toBe('incomplete');
+    // A stop arrives (e.g. while the daemon was down).
+    await writeControl(runsDir, resA.id, { seq: 1, command: 'stop' });
+    // Restart: a fresh orchestrator resumes with a FileControlSource.
+    const b = new Orchestrator(resumeOpts(store, { control: new FileControlSource(runsDir) }));
+    const resB = await (await b.resume(resA.id))!.result;
+    expect(resB.status).toBe('cancelled'); // honored on resume, before doing more work
+  });
+
+  it('ignores a command whose seq is below the persisted lastControlSeq after restart', async () => {
+    const runsDir = mkdtempSync(path.join(os.tmpdir(), 'omakase-ctl-resume-'));
+    const store = new FileRunStore(runsDir);
+    const resA = await new Orchestrator(resumeOpts(store, { maxIterations: 1 })).start({ prompt: 'do work' }).result;
+    expect(resA.status).toBe('incomplete');
+    // Simulate that a command up to seq 5 was already applied before the crash.
+    const rec = await store.load(resA.id);
+    rec!.lastControlSeq = 5;
+    await store.save(rec!);
+    // A stale, lower-seq stop must NOT re-fire on resume.
+    await writeControl(runsDir, resA.id, { seq: 3, command: 'stop' });
+    const b = new Orchestrator(resumeOpts(store, { control: new FileControlSource(runsDir) }));
+    const resB = await (await b.resume(resA.id))!.result;
+    expect(resB.status).toBe('succeeded'); // stop ignored (3 <= 5) → run completes
   });
 });
 

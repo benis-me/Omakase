@@ -270,6 +270,9 @@ class RunController implements RunHandle {
       // Carry spend across resume so the budget ceiling is cumulative, not reset.
       this.spentTokens = resumeFrom.spentTokens ?? 0;
       this.spentCostUsd = resumeFrom.spentCostUsd ?? 0;
+      // Carry the applied-control seq so a restart honors a still-pending command
+      // (seq > this) exactly once and never re-applies an already-honored one.
+      this.lastControlSeq = resumeFrom.lastControlSeq ?? 0;
       if (this.budget) {
         const overTokens = this.budget.maxTokens != null && this.spentTokens >= this.budget.maxTokens;
         const overCost = this.budget.maxCostUsd != null && this.spentCostUsd >= this.budget.maxCostUsd;
@@ -877,6 +880,7 @@ class RunController implements RunHandle {
       summary,
       spentTokens: this.spentTokens,
       spentCostUsd: this.spentCostUsd,
+      lastControlSeq: this.lastControlSeq,
       createdAt: this.createdAt,
       updatedAt: now,
       heartbeatAt: now,

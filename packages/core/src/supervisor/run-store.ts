@@ -27,6 +27,12 @@ export interface RunRecord {
   /** Cumulative token/cost spend, persisted so a budget ceiling survives resume. */
   spentTokens?: number;
   spentCostUsd?: number;
+  /**
+   * Last cross-process control command seq applied, persisted so a daemon
+   * restart neither re-applies an already-honored command nor drops a pending
+   * one (see {@link ControlSource}). Optional for backward compatibility.
+   */
+  lastControlSeq?: number;
   createdAt: number;
   updatedAt: number;
   heartbeatAt: number;
