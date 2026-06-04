@@ -1,9 +1,15 @@
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
+import type { DetectedAgent } from '@omakase/daemon';
 import { App } from '../src/tui/App.js';
 import { initialRunView, type RunView } from '../src/view-model.js';
 import type { RunControllerClient, RunSummary } from '../src/run-client.js';
+
+const TWO_AGENTS = [
+  { id: 'codex', available: true },
+  { id: 'claude', available: true },
+] as unknown as DetectedAgent[];
 
 function tick(ms = 60): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -127,6 +133,52 @@ describe('TUI App (persistent client)', () => {
     );
     await tick();
     expect(lastFrame() ?? '').toMatch(/daemon ● up \(4242\)/);
+    unmount();
+  });
+
+  it('[a] switches the main agent and [k]/[r] manage the daemon from the list', async () => {
+    const client = fakeClient();
+    const stopDaemon = vi.fn(async () => {});
+    const startDaemon = vi.fn(async () => {});
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={client}
+        cwd="/p"
+        mode="normal"
+        detect={async () => TWO_AGENTS}
+        stopDaemon={stopDaemon}
+        startDaemon={startDaemon}
+      />,
+    );
+    await tick();
+    expect(lastFrame()).toContain('main agent: auto');
+    stdin.write('a'); // auto → codex
+    await tick(20);
+    expect(lastFrame()).toContain('main agent: codex');
+    stdin.write('k'); // stop the daemon
+    await tick(20);
+    expect(stopDaemon).toHaveBeenCalled();
+    stdin.write('r'); // restart
+    await tick(20);
+    expect(startDaemon).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('carries the selected agent when starting a new task', async () => {
+    const client = fakeClient();
+    const { stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    stdin.write('a'); // select codex
+    await tick(20);
+    stdin.write('i'); // compose
+    await tick(20);
+    stdin.write('build it');
+    await tick(20);
+    stdin.write('\r'); // submit
+    await tick(20);
+    expect(client.submit).toHaveBeenCalledWith('build it', 'codex');
     unmount();
   });
 

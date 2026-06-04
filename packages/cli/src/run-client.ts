@@ -61,13 +61,17 @@ export class RunControllerClient {
       (() => `tui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.prompt`);
   }
 
-  /** Drop a queue file for the daemon to pick up; returns its correlation token. */
-  async submit(prompt: string): Promise<string> {
+  /**
+   * Drop a queue file for the daemon to pick up; returns its correlation token.
+   * An optional agentId pins the run to a chosen agent (via an `@agent` header).
+   */
+  async submit(prompt: string, agentId?: string): Promise<string> {
     const token = this.nextToken();
     await mkdir(this.queueDir, { recursive: true });
     const target = path.join(this.queueDir, token);
     const tmp = `${target}.tmp`;
-    await writeFile(tmp, prompt, 'utf8');
+    const body = agentId ? `@agent ${agentId}\n${prompt}` : prompt;
+    await writeFile(tmp, body, 'utf8');
     await rename(tmp, target); // atomic: the daemon never sees a partial file
     return token;
   }

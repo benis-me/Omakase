@@ -113,6 +113,8 @@ export interface CliDeps {
   detectionOptions?: DetectionOptions;
   /** Ensure the project's detached daemon is running (injected for tests). */
   ensureDaemon?: (cwd: string, serveArgs?: string[]) => Promise<DaemonInfo>;
+  /** Stop the project's daemon (injected for tests). */
+  stopDaemon?: (cwd: string) => Promise<unknown>;
   /** Launch the TUI; injected so headless tests don't import Ink. */
   launchTui?: (opts: LaunchTuiOptions) => Promise<void>;
 }
@@ -376,6 +378,7 @@ export function createCli(deps: CliDeps = {}): Cli {
     if (options['max-cost'] !== undefined) serveArgs.push('--max-cost', String(options['max-cost']));
     const ensure = deps.ensureDaemon ?? ((c: string, sa?: string[]) => ensureDaemon(c, {}, { serveArgs: sa }));
     await ensure(cwd, serveArgs);
+    const stop = deps.stopDaemon ?? ((c: string) => stopDaemon(c));
 
     const client = new RunControllerClient({
       store: new FileRunStore(runsDir),
@@ -413,6 +416,8 @@ export function createCli(deps: CliDeps = {}): Cli {
       mode: baseMode,
       detect,
       daemonStatus: () => daemonStatus(cwd),
+      stopDaemon: () => stop(cwd),
+      startDaemon: () => ensure(cwd, serveArgs),
       ...(task.trim() ? { task: task.trim() } : {}),
       ...(token ? { token } : {}),
     });

@@ -277,6 +277,30 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(result.status).toBe('succeeded');
   });
 
+  it('honors a per-request agent override (metadata.agentOverride)', async () => {
+    const labeled = (label: string) => createScriptedAgent(() => [{ type: 'text_delta', delta: label }]);
+    const runtime = createAgentRuntime({ executors: { a: labeled('AAA'), b: labeled('BBB') }, now: () => 0 });
+    const simpleRouter: Router = {
+      route: () => ({ kind: 'simple', reason: 't', confidence: 1, signals: [], suggestedRole: 'worker' }),
+    };
+    const orch = new Orchestrator({
+      runtime,
+      router: simpleRouter,
+      planner: new RulePlanner(),
+      // The configured default is agent 'a' — the per-request override picks 'b'.
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'a' } } }),
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+    const result = await orch.start({ prompt: 'do it', metadata: { agentOverride: 'b' } }).result;
+    expect(result.status).toBe('succeeded');
+    const worker = result.plan.tasks.find((t) => t.role === 'worker');
+    expect(worker?.result?.agentId).toBe('b'); // ran the overridden agent, not default 'a'
+    expect(worker?.result?.output).toContain('BBB');
+  });
+
   it('keeps a succeeded outcome when the terminal save fails (no flip to failed)', async () => {
     class TerminalFailStore extends MemoryRunStore {
       override async save(rec: RunRecord): Promise<void> {

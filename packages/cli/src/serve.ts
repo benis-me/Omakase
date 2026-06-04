@@ -56,6 +56,16 @@ export interface Server {
 
 const QUEUE_FILE = /\.(txt|md|prompt)$/i;
 
+/**
+ * A queue file is the prompt text, optionally led by an `@agent <id>` line that
+ * pins the run to a chosen agent (written by the TUI's agent selector).
+ */
+function parseQueueContent(raw: string): { prompt: string; agentOverride?: string } {
+  const m = /^@agent[ \t]+(\S+)[ \t]*\r?\n([\s\S]*)$/.exec(raw);
+  if (m) return { prompt: (m[2] ?? '').trim(), agentOverride: m[1] };
+  return { prompt: raw.trim() };
+}
+
 export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server {
   const write = deps.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const runtime =
@@ -107,12 +117,13 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     for (const entry of entries) {
       if (!entry.isFile() || !QUEUE_FILE.test(entry.name)) continue;
       const full = path.join(config.queueDir, entry.name);
-      let content: string;
+      let raw: string;
       try {
-        content = (await readFile(full, 'utf8')).trim();
+        raw = await readFile(full, 'utf8');
       } catch {
         continue;
       }
+      const { prompt: content, agentOverride } = parseQueueContent(raw);
       if (!content) continue;
       // Claim the file (move it) BEFORE enqueuing, so a rename failure can't
       // leave the file in place to be re-ingested (double-submitted) next cycle.
@@ -128,7 +139,7 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
       supervisor.enqueue({
         prompt: content,
         cwd: config.cwd,
-        metadata: { sourceQueueFile: entry.name },
+        metadata: { sourceQueueFile: entry.name, ...(agentOverride ? { agentOverride } : {}) },
       });
       enqueued.push(entry.name);
     }
@@ -157,17 +168,18 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     for (const entry of entries) {
       if (!entry.isFile() || !QUEUE_FILE.test(entry.name)) continue;
       if (started.has(entry.name)) continue; // a run record exists → already underway
-      let content: string;
+      let raw: string;
       try {
-        content = (await readFile(path.join(processedDir, entry.name), 'utf8')).trim();
+        raw = await readFile(path.join(processedDir, entry.name), 'utf8');
       } catch {
         continue;
       }
+      const { prompt: content, agentOverride } = parseQueueContent(raw);
       if (!content) continue;
       supervisor.enqueue({
         prompt: content,
         cwd: config.cwd,
-        metadata: { sourceQueueFile: entry.name },
+        metadata: { sourceQueueFile: entry.name, ...(agentOverride ? { agentOverride } : {}) },
       });
       reingested.push(entry.name);
       write(`serve: re-ingesting ${entry.name} (claimed previously but no run record was persisted)`);

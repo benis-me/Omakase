@@ -60,6 +60,19 @@ describe('createServer', () => {
     expect(existsSync(path.join(queue, 't1.txt'))).toBe(false);
   });
 
+  it('parses an @agent header from a queue file into the run request', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-agent-'));
+    const queue = path.join(cwd, '.omakase', 'queue');
+    mkdirSync(queue, { recursive: true });
+    writeFileSync(path.join(queue, 't.txt'), '@agent builtin\nsummarize the project');
+    const server = createServer(config(cwd), { write: () => {} });
+    await server.cycle();
+    const ids = await server.store.list();
+    const rec = await server.store.load(ids[0]!);
+    expect(rec?.request.metadata?.agentOverride).toBe('builtin');
+    expect(rec?.request.prompt).toBe('summarize the project'); // header stripped
+  });
+
   it('a stop control file cancels a mid-flight detached run', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-control-'));
     const runsDir = path.join(cwd, '.omakase', 'runs');

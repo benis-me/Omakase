@@ -48,11 +48,22 @@ export interface AppProps {
   detect?: () => Promise<DetectedAgent[]>;
   /** Poll the project's daemon status for the header indicator. */
   daemonStatus?: () => Promise<DaemonStatus>;
+  /** Stop the project's daemon (for the daemon-management keys). */
+  stopDaemon?: () => Promise<unknown>;
+  /** (Re)start the project's daemon. */
+  startDaemon?: () => Promise<unknown>;
 }
 
 /** A task's phase/stage — must match view-model's computePhases grouping. */
 function stageOf(t: TaskView): string {
   return t.tags[0] ?? t.role ?? 'Plan';
+}
+
+/** Cycle the "main agent" selection: auto → each available agent → auto. */
+function cycleAgent(current: string | null, agents: DetectedAgent[]): string | null {
+  const cycle: Array<string | null> = [null, ...agents.filter((a) => a.available).map((a) => a.id)];
+  const idx = cycle.indexOf(current);
+  return cycle[(idx + 1) % cycle.length] ?? null;
 }
 
 type Screen = 'list' | 'run';
@@ -98,7 +109,16 @@ function elapsedOf(view: RunView, nowMs: number): number {
   return Math.max(0, end - view.startedAt);
 }
 
-export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps): React.ReactElement {
+export function App({
+  client,
+  cwd,
+  token,
+  task,
+  detect,
+  daemonStatus,
+  stopDaemon,
+  startDaemon,
+}: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
   const { columns, rows } = useTerminalSize();
@@ -109,6 +129,7 @@ export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState(0);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null); // null = auto
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [attachedId, setAttachedId] = useState<string | null>(null);
   const [view, setView] = useState<RunView | null>(null);
@@ -189,7 +210,7 @@ export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps
   }, [daemonStatus]);
 
   const submitNew = async (text: string): Promise<void> => {
-    const t = await client.submit(text);
+    const t = await client.submit(text, selectedAgent ?? undefined);
     const id = await client.resolveRunId(t).catch(() => null);
     if (id) {
       setView(null);
@@ -253,11 +274,27 @@ export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps
         setCompose({ active: true, kind: 'new', buffer: '' });
         return;
       }
+      if (input === 'a') {
+        // Switch the "main agent" used for the NEXT task you start here.
+        setSelectedAgent((cur) => cycleAgent(cur, agents));
+        return;
+      }
 
       if (screen === 'list') {
         if (key.upArrow) setSelected((i) => Math.max(0, i - 1));
         else if (key.downArrow) setSelected((i) => Math.min(runs.length - 1, i + 1));
         else if (key.return && runs[selected]) void attach(runs[selected]!.id);
+        else if (input === 'k' && stopDaemon) {
+          setNotice('stopping daemon…');
+          void stopDaemon().then(() => active.current && setNotice('daemon stopped'));
+        } else if (input === 'r' && (startDaemon || stopDaemon)) {
+          setNotice('restarting daemon…');
+          void (async () => {
+            await stopDaemon?.();
+            await startDaemon?.();
+            if (active.current) setNotice('daemon restarted');
+          })();
+        }
         return;
       }
 
@@ -313,14 +350,21 @@ export function App({ client, cwd, token, task, detect, daemonStatus }: AppProps
         </Box>
       ) : null}
       {notice ? <Text dimColor>{notice}</Text> : null}
-      <Text dimColor>{hints(compose.active, screen)}</Text>
+      <Box justifyContent="space-between">
+        <Text dimColor>{hints(compose.active, screen)}</Text>
+        <Text>
+          <Text dimColor>main agent: </Text>
+          <Text color="yellow">{selectedAgent ?? 'auto'}</Text>
+          <Text dimColor> [a]</Text>
+        </Text>
+      </Box>
     </Box>
   );
 }
 
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
-  if (screen === 'list') return '↑↓ select · [enter] attach · [i] new task · [q]uit';
+  if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
   return '↑↓ phase · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
 }
 
@@ -449,9 +493,10 @@ function RunDetail({
           const el = t.startedAt != null ? fmtDuration((t.finishedAt ?? nowMs) - t.startedAt) : '—';
           return (
             <Text key={t.id}>
-              {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 40)}
+              {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 36)}
               <Text dimColor>
                 {'   '}
+                {t.agentId ? `${t.agentId} · ` : ''}
                 {t.tokens} tok · {t.toolCount} tools · {el}
               </Text>
             </Text>

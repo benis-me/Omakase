@@ -233,9 +233,17 @@ class RunController implements RunHandle {
     this.mode = resumeFrom?.mode ?? request.mode ?? options.defaultMode ?? 'normal';
     this.router = options.router ?? new RuleRouter();
     this.planner = options.planner ?? new RulePlanner();
-    this.policy =
-      options.policy ??
-      (options.policyFor ? options.policyFor(this.mode) : createModelPolicy(this.mode));
+    // A per-request agent override (e.g. picked in the TUI) wins over the
+    // configured policy, so a single task can be pinned to a chosen agent
+    // without reconfiguring the daemon.
+    const reqAgent =
+      typeof request.metadata?.agentOverride === 'string' && request.metadata.agentOverride
+        ? request.metadata.agentOverride
+        : undefined;
+    this.policy = reqAgent
+      ? createModelPolicy('custom', { custom: { default: { agentId: reqAgent } } })
+      : options.policy ??
+        (options.policyFor ? options.policyFor(this.mode) : createModelPolicy(this.mode));
     this.hooks = options.hooks ?? new HookBus();
     this.store = options.store ?? new MemoryRunStore();
     this.skills = options.skills ?? [];

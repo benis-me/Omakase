@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -105,6 +105,20 @@ describe('RunControllerClient', () => {
 
     await client.stop(id); // cleanup: cancel the blocked worker
     await draining;
+  });
+
+  it('submit encodes an @agent header when an agent is given', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-client-agent-'));
+    const queueDir = path.join(cwd, '.omakase', 'queue');
+    const client = new RunControllerClient({
+      store: scriptedServer(cwd).store,
+      controlDir: path.join(cwd, '.omakase', 'runs'),
+      queueDir,
+    });
+    const token = await client.submit('do it', 'codex');
+    expect(readFileSync(path.join(queueDir, token), 'utf8')).toBe('@agent codex\ndo it');
+    const plain = await client.submit('no agent');
+    expect(readFileSync(path.join(queueDir, plain), 'utf8')).toBe('no agent');
   });
 
   it('writes control files with a monotonic seq', async () => {
