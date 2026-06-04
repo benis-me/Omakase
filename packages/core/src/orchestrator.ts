@@ -38,6 +38,7 @@ import { RulePlanner, extractJsonArray, type Planner } from './plan/planner.js';
 import { RuleRouter, type RouteDecision, type Router } from './router/router.js';
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
+import type { ControlPoll, ControlSource } from './supervisor/control.js';
 import type { OrchestratorEvent, ReviewCriterion, RunStatus } from './run-events.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
@@ -89,6 +90,14 @@ export interface OrchestratorOptions {
   /** Soft token/cost ceiling: stop scheduling new tasks once exceeded. */
   budget?: RunBudget;
   defaultMode?: WorkMode;
+  /**
+   * Cross-process control: a source of pending pause/resume/stop/input commands
+   * for this run, consulted inside the run loop so a detached supervisor can be
+   * steered from another process (see {@link ControlSource}).
+   */
+  control?: ControlSource;
+  /** Registers the recurring poll that re-checks {@link control}; see {@link ControlPoll}. */
+  controlPoll?: ControlPoll;
 }
 
 /** Parse a reviewer's free-form verdict. */
@@ -203,6 +212,10 @@ class RunController implements RunHandle {
   private checkpointSeq = 0;
   private readonly createdAt: number;
   private readonly resuming: boolean;
+  private readonly control: ControlSource | undefined;
+  private readonly controlPoll: ControlPoll | undefined;
+  private lastControlSeq = 0;
+  private controlDisposer: (() => void) | undefined;
 
   get events(): AsyncIterable<OrchestratorEvent> {
     return this.stream.iterable;
@@ -233,6 +246,8 @@ class RunController implements RunHandle {
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
     this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 4);
     this.budget = options.budget;
+    this.control = options.control;
+    this.controlPoll = options.controlPoll;
     this.resuming = Boolean(resumeFrom);
     this.createdAt = resumeFrom?.createdAt ?? this.clock();
 
@@ -335,6 +350,39 @@ class RunController implements RunHandle {
     }
   }
 
+  /**
+   * Consult the cross-process {@link ControlSource} and apply any newly-issued
+   * command (seq > last applied) by calling the SAME in-process methods a
+   * keypress used to. Idempotent across polls/restart via the seq guard. A
+   * `stop` maps to {@link cancel} — which aborts the in-flight agent immediately
+   * — so it takes effect mid-run, not at a task boundary.
+   */
+  private async applyControl(): Promise<void> {
+    if (!this.control) return;
+    let command;
+    try {
+      command = await this.control.read(this.id);
+    } catch {
+      return; // a torn/unreadable control file is non-fatal
+    }
+    if (!command || command.seq <= this.lastControlSeq) return;
+    this.lastControlSeq = command.seq;
+    switch (command.command) {
+      case 'stop':
+        this.cancel();
+        break;
+      case 'pause':
+        this.pause();
+        break;
+      case 'resume':
+        this.resumeRun();
+        break;
+      case 'input':
+        if (command.text) this.appendUserInput(command.text);
+        break;
+    }
+  }
+
   private emitKnowledge(): void {
     this.emit({
       type: 'knowledge-updated',
@@ -426,6 +474,14 @@ class RunController implements RunHandle {
       if (!this.resuming) {
         this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
       }
+      // Honor any already-pending control command (e.g. a stop issued while the
+      // run was only persisted-as-running) before doing work, then keep polling.
+      await this.applyControl();
+      if (this.controlPoll) {
+        this.controlDisposer = this.controlPoll(() => {
+          void this.applyControl();
+        });
+      }
       this.available = await this.detectAvailable();
       if (!this.resuming) await this.loadPersistedKnowledge();
 
@@ -500,6 +556,7 @@ class RunController implements RunHandle {
       await this.store.save(this.buildRecord('failed', message)).catch(() => undefined);
       return this.buildResult('failed', message);
     } finally {
+      this.controlDisposer?.();
       this.stream.end();
     }
   }
