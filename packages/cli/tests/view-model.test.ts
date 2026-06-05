@@ -138,6 +138,74 @@ describe('view-model', () => {
     ]);
   });
 
+  it('keeps a single chronological activity stream for route, planner, and worker progress', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'run-started',
+      runId: 'run-1',
+      request: { prompt: 'build real observability' },
+      mode: 'normal',
+    } as any);
+    view = reduceRunView(view, {
+      type: 'routed',
+      decision: { kind: 'complex', reason: 'needs multiple agents', confidence: 1, signals: [], suggestedRole: 'worker' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'planner',
+      taskId: null,
+      assignment: { role: 'planner', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'status', label: 'planning' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'planned',
+      snapshot: { seq: 1, tasks: [] },
+    } as any);
+
+    expect(view.activity).toEqual([
+      '▶ run run-1 started (normal)',
+      expect.stringContaining('routed: complex'),
+      'planner/codex status: planning',
+      '▤ planned 0 task(s)',
+    ]);
+  });
+
+  it('sanitizes raw command tool names in phrases while keeping tool counts', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'planned',
+      snapshot: {
+        seq: 1,
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'work',
+            description: 'work',
+            role: 'worker',
+            status: 'running',
+            dependsOn: [],
+            attempts: 0,
+            tags: ['implementation'],
+            createdAt: 0,
+            metadata: {},
+          },
+        ],
+      },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'worker',
+      taskId: 'task-1',
+      assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'tool_use', id: 'tool-1', name: '/bin/zsh -lc "sed -n 1,260p file"', input: {} },
+    } as any);
+
+    expect(view.tasks[0]?.toolCount).toBe(1);
+    expect(view.phrases.at(-1)).toBe('worker/codex tool: tool');
+    expect(view.phrases.join('\n')).not.toContain('/bin/zsh');
+    expect(view.phrases.join('\n')).not.toContain('sed -n');
+  });
+
   it('formats event lines for humans', () => {
     expect(formatEventLine({ type: 'paused' })).toBe('⏸ paused');
     expect(

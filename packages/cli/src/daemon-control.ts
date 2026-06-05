@@ -146,7 +146,7 @@ function buildServeArgs(execPath: string, scriptPath: string, cwd: string, extra
     const root = findTsxRoot(scriptPath);
     return {
       command: execPath,
-      args: ['--import', 'tsx', scriptPath, ...serve],
+      args: ['--conditions=development', '--import', 'tsx', scriptPath, ...serve],
       ...(root ? { cwd: root } : {}),
     };
   }

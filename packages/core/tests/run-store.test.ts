@@ -49,6 +49,15 @@ describe('FileRunStore', () => {
     expect((await store.list()).every((id) => !id.includes('.tmp'))).toBe(true);
   });
 
+  it('does not report control files as runs', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-runstore-control-'));
+    const store = new FileRunStore(dir);
+    await store.save(record('run-1'));
+    writeFileSync(path.join(dir, 'run-1.control.json'), '{"seq":1,"command":"stop"}');
+
+    expect(await store.list()).toEqual(['run-1']);
+  });
+
   it('returns null for a corrupt or partial file instead of throwing', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-runstore-bad-'));
     const store = new FileRunStore(dir);

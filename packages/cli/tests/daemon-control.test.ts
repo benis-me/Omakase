@@ -113,7 +113,7 @@ describe('ensureDaemon', () => {
     ]);
   });
 
-  it('runs a .ts dev entry through the tsx loader', async () => {
+  it('runs a .ts dev entry through the tsx loader with workspace source conditions', async () => {
     const cwd = tmp();
     let captured: { command: string; args: string[] } = { command: '', args: [] };
     const spawn = (command: string, args: string[]): SpawnedDaemon => {
@@ -127,7 +127,12 @@ describe('ensureDaemon', () => {
       isAlive: () => true,
     });
     expect(captured.command).toBe('/usr/bin/node');
-    expect(captured.args.slice(0, 3)).toEqual(['--import', 'tsx', '/repo/packages/cli/src/dev.ts']);
+    expect(captured.args.slice(0, 4)).toEqual([
+      '--conditions=development',
+      '--import',
+      'tsx',
+      '/repo/packages/cli/src/dev.ts',
+    ]);
     expect(captured.args).toContain('serve');
   });
 });

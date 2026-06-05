@@ -41,6 +41,27 @@ function dedupeCap(items: string[], cap = 8): string[] {
   return out;
 }
 
+function cleanPhaseTag(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const clean = value.replace(/\s+/g, ' ').trim();
+  if (!clean) return null;
+  return shorten(clean, 40);
+}
+
+export function tagsFromAgentPlanTask(raw: unknown, fallbackTitle: string): string[] {
+  const task = raw as { phase?: unknown; tags?: unknown };
+  const tags: string[] = [];
+  const phase = cleanPhaseTag(task.phase);
+  if (phase) tags.push(phase);
+  if (Array.isArray(task.tags)) {
+    for (const tag of task.tags) {
+      const clean = cleanPhaseTag(tag);
+      if (clean) tags.push(clean);
+    }
+  }
+  return dedupeCap(tags.length > 0 ? tags : [shorten(fallbackTitle, 40)], 4);
+}
+
 /** Decompose a prompt into ordered sub-goals. */
 export function splitGoals(prompt: string): string[] {
   const text = prompt.trim();
@@ -71,7 +92,7 @@ export class RulePlanner implements Planner {
         title: shorten(goal),
         description: goal,
         role: 'worker',
-        tags: ['implementation'],
+        tags: [shorten(goal, 40)],
       });
       workerIds.push(task.id);
     }
@@ -81,7 +102,7 @@ export class RulePlanner implements Planner {
         'Review the completed work for correctness and completeness against the original request, and flag anything that needs another pass.',
       role: 'reviewer',
       dependsOn: workerIds,
-      tags: ['review'],
+      tags: ['Review'],
     });
     graph.refreshReadiness();
     return graph;
@@ -92,6 +113,8 @@ interface AgentPlanTask {
   title?: unknown;
   description?: unknown;
   dependsOn?: unknown;
+  phase?: unknown;
+  tags?: unknown;
 }
 
 /** Extract the first balanced JSON array from arbitrary text. */
@@ -142,8 +165,13 @@ export function createAgentPlanner(
     options.buildPrompt ??
     ((ctx: PlanContext) =>
       [
-        'Break the following request into an ordered list of implementation tasks.',
-        'Respond with ONLY a JSON array of objects: {"title": string, "description": string, "dependsOn": number[] (indices of earlier tasks)}.',
+        'Break the following request into an ordered implementation plan.',
+        'Respond with ONLY a JSON array of objects.',
+        'Each object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
+        'phase is the user-visible stage name shown in the TUI, such as Discovery, Core, TUI, Verification, or Docs.',
+        'For broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
+        'Do not collapse unrelated work into one task.',
+        'dependsOn uses zero-based indices of earlier tasks.',
         ctx.knowledge ? `\nProject context:\n${ctx.knowledge}\n` : '',
         ctx.skills && ctx.skills.length > 0
           ? `\nApplicable skills (follow them when planning):\n${renderSkillContext(ctx.skills)}\n`
@@ -182,7 +210,7 @@ export function createAgentPlanner(
           description,
           role: 'worker',
           dependsOn: deps,
-          tags: ['implementation'],
+          tags: tagsFromAgentPlanTask(task, title),
         });
         ids.push(node.id);
       }
@@ -191,7 +219,7 @@ export function createAgentPlanner(
         description: 'Review the completed work against the original request.',
         role: 'reviewer',
         dependsOn: ids,
-        tags: ['review'],
+        tags: ['Review'],
       });
       graph.refreshReadiness();
       return graph;

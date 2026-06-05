@@ -34,6 +34,36 @@ function num(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
+function firstNum(obj: JsonRecord, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = num(obj[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function codexUsageFrom(info: JsonRecord): TokenUsage {
+  const usage: TokenUsage = {};
+  const input = firstNum(info, ['input_tokens', 'inputTokens', 'prompt_tokens']);
+  const output = firstNum(info, ['output_tokens', 'outputTokens', 'completion_tokens']);
+  const cachedRead = firstNum(info, ['cached_input_tokens', 'cachedReadTokens', 'cache_read_input_tokens']);
+  const cachedWrite = firstNum(info, ['cache_creation_input_tokens', 'cachedWriteTokens']);
+  const explicitTotal = firstNum(info, ['total_tokens', 'totalTokens']);
+  const reasoningOutput = firstNum(info, ['reasoning_output_tokens', 'reasoningOutputTokens']);
+
+  if (input !== undefined) usage.inputTokens = input;
+  if (output !== undefined) usage.outputTokens = output;
+  if (cachedRead !== undefined) usage.cachedReadTokens = cachedRead;
+  if (cachedWrite !== undefined) usage.cachedWriteTokens = cachedWrite;
+  if (explicitTotal !== undefined) {
+    usage.totalTokens = explicitTotal;
+  } else if (reasoningOutput !== undefined) {
+    const total = (input ?? 0) + (output ?? 0) + (reasoningOutput ?? 0);
+    if (total > 0) usage.totalTokens = total;
+  }
+  return usage;
+}
+
 function blockText(content: unknown): string {
   if (Array.isArray(content)) {
     return content
@@ -209,12 +239,9 @@ export const codexJsonMapper: JsonEventMapper = (raw, state) => {
     const text =
       typeof msg.message === 'string' ? msg.message : typeof msg.text === 'string' ? msg.text : '';
     if (text && !state.streamedText) out.push({ type: 'text_delta', delta: text });
-  } else if (t === 'token_count' || t === 'usage') {
+  } else if (t === 'token_count' || t === 'usage' || t === 'turn.completed') {
     const info = asRecord(msg.info) ?? asRecord(msg.usage) ?? msg;
-    const usage: TokenUsage = {};
-    if (num(info.input_tokens) !== undefined) usage.inputTokens = num(info.input_tokens);
-    if (num(info.output_tokens) !== undefined) usage.outputTokens = num(info.output_tokens);
-    if (num(info.total_tokens) !== undefined) usage.totalTokens = num(info.total_tokens);
+    const usage = codexUsageFrom(info);
     if (Object.keys(usage).length > 0) out.push({ type: 'usage', usage });
   } else if (t === 'error' || t === 'stream_error') {
     out.push({

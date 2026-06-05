@@ -101,8 +101,8 @@ describe('cross-process run control', () => {
     const control = new FakeControlSource();
     const { orch, pump, startedP, aborted } = harness(control);
     const handle = orch.start({ prompt: 'do work' });
-    control.set(handle.id, { seq: 1, command: 'stop' });
     await startedP; // the worker agent is now in-flight
+    control.set(handle.id, { seq: 1, command: 'stop' });
     await pump(); // poll tick → applyControl → cancel()
     const result = await handle.result;
     expect(result.status).toBe('cancelled');

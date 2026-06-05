@@ -6,6 +6,7 @@ function agent(
   id: string,
   opts: {
     available?: boolean;
+    authStatus?: DetectedAgent['authStatus'];
     models?: RuntimeModelOption[];
     reasoning?: RuntimeModelOption[];
   } = {},
@@ -28,7 +29,7 @@ function agent(
     models: opts.models ?? [{ id: 'default', label: 'Default' }],
     modelsSource: 'fallback',
     capabilities: {},
-    authStatus: 'ok',
+    authStatus: opts.authStatus ?? 'ok',
     authMessage: undefined,
   };
 }
@@ -69,6 +70,25 @@ describe('createModelPolicy', () => {
 
     const worker = policy.select('worker', { available: [claude] });
     expect(worker.reasoning).toBeNull();
+  });
+
+  it('normal distributes worker tasks across available agents by task id', () => {
+    const policy = createModelPolicy('normal');
+    const first = policy.select('worker', { available: [claude, agent('codex'), gemini], taskId: 'task-1' });
+    const second = policy.select('worker', { available: [claude, agent('codex'), gemini], taskId: 'task-2' });
+    const third = policy.select('worker', { available: [claude, agent('codex'), gemini], taskId: 'task-3' });
+
+    expect([first.agentId, second.agentId, third.agentId]).toEqual(['claude', 'codex', 'gemini']);
+  });
+
+  it('does not select an installed agent whose auth is missing', () => {
+    const policy = createModelPolicy('normal');
+    const selected = policy.select('worker', {
+      available: [agent('claude', { authStatus: 'missing' }), agent('codex')],
+      taskId: 'task-1',
+    });
+
+    expect(selected.agentId).toBe('codex');
   });
 
   it('falls back to the builtin agent when nothing is installed', () => {

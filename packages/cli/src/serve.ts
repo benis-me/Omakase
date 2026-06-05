@@ -6,7 +6,7 @@
  * into a queue directory. The watch loop is thin glue over {@link Server.cycle},
  * which is fully testable on its own.
  */
-import { mkdir, readFile, readdir, rename } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   createAgentRuntime,
@@ -55,6 +55,45 @@ export interface Server {
 }
 
 const QUEUE_FILE = /\.(txt|md|prompt)$/i;
+const CLAIM_SUFFIX = '.claim.json';
+
+interface QueueClaim {
+  version: 1;
+  sourceQueueFile: string;
+  state: 'claimed' | 'started';
+  claimedAt: number;
+  startedAt?: number;
+}
+
+function claimFileName(sourceQueueFile: string): string {
+  return `${sourceQueueFile}${CLAIM_SUFFIX}`;
+}
+
+function isQueueClaim(value: unknown, sourceQueueFile: string): value is QueueClaim {
+  if (!value || typeof value !== 'object') return false;
+  const claim = value as Partial<QueueClaim>;
+  return (
+    claim.version === 1 &&
+    claim.sourceQueueFile === sourceQueueFile &&
+    (claim.state === 'claimed' || claim.state === 'started') &&
+    typeof claim.claimedAt === 'number' &&
+    (claim.startedAt === undefined || typeof claim.startedAt === 'number')
+  );
+}
+
+async function readClaim(processedDir: string, sourceQueueFile: string): Promise<QueueClaim | null> {
+  try {
+    const parsed = JSON.parse(await readFile(path.join(processedDir, claimFileName(sourceQueueFile)), 'utf8')) as unknown;
+    return isQueueClaim(parsed, sourceQueueFile) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeClaim(processedDir: string, sourceQueueFile: string, claim: QueueClaim): Promise<void> {
+  await mkdir(processedDir, { recursive: true });
+  await writeFile(path.join(processedDir, claimFileName(sourceQueueFile)), JSON.stringify(claim, null, 2), 'utf8');
+}
 
 /**
  * A queue file is the prompt text, optionally led by an `@agent <id>` line that
@@ -68,6 +107,7 @@ function parseQueueContent(raw: string): { prompt: string; agentOverride?: strin
 
 export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server {
   const write = deps.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const now = deps.now ?? (() => Date.now());
   const runtime =
     deps.createRuntime?.() ??
     createAgentRuntime({
@@ -130,6 +170,12 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
       // Tag the request with the (unique) source filename so recoverClaimed can
       // correlate a claimed file with its eventual run record.
       await mkdir(processedDir, { recursive: true });
+      await writeClaim(processedDir, entry.name, {
+        version: 1,
+        sourceQueueFile: entry.name,
+        state: 'claimed',
+        claimedAt: now(),
+      });
       try {
         await rename(full, path.join(processedDir, entry.name));
       } catch {
@@ -151,6 +197,28 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
   // the run's first checkpoint. Without this, claim-before-enqueue would lose
   // such a task forever (the file is no longer in the queue dir, and no
   // resumable record exists). Correlate by the sourceQueueFile metadata key.
+  const markStartedClaims = async (): Promise<void> => {
+    const processedDir = path.join(config.queueDir, 'processed');
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await readdir(processedDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const started = new Set<string>();
+    for (const id of await store.list()) {
+      const src = (await store.load(id))?.request.metadata?.sourceQueueFile;
+      if (typeof src === 'string') started.add(src);
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !QUEUE_FILE.test(entry.name)) continue;
+      if (!started.has(entry.name)) continue;
+      const claim = await readClaim(processedDir, entry.name);
+      if (!claim || claim.state !== 'claimed') continue;
+      await writeClaim(processedDir, entry.name, { ...claim, state: 'started', startedAt: now() });
+    }
+  };
+
   const recoverClaimed = async (): Promise<string[]> => {
     const processedDir = path.join(config.queueDir, 'processed');
     let entries: import('node:fs').Dirent[];
@@ -167,7 +235,12 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     const reingested: string[] = [];
     for (const entry of entries) {
       if (!entry.isFile() || !QUEUE_FILE.test(entry.name)) continue;
-      if (started.has(entry.name)) continue; // a run record exists → already underway
+      const claim = await readClaim(processedDir, entry.name);
+      if (!claim || claim.state !== 'claimed') continue;
+      if (started.has(entry.name)) {
+        await writeClaim(processedDir, entry.name, { ...claim, state: 'started', startedAt: now() });
+        continue; // a run record exists → already underway
+      }
       let raw: string;
       try {
         raw = await readFile(path.join(processedDir, entry.name), 'utf8');
@@ -194,9 +267,12 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     scanQueue,
     async cycle(): Promise<SupervisorHealth> {
       await supervisor.resumeInterrupted();
+      await markStartedClaims();
       await recoverClaimed();
       await scanQueue();
-      return supervisor.drain();
+      const health = await supervisor.drain();
+      await markStartedClaims();
+      return health;
     },
   };
 }

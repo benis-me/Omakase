@@ -38,8 +38,8 @@ describe('parseArgs', () => {
     expect(parseArgs(['agents', '--cwd=/tmp']).options).toEqual({ cwd: '/tmp' });
   });
   it('does not let a boolean flag swallow the following positional', () => {
-    const parsed = parseArgs(['run', '--offline', 'summarize this project']);
-    expect(parsed.options.offline).toBe(true);
+    const parsed = parseArgs(['run', '--json', 'summarize this project']);
+    expect(parsed.options.json).toBe(true);
     expect(parsed.positionals).toContain('summarize this project');
   });
   it('treats -- as end-of-options so a dash-leading task survives', () => {
@@ -74,7 +74,7 @@ describe('omakase agents', () => {
 });
 
 describe('omakase run', () => {
-  it('runs a simple task offline via the builtin agent', async () => {
+  it('runs a simple task with the injected deterministic runtime', async () => {
     const { cli, out } = harness();
     const code = await cli.main(['run', 'summarize this project', '--cwd', process.cwd()]);
     expect(code).toBe(0);
@@ -91,13 +91,6 @@ describe('omakase run', () => {
     expect(code).toBe(0);
     expect(out()).toContain('planned');
     expect(out()).toMatch(/run finished: succeeded/);
-  });
-
-  it('forces the built-in agent with --offline (no model calls)', async () => {
-    const { cli, out } = harness();
-    const code = await cli.main(['run', 'summarize this project', '--offline', '--cwd', process.cwd()]);
-    expect(code).toBe(0);
-    expect(out()).toContain('Project summary');
   });
 
   it('errors when no task is given', async () => {
@@ -135,7 +128,7 @@ describe('omakase serve', () => {
   it('processes queued tasks one-shot and exits 0', async () => {
     const { cli, out } = harness();
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-serve-'));
-    const code = await cli.main(['serve', 'summarize the project', '--offline', '--cwd', cwd]);
+    const code = await cli.main(['serve', 'summarize the project', '--cwd', cwd]);
     expect(code).toBe(0);
     expect(out()).toMatch(/processed 1 run/);
   });
@@ -189,10 +182,11 @@ describe('omakase tui', () => {
       },
       launchTui: async () => {},
     });
-    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power', '--offline']);
+    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power', '--agent', 'codex']);
     expect(serveArgs).toContain('--mode');
     expect(serveArgs).toContain('max-power');
-    expect(serveArgs).toContain('--offline');
+    expect(serveArgs).toContain('--agent');
+    expect(serveArgs).toContain('codex');
     expect(serveArgs).toContain('--runs-dir');
     expect(serveArgs).toContain('--queue-dir');
   });

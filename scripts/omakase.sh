@@ -6,7 +6,7 @@
 #   ln -sf "$(pwd)/scripts/omakase.sh" ~/.local/bin/omakase   # run from repo root
 # Then from anywhere:
 #   omakase agents
-#   cd ~/some-project && omakase run "summarize this project" --offline
+#   cd ~/some-project && omakase run "summarize this project" --agent codex
 #
 # Uninstall: rm ~/.local/bin/omakase
 #
@@ -33,4 +33,4 @@ if [ ! -x "$TSX" ]; then
   exit 1
 fi
 
-exec "$TSX" "$REPO/packages/cli/src/dev.ts" "$@"
+exec node --conditions=development --import tsx "$REPO/packages/cli/src/dev.ts" "$@"

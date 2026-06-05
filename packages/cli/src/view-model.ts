@@ -59,6 +59,8 @@ export interface RunView {
   events: string[];
   /** Human-readable streamed planner/agent phrases, separate from structural events. */
   phrases: string[];
+  /** Chronological user-facing activity, mixing structural run events and agent stream updates. */
+  activity: string[];
   wikiEntries: number;
   codegraphFiles: number | null;
   lastReview: { approved: boolean; notes: string } | null;
@@ -67,6 +69,7 @@ export interface RunView {
 
 const MAX_EVENT_LINES = 200;
 const MAX_PHRASES = 120;
+const MAX_ACTIVITY_LINES = 200;
 
 export function initialRunView(mode: WorkMode = 'normal'): RunView {
   return {
@@ -84,6 +87,7 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
     updatedAt: null,
     events: [],
     phrases: [],
+    activity: [],
     wikiEntries: 0,
     codegraphFiles: null,
     lastReview: null,
@@ -106,7 +110,7 @@ function phraseLine(event: OrchestratorEvent): string {
     return `${role}/${agent} status: ${inner.label}`;
   }
   if (inner.type === 'tool_use') {
-    return `${role}/${agent} tool: ${inner.name ?? inner.id ?? 'tool'}`;
+    return `${role}/${agent} tool: ${safeToolLabel(inner.name, inner.id)}`;
   }
   if (inner.type === 'usage') {
     return `${role}/${agent} usage: ${tokensOf(inner.usage)} tok`;
@@ -205,12 +209,21 @@ function tokensOf(usage: { totalTokens?: number; inputTokens?: number; outputTok
   return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
 }
 
+function safeToolLabel(name: string | null | undefined, id: string | null | undefined): string {
+  const raw = name ?? id ?? 'tool';
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/.test(raw) ? raw : 'tool';
+}
+
 export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView {
   const line = formatEventLine(event);
   const events = line ? [...view.events, line].slice(-MAX_EVENT_LINES) : view.events;
   const phrase = phraseLine(event);
   const phrases = phrase ? [...view.phrases, phrase].slice(-MAX_PHRASES) : view.phrases;
-  const next: RunView = { ...view, events, phrases };
+  const activityLine = phrase || line;
+  const activity = activityLine
+    ? [...view.activity, activityLine].slice(-MAX_ACTIVITY_LINES)
+    : view.activity;
+  const next: RunView = { ...view, events, phrases, activity };
 
   switch (event.type) {
     case 'run-started':

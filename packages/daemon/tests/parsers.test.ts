@@ -102,6 +102,32 @@ describe('codexJsonMapper', () => {
     expect(r.usage).toEqual({ inputTokens: 9, outputTokens: 4 });
   });
 
+  it('maps current Codex turn.completed usage events', () => {
+    const events = codexJsonMapper(
+      {
+        type: 'turn.completed',
+        usage: {
+          input_tokens: 23862,
+          cached_input_tokens: 4992,
+          output_tokens: 158,
+          reasoning_output_tokens: 145,
+        },
+      },
+      jsonState(),
+    );
+    expect(events).toEqual([
+      {
+        type: 'usage',
+        usage: {
+          inputTokens: 23862,
+          outputTokens: 158,
+          cachedReadTokens: 4992,
+          totalTokens: 24165,
+        },
+      },
+    ]);
+  });
+
   it('maps item.completed-shaped messages', () => {
     const events = codexJsonMapper(
       { type: 'item.completed', item: { type: 'agent_message', text: 'done' } },

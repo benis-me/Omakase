@@ -47,6 +47,15 @@ function sampleView(): RunView {
   };
 }
 
+function viewForRun(id: string, title: string): RunView {
+  return {
+    ...sampleView(),
+    runId: id,
+    title,
+    tasks: sampleView().tasks.map((t) => ({ ...t, title })),
+  };
+}
+
 function fakeClient(overrides: Partial<RunControllerClient> = {}): RunControllerClient {
   const view = sampleView();
   const summaries: RunSummary[] = [
@@ -87,7 +96,9 @@ describe('TUI App (persistent client)', () => {
     );
     await tick();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Phases');
+    expect(frame).toContain('Plan');
+    expect(frame).toContain('Activity');
+    expect(frame).not.toContain('Phrases');
     expect(frame).toContain('Detail · logic'); // detail filtered to the selected phase
     expect(frame).toContain('1 agents');
     expect(frame).toContain('worker one');
@@ -206,6 +217,77 @@ describe('TUI App (persistent client)', () => {
     unmount();
   });
 
+  it('keeps resolving a submitted task token and attaches without leaving/re-entering', async () => {
+    const attached = viewForRun('r2', 'daemon attached task');
+    const client = fakeClient({
+      resolveRunId: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('r2'),
+      list: vi.fn(async () => []),
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(attached);
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    stdin.write('i');
+    await tick(20);
+    stdin.write('delayed task');
+    await tick(20);
+    stdin.write('\r');
+    await tick(40);
+    expect(lastFrame() ?? '').toContain('delayed task');
+    expect(lastFrame() ?? '').toContain('pending');
+    await tick(160);
+    expect(client.resolveRunId).toHaveBeenCalledTimes(2);
+    expect(lastFrame() ?? '').toContain('daemon attached task');
+    expect(lastFrame() ?? '').toContain('running');
+    unmount();
+  });
+
+  it('refreshes the runs list after leaving a pending submitted task', async () => {
+    let showCreatedRun = false;
+    const client = fakeClient({
+      resolveRunId: vi.fn(async () => null),
+      list: vi.fn(async () =>
+        showCreatedRun
+          ? [
+              {
+                id: 'r-new',
+                title: 'created after back',
+                status: 'running',
+                done: 0,
+                total: 1,
+                updatedAt: 10,
+              },
+            ] satisfies RunSummary[]
+          : [],
+      ),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" detect={async () => TWO_AGENTS} />,
+    );
+    await tick();
+    stdin.write('i');
+    await tick(20);
+    stdin.write('submitted then listed');
+    await tick(20);
+    stdin.write('\r');
+    await tick(40);
+    expect(lastFrame() ?? '').toContain('submitted then listed');
+    expect(lastFrame() ?? '').toContain('pending');
+
+    stdin.write(''); // back to runs before the daemon-created run is visible
+    await tick(40);
+    showCreatedRun = true;
+    await tick(650);
+
+    expect(lastFrame() ?? '').toContain('Runs');
+    expect(lastFrame() ?? '').toContain('created after back');
+    unmount();
+  });
+
   it('persists the selected main agent per project', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-tui-prefs-'));
     const first = render(
@@ -247,6 +329,43 @@ describe('TUI App (persistent client)', () => {
     await tick(20);
     expect(lastFrame()).toContain('cancelled');
     expect(lastFrame()).not.toContain('stopping');
+    unmount();
+  });
+
+  it('ignores stale tail updates after switching to another run', async () => {
+    const callbacks = new Map<string, (v: RunView) => void>();
+    const disposers = new Map<string, () => void>();
+    const client = fakeClient({
+      list: vi.fn(async () => [
+        { id: 'r1', title: 'first run', status: 'running', done: 0, total: 1, updatedAt: 2 },
+        { id: 'r2', title: 'second run', status: 'running', done: 0, total: 1, updatedAt: 1 },
+      ] satisfies RunSummary[]),
+      tail: vi.fn((id: string, onView: (v: RunView) => void) => {
+        callbacks.set(id, onView);
+        onView(viewForRun(id, id === 'r1' ? 'first run detail' : 'second run detail'));
+        const dispose = vi.fn();
+        disposers.set(id, dispose);
+        return dispose;
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(<App client={client} cwd="/p" mode="normal" />);
+    await tick();
+    stdin.write('\r'); // attach r1
+    await tick(40);
+    expect(lastFrame() ?? '').toContain('first run detail');
+    stdin.write(''); // back to list
+    await tick(40);
+    stdin.write('[B'); // select r2
+    await tick(20);
+    stdin.write('\r'); // attach r2
+    await tick(40);
+    expect(lastFrame() ?? '').toContain('second run detail');
+
+    callbacks.get('r1')?.(viewForRun('r1', 'stale first run detail'));
+    await tick(20);
+    expect(disposers.get('r1')).toHaveBeenCalled();
+    expect(lastFrame() ?? '').toContain('second run detail');
+    expect(lastFrame() ?? '').not.toContain('stale first run detail');
     unmount();
   });
 

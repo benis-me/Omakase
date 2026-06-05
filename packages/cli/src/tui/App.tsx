@@ -6,8 +6,8 @@
  * stop ([x]) cancels a run.
  *
  * Layout mirrors a workflow monitor: a header (task + N/M agents + elapsed), a
- * left "Phases" pane (stage + done/total), and a right "Detail · N agents" pane
- * (per-task token/tool/elapsed rows), with keybindings in the footer.
+ * left "Plan" pane (stage + done/total), and a right "Activity" + detail pane
+ * (live route/planner/agent stream plus per-task token/tool/elapsed rows).
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { writeFileSync } from 'node:fs';
@@ -136,6 +136,8 @@ export function App({
   ); // null = auto
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [attachedId, setAttachedId] = useState<string | null>(null);
+  const attachedIdRef = useRef<string | null>(null);
+  const pendingTokenRef = useRef<string | null>(null);
   const [view, setView] = useState<RunView | null>(null);
   const [compose, setCompose] = useState<{ active: boolean; kind: 'new' | 'note'; buffer: string }>({
     active: false,
@@ -153,7 +155,10 @@ export function App({
 
   const attach = async (id: string): Promise<void> => {
     if (!active.current) return;
+    pendingTokenRef.current = null;
+    attachedIdRef.current = id;
     setAttachedId(id);
+    setView(null);
     setSelectedPhase(0);
     setScreen('run');
     await refreshRuns();
@@ -189,7 +194,7 @@ export function App({
   useEffect(() => {
     if (!attachedId) return;
     const stop = client.tail(attachedId, (v) => {
-      if (active.current) {
+      if (active.current && attachedIdRef.current === attachedId && v.runId === attachedId) {
         setView(v);
         void refreshRuns();
       }
@@ -214,6 +219,17 @@ export function App({
     return () => clearInterval(timer);
   }, [screen]);
 
+  // The daemon may create the run record after the user backs out of a pending
+  // submission. Keep the list fresh without requiring another keypress/relaunch.
+  useEffect(() => {
+    if (screen !== 'list') return;
+    void refreshRuns();
+    const timer = setInterval(() => void refreshRuns(), 500);
+    timer.unref?.();
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
+
   // Poll the daemon's status for the header indicator (it can die independently).
   useEffect(() => {
     if (!daemonStatus) return;
@@ -228,32 +244,42 @@ export function App({
 
   const submitNew = async (text: string): Promise<void> => {
     const t = await client.submit(text, selectedAgent ?? undefined);
+    pendingTokenRef.current = t;
     const pending = {
       ...initialRunView(mode),
       status: 'pending' as const,
       title: text,
       events: [`queued ${t}`],
       phrases: [`queued: ${text}`],
+      activity: [`queued: ${text}`],
     };
+    attachedIdRef.current = null;
     setAttachedId(null);
     setSelectedPhase(0);
     setView(pending);
     setScreen('run');
     setNotice('submitted — waiting for the daemon to start it');
     void refreshRuns();
-    const id = await client.resolveRunId(t).catch(() => null);
-    if (id) {
-      setView(null);
-      await attach(id);
-    } else {
-      // The daemon hasn't picked it up yet — tell the user and show the list so
-      // they can attach once it appears, rather than silently doing nothing.
-      setNotice('submitted — waiting for the daemon to start it; press [esc] for the run list');
+    void resolveSubmittedRun(t);
+  };
+
+  const resolveSubmittedRun = async (tokenToResolve: string): Promise<void> => {
+    for (;;) {
+      const id = await client.resolveRunId(tokenToResolve, 1000).catch(() => null);
+      if (!active.current || pendingTokenRef.current !== tokenToResolve) return;
+      if (id) {
+        await attach(id);
+        return;
+      }
+      setNotice('submitted — waiting for the daemon to start it');
       await refreshRuns();
+      await new Promise((r) => setTimeout(r, 100));
     }
   };
 
   const back = (): void => {
+    pendingTokenRef.current = null;
+    attachedIdRef.current = null;
     setAttachedId(null);
     setView(null);
     setScreen('list');
@@ -399,7 +425,7 @@ export function App({
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
   if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
-  return '↑↓ phase · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
+  return '↑↓ plan · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
 }
 
 function daemonLabel(d: DaemonStatus | null): { text: string; color: string } {
@@ -503,11 +529,13 @@ function RunDetail({
   // Show the tasks of the SELECTED phase (↑↓ moves the cursor) — matching the
   // reference monitor where the right pane reflects the chosen phase.
   const tasks = stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks;
-  const phrases = (view.phrases.length > 0 ? view.phrases : view.events).slice(-6);
+  const activity = (
+    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
+  ).slice(-10);
   return (
     <Box flexGrow={1}>
       <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
-        <Text bold>Phases</Text>
+        <Text bold>Plan</Text>
         {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}
         {view.phases.map((p: PhaseView, i) => (
           <Text key={p.stage} color={i === phaseIdx ? 'cyan' : undefined}>
@@ -521,9 +549,9 @@ function RunDetail({
         ))}
       </Box>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
-        <Text bold>Phrases</Text>
-        {phrases.length === 0 ? <Text dimColor>waiting for planner…</Text> : null}
-        {phrases.map((p, i) => (
+        <Text bold>Activity</Text>
+        {activity.length === 0 ? <Text dimColor>waiting for planner…</Text> : null}
+        {activity.map((p, i) => (
           <Text key={`${i}-${p.slice(0, 12)}`} dimColor>
             {p.slice(0, 82)}
           </Text>

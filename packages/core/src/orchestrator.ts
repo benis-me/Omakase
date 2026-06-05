@@ -23,7 +23,7 @@ import {
 } from '@omakase/daemon';
 import { HookBus } from './hooks/bus.js';
 import type { OrchestrationHookBus } from './hooks/types.js';
-import { createIdGenerator, type IdGenerator } from './ids.js';
+import { createIdGenerator, createUniqueRunIdGenerator, type IdGenerator } from './ids.js';
 import { CodeGraph } from './knowledge/codegraph.js';
 import { ProjectWiki } from './knowledge/wiki.js';
 import type { KnowledgeStore } from './knowledge/store.js';
@@ -34,7 +34,7 @@ import {
   type ReplanReason,
   type TaskNode,
 } from './plan/plan-graph.js';
-import { RulePlanner, extractJsonArray, type Planner } from './plan/planner.js';
+import { RulePlanner, extractJsonArray, tagsFromAgentPlanTask, type Planner } from './plan/planner.js';
 import { RuleRouter, createAgentRouter, type RouteDecision, type Router } from './router/router.js';
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
@@ -335,6 +335,7 @@ class RunController implements RunHandle {
     if (this.cancelled) return;
     this.cancelled = true;
     for (const abort of this.activeAborts) abort.abort();
+    this.cancelUnfinishedTasks();
     this.pauseGate?.resolve();
     this.pauseGate = null;
   }
@@ -365,6 +366,14 @@ class RunController implements RunHandle {
         to: change.to,
       });
     });
+  }
+
+  private cancelUnfinishedTasks(): void {
+    for (const task of this.graph.tasks()) {
+      if (task.status !== 'succeeded' && task.status !== 'failed' && task.status !== 'cancelled') {
+        this.graph.setStatus(task.id, 'cancelled');
+      }
+    }
   }
 
   private async waitIfPaused(): Promise<void> {
@@ -465,7 +474,10 @@ class RunController implements RunHandle {
     return [
       'Break the following request into an ordered implementation plan.',
       'Respond with ONLY a JSON array of objects.',
-      'Each object must be: {"title": string, "description": string, "dependsOn": number[]}.',
+      'Each object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
+      'phase is the user-visible stage name shown in the TUI, such as Discovery, Core, TUI, Verification, or Docs.',
+      'For broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
+      'Do not collapse unrelated work into one task.',
       'dependsOn uses zero-based indices of earlier tasks.',
       '',
       `Request: ${this.request.prompt}`,
@@ -499,7 +511,7 @@ class RunController implements RunHandle {
         description,
         role: 'worker',
         dependsOn,
-        tags: ['implementation'],
+        tags: tagsFromAgentPlanTask(raw, title),
       });
       ids.push(task.id);
     }
@@ -508,7 +520,7 @@ class RunController implements RunHandle {
       description: 'Review the completed work against the original request.',
       role: 'reviewer',
       dependsOn: ids,
-      tags: ['review'],
+      tags: ['Review'],
     });
     graph.refreshReadiness();
     return graph;
@@ -632,6 +644,9 @@ class RunController implements RunHandle {
       // would make the persisted sequence self-contradictory.
       if (!this.resuming) {
         this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
+        // Persist immediately so detached clients can correlate the queue token
+        // and show the run before routing/planning has produced any tasks.
+        await this.checkpointProgress();
       }
       // Honor any already-pending control command (e.g. a stop issued while the
       // run was only persisted-as-running) before doing work, then keep polling.
@@ -780,7 +795,12 @@ class RunController implements RunHandle {
   }
 
   private async executeTask(task: TaskNode): Promise<void> {
-    const assignment = this.policy.select(task.role, { available: this.available });
+    const assignment = this.policy.select(task.role, {
+      available: this.available,
+      taskId: task.id,
+      taskTitle: task.title,
+      taskType: task.tags[0] ?? task.role,
+    });
     this.graph.incrementAttempts(task.id);
     this.graph.setStatus(task.id, 'running');
     // Persist the 'running' transition NOW (the next checkpoint is only after the
@@ -1083,7 +1103,7 @@ export class Orchestrator {
   constructor(private readonly options: OrchestratorOptions) {
     // A shared generator so every start() gets a distinct run id and runs never
     // collide in the store (the per-run task generator is separate).
-    this.runIds = options.idGenerator ?? createIdGenerator();
+    this.runIds = options.idGenerator ?? createUniqueRunIdGenerator();
   }
 
   /** Start a new run and return a streaming handle. */

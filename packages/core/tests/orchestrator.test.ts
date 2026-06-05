@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createAgentRuntime,
@@ -7,7 +10,8 @@ import {
   type AgentRunInput,
 } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
-import { MemoryRunStore, type RunRecord } from '../src/supervisor/run-store.js';
+import { FileRunStore, MemoryRunStore, type RunRecord } from '../src/supervisor/run-store.js';
+import { FileControlSource, writeControl } from '../src/supervisor/control.js';
 import { createModelPolicy } from '../src/modes/policy.js';
 import { RulePlanner, type Planner } from '../src/plan/planner.js';
 import { PlanGraph } from '../src/plan/plan-graph.js';
@@ -66,6 +70,90 @@ function baseOptions(runtime: ReturnType<typeof scriptedRuntime>, planner: Plann
 }
 
 describe('Orchestrator (Ralph loop)', () => {
+  it('allocates distinct run ids across fresh orchestrator instances by default', async () => {
+    const store = new MemoryRunStore();
+    const simpleRouter: Router = {
+      route: () => ({ kind: 'simple', reason: 't', confidence: 1, signals: [], suggestedRole: 'worker' }),
+    };
+    const options = {
+      runtime: scriptedRuntime(() => 'done'),
+      router: simpleRouter,
+      planner: new RulePlanner(),
+      policy: customPolicy,
+      store,
+      clock: () => 0,
+      detectionOptions,
+    };
+
+    const first = await new Orchestrator(options).start({ prompt: 'first task' }).result;
+    const second = await new Orchestrator(options).start({ prompt: 'second task' }).result;
+
+    expect(first.id).not.toBe(second.id);
+    expect(await store.list()).toHaveLength(2);
+    expect(await store.load(first.id)).not.toBeNull();
+    expect(await store.load(second.id)).not.toBeNull();
+  });
+
+  it('does not apply a stale control file from a previous run id generation', async () => {
+    const runsDir = mkdtempSync(path.join(os.tmpdir(), 'omakase-stale-control-'));
+    const store = new FileRunStore(runsDir);
+    await writeControl(runsDir, 'run-1', { seq: 9, command: 'stop' });
+    const simpleRouter: Router = {
+      route: () => ({ kind: 'simple', reason: 't', confidence: 1, signals: [], suggestedRole: 'worker' }),
+    };
+
+    const result = await new Orchestrator({
+      runtime: scriptedRuntime(() => 'done'),
+      router: simpleRouter,
+      planner: new RulePlanner(),
+      policy: customPolicy,
+      store,
+      control: new FileControlSource(runsDir),
+      clock: () => 0,
+      detectionOptions,
+    }).start({ prompt: 'fresh task' }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.id).not.toBe('run-1');
+  });
+
+  it('persists a run record immediately after run-started before routing completes', async () => {
+    const store = new MemoryRunStore();
+    let releaseRoute!: () => void;
+    const routeGate = new Promise<void>((resolve) => {
+      releaseRoute = resolve;
+    });
+    const blockingRouter: Router = {
+      route: async () => {
+        await routeGate;
+        return { kind: 'simple', reason: 'released', confidence: 1, signals: [], suggestedRole: 'worker' };
+      },
+    };
+    const orch = new Orchestrator({
+      runtime: scriptedRuntime(() => 'done'),
+      router: blockingRouter,
+      planner: new RulePlanner(),
+      policy: customPolicy,
+      store,
+      clock: () => 0,
+      detectionOptions,
+    });
+
+    const handle = orch.start({
+      prompt: 'queued task',
+      metadata: { sourceQueueFile: 'queued-task.prompt' },
+    });
+    const first = await handle.events[Symbol.asyncIterator]().next();
+    expect(first.value).toMatchObject({ type: 'run-started', runId: handle.id });
+
+    const rec = await store.load(handle.id);
+    expect(rec?.request.metadata?.sourceQueueFile).toBe('queued-task.prompt');
+    expect(rec?.events.some((e) => e.type === 'run-started')).toBe(true);
+
+    releaseRoute();
+    await handle.result;
+  });
+
   it('runs router → planner → workers → reviewer → replan → finish', async () => {
     let reviewerCalls = 0;
     const runtime = scriptedRuntime((_input, role) => {
@@ -274,6 +362,40 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(result.status).toBe('cancelled');
   });
 
+  it('marks not-yet-run dependent tasks cancelled when a run is stopped', async () => {
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    async function* blockingWorker(input: AgentRunInput): AsyncGenerator<AgentEvent> {
+      started();
+      await new Promise<void>((resolve) => {
+        if (input.signal?.aborted) resolve();
+        else input.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      yield { type: 'text_delta', delta: 'aborted' };
+    }
+    const exec = createScriptedAgent((input) => blockingWorker(input));
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const planner: Planner = {
+      plan(ctx) {
+        const g = new PlanGraph({ idGenerator: ctx.idGenerator, clock: ctx.clock });
+        const first = g.addTask({ title: 'first', role: 'worker' });
+        const second = g.addTask({ title: 'second', role: 'worker', dependsOn: [first.id] });
+        g.addTask({ title: 'review', role: 'reviewer', dependsOn: [first.id, second.id] });
+        g.refreshReadiness();
+        return g;
+      },
+    };
+    const orch = new Orchestrator(baseOptions(runtime, planner));
+    const handle = orch.start({ prompt: 'two-step workflow' });
+    await startedP;
+    handle.cancel();
+    const result = await handle.result;
+    expect(result.status).toBe('cancelled');
+    expect(result.plan.tasks.map((t) => t.status)).toEqual(['cancelled', 'cancelled', 'cancelled']);
+  });
+
   it('supports pause then resume', async () => {
     const runtime = scriptedRuntime((_i, role) => (role === 'reviewer' ? 'APPROVE' : 'done'));
     const orch = new Orchestrator(baseOptions(runtime, new RulePlanner()));
@@ -407,6 +529,87 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(plannerIdx).toBeLessThan(plannedIdx);
     const planned = events.find((e): e is Extract<OrchestratorEvent, { type: 'planned' }> => e.type === 'planned');
     expect(planned?.snapshot.tasks.some((t) => t.title === 'Agent planned implementation')).toBe(true);
+  });
+
+  it('turns agent-planned phase fields into dynamic task phases', async () => {
+    const exec = createScriptedAgent((input) => {
+      const role = String(input.metadata?.role ?? 'worker');
+      if (role === 'planner') {
+        return [
+          {
+            type: 'text_delta',
+            delta: JSON.stringify([
+              {
+                title: 'Inspect runtime state',
+                description: 'Read the daemon and TUI state before changing code.',
+                phase: 'Discovery',
+                dependsOn: [],
+              },
+              {
+                title: 'Repair TUI activity stream',
+                description: 'Make the run detail show live planner and worker progress.',
+                phase: 'TUI',
+                dependsOn: [0],
+              },
+              {
+                title: 'Verify with real agents',
+                description: 'Run a live agent smoke test against the daemon-backed path.',
+                phase: 'Verification',
+                dependsOn: [1],
+              },
+            ]),
+          },
+        ];
+      }
+      if (role === 'reviewer') return [{ type: 'text_delta', delta: 'APPROVE' }];
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const runtime = createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: customPolicy,
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+
+    const events = await collect(orch.start({ prompt: 'fix a broad multi-agent product workflow' }));
+    const planned = events.find((e): e is Extract<OrchestratorEvent, { type: 'planned' }> => e.type === 'planned');
+    const workers = planned?.snapshot.tasks.filter((t) => t.role === 'worker') ?? [];
+
+    expect(workers.map((t) => t.tags[0])).toEqual(['Discovery', 'TUI', 'Verification']);
+    expect(workers.map((t) => t.tags[0])).not.toContain('implementation');
+  });
+
+  it('passes task identity into worker policy selection', async () => {
+    const seen: Array<{ id?: string; title?: string; type?: string }> = [];
+    const runtime = scriptedRuntime((_input, role) => (role === 'reviewer' ? 'APPROVE' : 'done'));
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      planner: new RulePlanner(),
+      policy: {
+        mode: 'normal',
+        select(role, ctx) {
+          if (role === 'worker') {
+            seen.push({ id: ctx.taskId, title: ctx.taskTitle, type: ctx.taskType });
+          }
+          return { role, agentId: 'scripted', model: null, reasoning: null, rationale: 'test' };
+        },
+      },
+      store: new MemoryRunStore(),
+      idGenerator: createIdGenerator(),
+      clock: () => 0,
+      detectionOptions,
+    });
+
+    await orch.start({ prompt: '- inspect TUI\n- verify daemon' }).result;
+
+    expect(seen.map((s) => s.title)).toEqual(['inspect TUI', 'verify daemon']);
+    expect(seen.map((s) => s.type)).toEqual(['inspect TUI', 'verify daemon']);
+    expect(seen.map((s) => s.id)).toEqual([expect.stringMatching(/^task-\d+$/), expect.stringMatching(/^task-\d+$/)]);
   });
 
   it('honors a per-request agent override (metadata.agentOverride)', async () => {

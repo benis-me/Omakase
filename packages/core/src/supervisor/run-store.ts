@@ -141,7 +141,7 @@ export class FileRunStore implements RunStore {
     try {
       const entries = await readdir(this.dir);
       return entries
-        .filter((e) => e.endsWith('.json'))
+        .filter((e) => e.endsWith('.json') && !e.endsWith('.control.json'))
         .map((e) => e.slice(0, -'.json'.length));
     } catch {
       return [];

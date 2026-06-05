@@ -35,6 +35,10 @@ export interface SelectionContext {
   available: DetectedAgent[];
   /** Optional hint about the task ('codegen' | 'review' | 'reasoning' | 'route'). */
   taskType?: string;
+  /** Stable task id used to distribute worker tasks across the available agent pool. */
+  taskId?: string;
+  /** Optional task title fallback when no id is available. */
+  taskTitle?: string;
 }
 
 export interface ModelPolicy {
@@ -67,7 +71,7 @@ function rankAvailable(
 ): DetectedAgent[] {
   const index = new Map(ranking.map((id, i) => [id, i]));
   return agents
-    .filter((a) => a.available)
+    .filter((a) => a.available && a.authStatus !== 'missing')
     .sort((a, b) => (index.get(a.id) ?? 999) - (index.get(b.id) ?? 999));
 }
 
@@ -91,6 +95,20 @@ function pickReasoning(agent: DetectedAgent, candidates: string[]): string | nul
     if (candidate !== 'default' && ids.has(candidate)) return candidate;
   }
   return null;
+}
+
+function stableSlot(ctx: SelectionContext, size: number): number {
+  const key = ctx.taskId ?? ctx.taskTitle ?? ctx.taskType ?? '';
+  const numeric = /(\d+)$/.exec(key);
+  if (numeric) {
+    const parsed = Number(numeric[1]);
+    if (Number.isFinite(parsed) && parsed > 0) return (parsed - 1) % size;
+  }
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % size;
 }
 
 function builtinAssignment(role: AgentRole, rationale: string, builtinId: string): RoleAssignment {
@@ -139,6 +157,17 @@ export function createModelPolicy(
         model: null,
         reasoning: pickReasoning(top, ['high', 'medium']),
         rationale: `normal: stronger reasoning for ${role}`,
+      };
+    }
+    if (role === 'worker' && ranked.length > 1) {
+      const slot = stableSlot(ctx, ranked.length);
+      const agent = ranked[slot] ?? top;
+      return {
+        role,
+        agentId: agent.id,
+        model: null,
+        reasoning: null,
+        rationale: `normal: distributed worker ${slot + 1}/${ranked.length} (${agent.id})`,
       };
     }
     return {

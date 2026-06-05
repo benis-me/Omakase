@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -105,17 +105,40 @@ describe('createServer', () => {
     expect((await server.store.load(id))?.status).toBe('cancelled');
   });
 
+  it('does not re-ingest a legacy processed queue file without a claim marker', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-recover-'));
+    const processed = path.join(cwd, '.omakase', 'queue', 'processed');
+    mkdirSync(processed, { recursive: true });
+    writeFileSync(path.join(processed, 'legacy.prompt'), 'old task that already belonged to another daemon');
+
+    const server = createServer(config(cwd), { write: () => {} });
+    const health = await server.cycle();
+    expect(health.completed).toBe(0);
+    expect(await server.store.list()).toEqual([]);
+  });
+
   it('re-ingests a claimed queue file that never produced a run record', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-serve-recover-'));
     const processed = path.join(cwd, '.omakase', 'queue', 'processed');
     mkdirSync(processed, { recursive: true });
     // Simulate a crash AFTER the claim-rename but BEFORE the first checkpoint:
-    // the file sits in processed/ with no corresponding run record.
-    writeFileSync(path.join(processed, 'orphan.txt'), 'summarize the project');
+    // the file sits in processed/ with a claim marker and no corresponding run record.
+    writeFileSync(path.join(processed, 'orphan.prompt'), 'summarize the project');
+    writeFileSync(
+      path.join(processed, 'orphan.prompt.claim.json'),
+      JSON.stringify({ version: 1, sourceQueueFile: 'orphan.prompt', state: 'claimed', claimedAt: 1 }),
+    );
 
-    const server = createServer(config(cwd), { write: () => {} });
+    const server = createServer(config(cwd), { write: () => {}, now: () => 2 });
     const health = await server.cycle();
     expect(health.completed).toBe(1); // recovered and ran the orphaned task
+
+    const claim = JSON.parse(readFileSync(path.join(processed, 'orphan.prompt.claim.json'), 'utf8')) as {
+      state?: string;
+      startedAt?: number;
+    };
+    expect(claim.state).toBe('started');
+    expect(claim.startedAt).toBe(2);
 
     // A second cycle must NOT re-run it (a run record now correlates the file).
     const health2 = await server.cycle();

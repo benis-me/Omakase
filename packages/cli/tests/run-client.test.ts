@@ -106,6 +106,9 @@ describe('RunControllerClient', () => {
     expect(view?.tasks.length).toBeGreaterThan(0); // NOT empty
     expect(view?.tasks.some((t) => t.status === 'running')).toBe(true);
     expect(view?.phases.length).toBeGreaterThan(0); // NOT "no plan yet"
+    const summary = (await client.list()).find((s) => s.id === id);
+    expect(summary?.status).toBe('running');
+    expect(summary?.total).toBeGreaterThan(0); // list uses the same plan snapshot as detail
 
     await client.stop(id); // cleanup: cancel the blocked worker
     await draining;
