@@ -8,6 +8,12 @@ import type { RoleAssignment } from './modes/policy.js';
 import type { PlanGraphSnapshot, ReplanReason, TaskStatus } from './plan/plan-graph.js';
 import type { RouteDecision } from './router/router.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
+import type { CodeGraphStats } from './knowledge/codegraph.js';
+import type { AcceptanceCriterion, AcceptanceProgress } from './acceptance.js';
+import type { IterationSnapshot } from './iterations.js';
+import type { RiskGateSnapshot } from './risk-gates.js';
+import type { ReportArtifact } from './reports.js';
+import type { KnowledgeEvent } from './knowledge/events.js';
 
 export interface ReviewCriterion {
   criterion: string;
@@ -22,6 +28,7 @@ export type RunStatus =
   | 'succeeded'
   | 'failed'
   | 'cancelled'
+  | 'waiting-for-user'
   /** Made progress but not finished — e.g. the iteration cap was hit. Resumable. */
   | 'incomplete';
 
@@ -34,10 +41,21 @@ export interface InboxItemSnapshot {
   consumed: boolean;
 }
 
+export interface AcceptanceSnapshot {
+  criteria: AcceptanceCriterion[];
+  progress: AcceptanceProgress;
+}
+
 export type OrchestratorEvent =
   | { type: 'run-started'; runId: string; request: OrchestrationRequest; mode: WorkMode }
   | { type: 'routed'; decision: RouteDecision }
   | { type: 'planned'; snapshot: PlanGraphSnapshot }
+  | { type: 'acceptance-updated'; acceptance: AcceptanceSnapshot }
+  | { type: 'iteration-updated'; iteration: IterationSnapshot; iterations: IterationSnapshot[] }
+  | { type: 'risk-gate-opened'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
+  | { type: 'risk-gate-answered'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
+  | { type: 'report-created'; report: ReportArtifact; reports: ReportArtifact[] }
+  | { type: 'knowledge-event-created'; event: KnowledgeEvent; events: KnowledgeEvent[] }
   | {
       type: 'task-status';
       taskId: string;
@@ -70,7 +88,12 @@ export type OrchestratorEvent =
       criteria?: ReviewCriterion[];
     }
   | { type: 'replanned'; reason: ReplanReason; snapshot: PlanGraphSnapshot }
-  | { type: 'knowledge-updated'; wikiEntries: number; codegraphFiles: number | null }
+  | {
+      type: 'knowledge-updated';
+      wikiEntries: number;
+      codegraphFiles: number | null;
+      codegraph: CodeGraphStats | null;
+    }
   | {
       type: 'budget-exhausted';
       spentTokens: number;

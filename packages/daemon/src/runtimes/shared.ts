@@ -60,6 +60,30 @@ export function parseLineSeparatedModels(
   return out.length > 1 ? out : null;
 }
 
+function isPlausibleModelId(id: string): boolean {
+  if (id.length < 2 || id.length > 96) return false;
+  if (!/[A-Za-z]/.test(id)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(id);
+}
+
+/** Parse one-id-per-line stdout while dropping login banners and terminal noise. */
+export function parseStrictLineSeparatedModels(
+  stdout: string,
+): RuntimeModelOption[] | null {
+  const ids = String(stdout || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#') && isPlausibleModelId(line));
+  const out: RuntimeModelOption[] = [DEFAULT_MODEL_OPTION];
+  const seen = new Set<string>(['default']);
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, label: id });
+  }
+  return out.length > 1 ? out : null;
+}
+
 /** Parse Codex's `debug models` JSON listing. */
 export function parseCodexDebugModels(
   stdout: string,

@@ -14,6 +14,7 @@ import path from 'node:path';
 import {
   FileControlSource,
   writeControl,
+  type ControlCommand,
   type ControlCommandKind,
   type RunStatus,
   type RunStore,
@@ -158,17 +159,31 @@ export class RunControllerClient {
     return this.writeNext(runId, 'resume');
   }
   sendInput(runId: string, text: string): Promise<void> {
-    return this.writeNext(runId, 'input', text);
+    return this.writeNext(runId, 'input', { text });
+  }
+  answerGate(runId: string, gateId: string, answer: string, criteria?: string[]): Promise<void> {
+    return this.writeNext(runId, 'answer-gate', {
+      gateId,
+      answer,
+      ...(criteria ? { criteria } : {}),
+    });
+  }
+  editCriteria(runId: string, criteria: string[]): Promise<void> {
+    return this.writeNext(runId, 'edit-criteria', { criteria });
   }
 
   /** Write a control command with a monotonic seq (one past whatever's on disk). */
-  private async writeNext(runId: string, command: ControlCommandKind, text?: string): Promise<void> {
+  private async writeNext(
+    runId: string,
+    command: ControlCommandKind,
+    payload: Omit<ControlCommand, 'seq' | 'command'> = {},
+  ): Promise<void> {
     const current = await this.control.read(runId);
     this.seq = Math.max(this.seq, current?.seq ?? 0) + 1;
     await writeControl(this.controlDir, runId, {
       seq: this.seq,
       command,
-      ...(text !== undefined ? { text } : {}),
+      ...payload,
     });
   }
 }

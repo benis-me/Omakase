@@ -10,7 +10,11 @@ import path from 'node:path';
 import type { PlanGraphSnapshot } from '../plan/plan-graph.js';
 import type { RouteDecision } from '../router/router.js';
 import type { WikiSnapshot } from '../knowledge/wiki.js';
-import type { InboxItemSnapshot, OrchestratorEvent, RunStatus } from '../run-events.js';
+import type { AcceptanceSnapshot, InboxItemSnapshot, OrchestratorEvent, RunStatus } from '../run-events.js';
+import type { IterationSnapshot } from '../iterations.js';
+import type { RiskGateSnapshot } from '../risk-gates.js';
+import type { ReportArtifact } from '../reports.js';
+import type { KnowledgeEvent } from '../knowledge/events.js';
 import type { OrchestrationRequest, WorkMode } from '../types.js';
 
 export interface RunRecord {
@@ -21,6 +25,11 @@ export interface RunRecord {
   routeDecision?: RouteDecision;
   plan: PlanGraphSnapshot;
   wiki: WikiSnapshot;
+  acceptance?: AcceptanceSnapshot;
+  iterations?: IterationSnapshot[];
+  riskGates?: RiskGateSnapshot[];
+  reports?: ReportArtifact[];
+  knowledgeEvents?: KnowledgeEvent[];
   inbox: InboxItemSnapshot[];
   events: OrchestratorEvent[];
   summary: string;

@@ -67,6 +67,7 @@ export type {
   CodeLanguage,
   SymbolKind,
   CodeGraphSnapshot,
+  CodeGraphStats,
   ScanOptions,
 } from './knowledge/codegraph.js';
 export { createCodeGraphWatcher } from './knowledge/watch.js';
@@ -93,8 +94,36 @@ export type {
   OrchestratorEventType,
   RunStatus,
   ReviewCriterion,
+  AcceptanceSnapshot,
   InboxItemSnapshot,
 } from './run-events.js';
+
+// ── Long-running run state ──────────────────────────────────────────────────
+export {
+  acceptanceProgress,
+  applyStructuredReview,
+  createAcceptanceCriteria,
+} from './acceptance.js';
+export type {
+  AcceptanceCriterion,
+  AcceptanceEvidence,
+  AcceptanceProgress,
+  AcceptanceSource,
+  AcceptanceStatus,
+  CreateAcceptanceInput,
+} from './acceptance.js';
+export { createIteration, finishIteration } from './iterations.js';
+export type { IterationSnapshot, IterationStatus } from './iterations.js';
+export { answerRiskGate, createRiskGate } from './risk-gates.js';
+export type { RiskGateReason, RiskGateSnapshot, RiskGateStatus } from './risk-gates.js';
+export { createReportArtifact } from './reports.js';
+export type { ReportArtifact, ReportKind } from './reports.js';
+export {
+  createKnowledgeEvent,
+  knowledgeEventToWikiEntry,
+  renderKnowledgeEventsMarkdown,
+} from './knowledge/events.js';
+export type { KnowledgeEvent, KnowledgeEventKind } from './knowledge/events.js';
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export { Orchestrator, parseReview, parseStructuredReview } from './orchestrator.js';

@@ -17,7 +17,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export type ControlCommandKind = 'stop' | 'pause' | 'resume' | 'input';
+export type ControlCommandKind = 'stop' | 'pause' | 'resume' | 'input' | 'answer-gate' | 'edit-criteria';
 
 export interface ControlCommand {
   /** Monotonic per-run sequence; a command is applied at most once (seq > last). */
@@ -25,6 +25,12 @@ export interface ControlCommand {
   command: ControlCommandKind;
   /** For `input`: the text to append to the run's inbox. */
   text?: string;
+  /** For `answer-gate`: the gate being answered. */
+  gateId?: string;
+  /** For `answer-gate`: user's decision or instruction. */
+  answer?: string;
+  /** For `answer-gate` / `edit-criteria`: replacement acceptance criteria. */
+  criteria?: string[];
 }
 
 export interface ControlSource {
@@ -43,14 +49,24 @@ export type ControlPoll = (tick: () => void) => () => void;
 export function isValidControlCommand(value: unknown): value is ControlCommand {
   if (!value || typeof value !== 'object') return false;
   const c = value as Partial<ControlCommand>;
-  return (
-    typeof c.seq === 'number' &&
-    (c.command === 'stop' ||
-      c.command === 'pause' ||
-      c.command === 'resume' ||
-      c.command === 'input') &&
-    (c.text === undefined || typeof c.text === 'string')
-  );
+  if (typeof c.seq !== 'number') return false;
+  if (c.command === 'stop' || c.command === 'pause' || c.command === 'resume') {
+    return c.text === undefined && c.gateId === undefined && c.answer === undefined && c.criteria === undefined;
+  }
+  if (c.command === 'input') {
+    return c.text === undefined || typeof c.text === 'string';
+  }
+  if (c.command === 'answer-gate') {
+    return (
+      typeof c.gateId === 'string' &&
+      typeof c.answer === 'string' &&
+      (c.criteria === undefined || (Array.isArray(c.criteria) && c.criteria.every((item) => typeof item === 'string')))
+    );
+  }
+  if (c.command === 'edit-criteria') {
+    return Array.isArray(c.criteria) && c.criteria.every((item) => typeof item === 'string');
+  }
+  return false;
 }
 
 /** In-memory {@link ControlSource} for tests. */

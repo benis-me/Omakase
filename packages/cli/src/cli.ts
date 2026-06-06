@@ -14,6 +14,7 @@ import {
   MemoryRunStore,
   Orchestrator,
   createModelPolicy,
+  projectKnowledgeStore,
   type OrchestrationRequest,
   type WorkMode,
 } from '@omakase/core';
@@ -28,6 +29,7 @@ import {
   type DaemonInfo,
 } from './daemon-control.js';
 import { RunControllerClient } from './run-client.js';
+import { startReadOnlyServer } from './read-only-server.js';
 import type { LaunchTuiOptions } from './tui/index.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
@@ -380,13 +382,16 @@ export function createCli(deps: CliDeps = {}): Cli {
     await ensure(cwd, serveArgs);
     const stop = deps.stopDaemon ?? ((c: string) => stopDaemon(c));
 
+    const runStore = new FileRunStore(runsDir);
+    const knowledgeStore = projectKnowledgeStore(cwd);
     const client = new RunControllerClient({
-      store: new FileRunStore(runsDir),
+      store: runStore,
       controlDir: runsDir,
       queueDir,
     });
+    const readOnlyServer = await startReadOnlyServer({ store: runStore, knowledgeStore });
     // Submit the initial task (if any) so the daemon starts it; the App attaches.
-    const token = task.trim() ? await client.submit(task.trim()) : undefined;
+    const token = task.trim() ? await client.submit(task.trim(), ab.agentOverride) : undefined;
 
     // Local agent detection for the dashboard (cheap, no run involved).
     const runtime = createRuntime();
@@ -410,17 +415,22 @@ export function createCli(deps: CliDeps = {}): Cli {
         const { launchTui } = await import('./tui/index.js');
         await launchTui(opts);
       });
-    await launch({
-      client,
-      cwd,
-      mode: baseMode,
-      detect,
-      daemonStatus: () => daemonStatus(cwd),
-      stopDaemon: () => stop(cwd),
-      startDaemon: () => ensure(cwd, serveArgs),
-      ...(task.trim() ? { task: task.trim() } : {}),
-      ...(token ? { token } : {}),
-    });
+    try {
+      await launch({
+        client,
+        cwd,
+        mode: baseMode,
+        detect,
+        daemonStatus: () => daemonStatus(cwd),
+        stopDaemon: () => stop(cwd),
+        startDaemon: () => ensure(cwd, serveArgs),
+        readOnlyUrl: readOnlyServer.url,
+        ...(task.trim() ? { task: task.trim() } : {}),
+        ...(token ? { token } : {}),
+      });
+    } finally {
+      await readOnlyServer.close();
+    }
     return 0;
   }
 

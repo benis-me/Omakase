@@ -170,6 +170,103 @@ describe('view-model', () => {
     ]);
   });
 
+  it('keeps rich knowledge/codegraph state in the view-model', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'knowledge-updated',
+      wikiEntries: 8,
+      codegraphFiles: 3,
+      codegraph: {
+        files: 3,
+        internalEdges: 2,
+        externalEdges: 1,
+        symbols: 9,
+        cycles: 0,
+        byLanguage: { typescript: 3 },
+      },
+    } as any);
+
+    expect(view.wikiEntries).toBe(8);
+    expect((view as any).codegraphStats).toMatchObject({
+      files: 3,
+      internalEdges: 2,
+      externalEdges: 1,
+      symbols: 9,
+      cycles: 0,
+    });
+    expect(view.activity.at(-1)).toContain('3 files');
+    expect(view.activity.at(-1)).toContain('2 internal');
+    expect(view.activity.at(-1)).toContain('9 symbols');
+  });
+
+  it('folds acceptance and iteration state for TUI workspaces', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'acceptance-updated',
+      acceptance: {
+        criteria: [
+          {
+            id: 'criterion-1',
+            title: 'feature works',
+            description: 'feature works',
+            status: 'pass',
+            evidence: [],
+            source: 'planner',
+            createdAt: 0,
+            updatedAt: 1,
+          },
+          {
+            id: 'criterion-2',
+            title: 'tests pass',
+            description: 'tests pass',
+            status: 'fail',
+            evidence: [{ text: 'missing regression test', taskId: 'review-1', createdAt: 1 }],
+            source: 'planner',
+            createdAt: 0,
+            updatedAt: 1,
+          },
+        ],
+        progress: { passed: 1, total: 2, complete: false },
+      },
+    });
+    view = reduceRunView(view, {
+      type: 'iteration-updated',
+      iteration: {
+        id: 'iteration-1',
+        index: 1,
+        status: 'complete',
+        reason: 'initial-plan',
+        taskIds: ['task-1', 'task-2'],
+        reviewSummary: '1/2 criteria passed',
+        failedCriteria: ['tests pass'],
+        nextStrategy: 'replan',
+        startedAt: 0,
+        finishedAt: 2,
+      },
+      iterations: [
+        {
+          id: 'iteration-1',
+          index: 1,
+          status: 'complete',
+          reason: 'initial-plan',
+          taskIds: ['task-1', 'task-2'],
+          reviewSummary: '1/2 criteria passed',
+          failedCriteria: ['tests pass'],
+          nextStrategy: 'replan',
+          startedAt: 0,
+          finishedAt: 2,
+        },
+      ],
+    });
+
+    expect(view.acceptance?.progress).toEqual({ passed: 1, total: 2, complete: false });
+    expect(view.iterations[0]?.nextStrategy).toBe('replan');
+    expect(view.events).toEqual([
+      '□ acceptance: 1/2 complete',
+      '↺ iteration 1 complete: initial-plan → replan',
+    ]);
+  });
+
   it('sanitizes raw command tool names in phrases while keeping tool counts', () => {
     let view = initialRunView('normal');
     view = reduceRunView(view, {
@@ -201,9 +298,8 @@ describe('view-model', () => {
     } as any);
 
     expect(view.tasks[0]?.toolCount).toBe(1);
-    expect(view.phrases.at(-1)).toBe('worker/codex tool: tool');
+    expect(view.phrases.at(-1)).toBe('worker/codex tool: shell: sed -n 1,260p file');
     expect(view.phrases.join('\n')).not.toContain('/bin/zsh');
-    expect(view.phrases.join('\n')).not.toContain('sed -n');
   });
 
   it('formats event lines for humans', () => {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -110,6 +110,117 @@ describe('orchestrator cross-run knowledge persistence', () => {
     // A second run loads the persisted wiki and adds to it.
     const second = await makeOrch().start({ prompt: '- task c' }).result;
     expect(second.wiki.entries.length).toBeGreaterThan(firstEntries);
+  });
+
+  it('keeps task wiki entries distinct when task ids repeat across runs', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-proj-tasks-'));
+    const knowledgeStore = projectKnowledgeStore(cwd);
+    const shared = runtime();
+
+    const makeOrch = () =>
+      new Orchestrator({
+        runtime: shared,
+        router: complexRouter,
+        policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+        store: new MemoryRunStore(),
+        knowledgeStore,
+        clock: () => 0,
+        detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      });
+
+    await makeOrch().start({ prompt: '- first durable task' }).result;
+    await makeOrch().start({ prompt: '- second durable task' }).result;
+
+    const stored = await knowledgeStore.loadWiki();
+    const taskTitles = (stored?.entries ?? [])
+      .filter((entry) => entry.kind === 'task')
+      .map((entry) => entry.title);
+    expect(taskTitles.join('\n')).toContain('first durable task');
+    expect(taskTitles.join('\n')).toContain('second durable task');
+  });
+
+  it('emits codegraph stats with knowledge updates', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-proj-codegraph-'));
+    const src = path.join(cwd, 'src');
+    await import('node:fs/promises').then((fs) => fs.mkdir(src, { recursive: true }));
+    writeFileSync(path.join(src, 'a.ts'), "import { b } from './b';\nexport const a = b;\n");
+    writeFileSync(path.join(src, 'b.ts'), 'export const b = 1;\n');
+    const codegraph = await CodeGraph.scan({ root: cwd });
+
+    const orch = new Orchestrator({
+      runtime: runtime(),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      knowledgeStore: projectKnowledgeStore(cwd),
+      codegraph,
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+    const result = await orch.start({ prompt: '- task a' }).result;
+    const event = result.events.findLast((e) => e.type === 'knowledge-updated') as
+      | { type: 'knowledge-updated'; codegraph?: unknown }
+      | undefined;
+    expect(event?.codegraph).toMatchObject({
+      files: 2,
+      internalEdges: 1,
+      symbols: 2,
+      cycles: 0,
+    });
+  });
+
+  it('auto-scans codegraph for project runs with a knowledge store', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-proj-auto-codegraph-'));
+    const src = path.join(cwd, 'src');
+    await import('node:fs/promises').then((fs) => fs.mkdir(src, { recursive: true }));
+    writeFileSync(path.join(src, 'a.ts'), "import { b } from './b';\nexport const a = b;\n");
+    writeFileSync(path.join(src, 'b.ts'), 'export const b = 1;\n');
+
+    const orch = new Orchestrator({
+      runtime: runtime(),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      knowledgeStore: projectKnowledgeStore(cwd),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+    const result = await orch.start({ prompt: '- task a', cwd }).result;
+    const event = result.events.find((e) => e.type === 'knowledge-updated') as
+      | { type: 'knowledge-updated'; codegraph?: unknown }
+      | undefined;
+    expect(event?.codegraph).toMatchObject({
+      files: 2,
+      internalEdges: 1,
+      symbols: 2,
+      cycles: 0,
+    });
+    expect(existsSync(path.join(cwd, '.omakase', 'codegraph.json'))).toBe(true);
+  });
+
+  it('refreshes stale persisted codegraph snapshots at run start', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-proj-refresh-codegraph-'));
+    const knowledgeStore = projectKnowledgeStore(cwd);
+    await knowledgeStore.saveCodegraph(new CodeGraph(cwd).toJSON());
+    const src = path.join(cwd, 'src');
+    await import('node:fs/promises').then((fs) => fs.mkdir(src, { recursive: true }));
+    writeFileSync(path.join(src, 'fresh.ts'), 'export const fresh = 1;\n');
+
+    const orch = new Orchestrator({
+      runtime: runtime(),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      knowledgeStore,
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+    const result = await orch.start({ prompt: '- task a', cwd }).result;
+    const event = result.events.find((e) => e.type === 'knowledge-updated') as
+      | { type: 'knowledge-updated'; codegraph?: { files?: number } | null }
+      | undefined;
+    expect(event?.codegraph?.files).toBe(1);
+    expect((await knowledgeStore.loadCodegraph())?.nodes.map((node) => node.path)).toContain('src/fresh.ts');
   });
 
   it('records useful agent metadata in task wiki entries', async () => {

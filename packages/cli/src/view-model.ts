@@ -7,8 +7,14 @@
  */
 import type {
   AgentRole,
+  AcceptanceSnapshot,
+  CodeGraphStats,
+  IterationSnapshot,
   OrchestratorEvent,
   PlanGraphSnapshot,
+  ReportArtifact,
+  RiskGateSnapshot,
+  KnowledgeEvent,
   RouteKind,
   RunStatus,
   TaskStatus,
@@ -63,6 +69,12 @@ export interface RunView {
   activity: string[];
   wikiEntries: number;
   codegraphFiles: number | null;
+  codegraphStats: CodeGraphStats | null;
+  acceptance: AcceptanceSnapshot | null;
+  iterations: IterationSnapshot[];
+  riskGates: RiskGateSnapshot[];
+  reports: ReportArtifact[];
+  knowledgeEvents: KnowledgeEvent[];
   lastReview: { approved: boolean; notes: string } | null;
   summary: string | null;
 }
@@ -90,6 +102,12 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
     activity: [],
     wikiEntries: 0,
     codegraphFiles: null,
+    codegraphStats: null,
+    acceptance: null,
+    iterations: [],
+    riskGates: [],
+    reports: [],
+    knowledgeEvents: [],
     lastReview: null,
     summary: null,
   };
@@ -129,6 +147,20 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `↪ routed: ${event.decision.kind} — ${event.decision.reason}`;
     case 'planned':
       return `▤ planned ${event.snapshot.tasks.length} task(s)`;
+    case 'acceptance-updated':
+      return `□ acceptance: ${event.acceptance.progress.passed}/${event.acceptance.progress.total} complete`;
+    case 'iteration-updated':
+      return `↺ iteration ${event.iteration.index} ${event.iteration.status}: ${event.iteration.reason}${
+        event.iteration.nextStrategy ? ` → ${event.iteration.nextStrategy}` : ''
+      }`;
+    case 'risk-gate-opened':
+      return `⚠ gate opened: ${event.gate.reason}`;
+    case 'risk-gate-answered':
+      return `✓ gate answered: ${event.gate.id}`;
+    case 'report-created':
+      return `▣ report: ${event.report.title}`;
+    case 'knowledge-event-created':
+      return `◇ knowledge event: ${event.event.title}`;
     case 'task-status':
       return `  · ${event.title}: ${event.from} → ${event.to}`;
     case 'task-finished':
@@ -138,7 +170,9 @@ export function formatEventLine(event: OrchestratorEvent): string {
     case 'replanned':
       return `↻ replanned (${event.reason})`;
     case 'knowledge-updated':
-      return `  ⌕ knowledge: ${event.wikiEntries} wiki entries${event.codegraphFiles != null ? `, ${event.codegraphFiles} files` : ''}`;
+      return event.codegraph
+        ? `  ⌕ knowledge: ${event.wikiEntries} wiki entries, ${event.codegraph.files} files, ${event.codegraph.internalEdges} internal, ${event.codegraph.externalEdges} external, ${event.codegraph.symbols} symbols, ${event.codegraph.cycles} cycles`
+        : `  ⌕ knowledge: ${event.wikiEntries} wiki entries${event.codegraphFiles != null ? `, ${event.codegraphFiles} files` : ''}`;
     case 'budget-exhausted':
       return `⛔ budget exhausted: ${event.spentTokens} tokens, $${event.spentCostUsd.toFixed(2)} spent`;
     case 'user-input':
@@ -211,7 +245,36 @@ function tokensOf(usage: { totalTokens?: number; inputTokens?: number; outputTok
 
 function safeToolLabel(name: string | null | undefined, id: string | null | undefined): string {
   const raw = name ?? id ?? 'tool';
-  return /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/.test(raw) ? raw : 'tool';
+  if (/^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/.test(raw)) return raw;
+  const shell = parseShellInvocation(raw);
+  if (shell) return `shell: ${shortenToolCommand(shell)}`;
+  const first = raw.trim().split(/\s+/)[0] ?? '';
+  const base = first.split('/').filter(Boolean).at(-1);
+  return base && /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/.test(base) ? base : 'tool';
+}
+
+function parseShellInvocation(raw: string): string | null {
+  const trimmed = raw.trim();
+  const match = /^(?:\/[^\s]+\/)?(?:zsh|bash|sh)\s+-lc\s+([\s\S]+)$/.exec(trimmed);
+  if (!match) return null;
+  return stripOuterQuotes(match[1]!.trim());
+}
+
+function stripOuterQuotes(value: string): string {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
+}
+
+function shortenToolCommand(command: string): string {
+  const compact = command.replace(/\s+/g, ' ').trim();
+  if (compact.length <= 72) return compact;
+  return `${compact.slice(0, 69).trimEnd()}...`;
 }
 
 export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView {
@@ -232,6 +295,18 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
       return { ...next, route: { kind: event.decision.kind, reason: event.decision.reason } };
     case 'planned':
       return derive({ ...next, tasks: upsertTasks(view.tasks, event.snapshot) });
+    case 'acceptance-updated':
+      return { ...next, acceptance: event.acceptance };
+    case 'iteration-updated':
+      return { ...next, iterations: event.iterations };
+    case 'risk-gate-opened':
+      return { ...next, status: 'waiting-for-user', riskGates: event.gates };
+    case 'risk-gate-answered':
+      return { ...next, status: 'running', riskGates: event.gates };
+    case 'report-created':
+      return { ...next, reports: event.reports };
+    case 'knowledge-event-created':
+      return { ...next, knowledgeEvents: event.events };
     case 'replanned':
       return derive({ ...next, tasks: upsertTasks(view.tasks, event.snapshot) });
     case 'task-status': {
@@ -286,7 +361,12 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
     case 'heartbeat':
       return { ...next, updatedAt: event.at, startedAt: view.startedAt ?? event.at };
     case 'knowledge-updated':
-      return { ...next, wikiEntries: event.wikiEntries, codegraphFiles: event.codegraphFiles };
+      return {
+        ...next,
+        wikiEntries: event.wikiEntries,
+        codegraphFiles: event.codegraph?.files ?? event.codegraphFiles,
+        codegraphStats: event.codegraph ?? null,
+      };
     case 'review':
       return { ...next, lastReview: { approved: event.approved, notes: event.notes } };
     case 'paused':

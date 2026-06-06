@@ -3,7 +3,7 @@
  * and notes. The orchestrator feeds it task results and agent summaries; it
  * serializes to JSON for persistence and renders to Markdown for prompt
  * injection or human reading. Updates are incremental (task entries are
- * upserted by task id).
+ * upserted by run-scoped task id).
  */
 import { createIdGenerator, type IdGenerator } from '../ids.js';
 
@@ -32,6 +32,7 @@ export interface WikiInput {
 }
 
 export interface TaskWikiMetadata {
+  runId?: string;
   role?: string;
   agentId?: string | null;
   tokens?: number;
@@ -132,7 +133,7 @@ export class ProjectWiki {
     return this.entries.size;
   }
 
-  /** Upsert a task-status entry keyed by task id. */
+  /** Upsert a task-status entry keyed by run id + task id, falling back to task id for legacy callers. */
   recordTask(
     taskId: string,
     title: string,
@@ -140,8 +141,12 @@ export class ProjectWiki {
     summary = '',
     metadata: TaskWikiMetadata = {},
   ): WikiEntry {
-    const existingId = this.taskIndex.get(taskId);
+    const taskKey = metadata.runId ? `${metadata.runId}:${taskId}` : taskId;
+    const source = metadata.runId ? `task:${metadata.runId}:${taskId}` : `task:${taskId}`;
+    const tags = ['task', status, ...(metadata.runId ? [`run:${metadata.runId}`] : [])];
+    const existingId = this.taskIndex.get(taskKey);
     const lines = [`Status: ${status}`];
+    if (metadata.runId) lines.push(`Run: ${metadata.runId}`);
     if (metadata.role) lines.push(`Role: ${metadata.role}`);
     if (metadata.agentId) lines.push(`Agent: ${metadata.agentId}`);
     if (metadata.tokens != null) lines.push(`Tokens: ${metadata.tokens}`);
@@ -149,15 +154,15 @@ export class ProjectWiki {
     if (summary) lines.push('', summary);
     const body = lines.join('\n');
     if (existingId && this.entries.has(existingId)) {
-      return this.update(existingId, { title, body, tags: ['task', status] });
+      return this.update(existingId, { title, body, tags, source });
     }
     const entry = this.add('task', {
       title,
       body,
-      tags: ['task', status],
-      source: `task:${taskId}`,
+      tags,
+      source,
     });
-    this.taskIndex.set(taskId, entry.id);
+    this.taskIndex.set(taskKey, entry.id);
     return entry;
   }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -61,7 +61,7 @@ describe('omakase agents', () => {
     expect(code).toBe(0);
     expect(out()).toContain('ID');
     expect(out()).toContain('claude');
-    expect(out()).toMatch(/agents available/);
+    expect(out()).toMatch(/agents runnable/);
   });
 
   it('emits JSON with --json', async () => {
@@ -138,7 +138,7 @@ describe('omakase tui', () => {
   it('ensures a daemon, submits the task, and launches the client TUI', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
     let ensured: string | undefined;
-    let captured: { hasClient: boolean; task?: string; token?: string; cwd?: string; mode?: string } = {
+    let captured: { hasClient: boolean; task?: string; token?: string; cwd?: string; mode?: string; readOnlyUrl?: string } = {
       hasClient: false,
     };
     const cli = createCli({
@@ -156,6 +156,7 @@ describe('omakase tui', () => {
           token: opts.token,
           cwd: opts.cwd,
           mode: opts.mode,
+          readOnlyUrl: opts.readOnlyUrl,
         };
       },
     });
@@ -163,6 +164,7 @@ describe('omakase tui', () => {
     expect(code).toBe(0);
     expect(ensured).toBe(cwd); // a detached daemon was ensured
     expect(captured).toMatchObject({ hasClient: true, task: 'do a thing', cwd, mode: 'max-power' });
+    expect(captured.readOnlyUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
     expect(captured.token).toBeTruthy(); // initial task submitted → correlation token
     // a queue file was dropped for the daemon (no in-process Orchestrator)
     const queue = path.join(cwd, '.omakase', 'queue');
@@ -189,6 +191,22 @@ describe('omakase tui', () => {
     expect(serveArgs).toContain('codex');
     expect(serveArgs).toContain('--runs-dir');
     expect(serveArgs).toContain('--queue-dir');
+  });
+
+  it('pins the initial tui task in the queue when --agent is provided', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-agent-'));
+    const cli = createCli({
+      write: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
+      launchTui: async () => {},
+    });
+    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--agent', 'codex']);
+    const queue = path.join(cwd, '.omakase', 'queue');
+    const queued = readdirSync(queue).find((file) => file.endsWith('.prompt'));
+    expect(queued).toBeTruthy();
+    expect(readFileSync(path.join(queue, queued!), 'utf8')).toBe('@agent codex\ndo a thing');
   });
 
   it('does not hang the TUI without an interactive terminal', async () => {

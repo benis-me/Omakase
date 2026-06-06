@@ -146,6 +146,32 @@ describe('RunControllerClient', () => {
     expect(await src.read('run-x')).toMatchObject({ seq: 3, command: 'stop' });
   });
 
+  it('writes gate answers and criteria edits as monotonic control commands', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-client-gates-'));
+    const runsDir = path.join(cwd, '.omakase', 'runs');
+    const client = new RunControllerClient({
+      store: scriptedServer(cwd).store,
+      controlDir: runsDir,
+      queueDir: path.join(cwd, '.omakase', 'queue'),
+    });
+    const src = new FileControlSource(runsDir);
+
+    await client.answerGate('run-x', 'gate-1', 'continue', ['works']);
+    expect(await src.read('run-x')).toEqual({
+      seq: 1,
+      command: 'answer-gate',
+      gateId: 'gate-1',
+      answer: 'continue',
+      criteria: ['works'],
+    });
+    await client.editCriteria('run-x', ['works', 'has tests']);
+    expect(await src.read('run-x')).toEqual({
+      seq: 2,
+      command: 'edit-criteria',
+      criteria: ['works', 'has tests'],
+    });
+  });
+
   it('tail does not deliver a view after it is disposed mid-load', async () => {
     let resolveLoad!: (rec: unknown) => void;
     const store = {

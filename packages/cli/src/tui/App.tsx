@@ -53,6 +53,8 @@ export interface AppProps {
   stopDaemon?: () => Promise<unknown>;
   /** (Re)start the project's daemon. */
   startDaemon?: () => Promise<unknown>;
+  /** Read-only local report/wiki server URL. */
+  readOnlyUrl?: string;
 }
 
 /** A task's phase/stage — must match view-model's computePhases grouping. */
@@ -60,14 +62,36 @@ function stageOf(t: TaskView): string {
   return t.tags[0] ?? t.role ?? 'Plan';
 }
 
+function tasksForPhase(view: RunView | null, selectedPhase: number): {
+  phaseIdx: number;
+  stage: string | undefined;
+  tasks: TaskView[];
+} {
+  if (!view) return { phaseIdx: 0, stage: undefined, tasks: [] };
+  const phaseIdx = view.phases.length > 0 ? Math.min(selectedPhase, view.phases.length - 1) : 0;
+  const stage = view.phases[phaseIdx]?.stage;
+  return {
+    phaseIdx,
+    stage,
+    tasks: stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks,
+  };
+}
+
+function isRunnableAgent(agent: DetectedAgent): boolean {
+  return agent.available && agent.authStatus !== 'missing';
+}
+
 /** Cycle the "main agent" selection: auto → each available agent → auto. */
 function cycleAgent(current: string | null, agents: DetectedAgent[]): string | null {
-  const cycle: Array<string | null> = [null, ...agents.filter((a) => a.available).map((a) => a.id)];
+  const cycle: Array<string | null> = [null, ...agents.filter(isRunnableAgent).map((a) => a.id)];
   const idx = cycle.indexOf(current);
   return cycle[(idx + 1) % cycle.length] ?? null;
 }
 
 type Screen = 'list' | 'run';
+type FocusPane = 'plan' | 'detail';
+type Workspace = 'Plan' | 'Agents' | 'Acceptance' | 'Knowledge' | 'Reports' | 'Gate';
+const WORKSPACES: readonly Workspace[] = ['Plan', 'Agents', 'Acceptance', 'Knowledge', 'Reports', 'Gate'];
 
 function taskIcon(status: TaskView['status']): string {
   switch (status) {
@@ -120,6 +144,7 @@ export function App({
   daemonStatus,
   stopDaemon,
   startDaemon,
+  readOnlyUrl,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
@@ -131,6 +156,10 @@ export function App({
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState(0);
+  const [focusPane, setFocusPane] = useState<FocusPane>('plan');
+  const [workspace, setWorkspace] = useState<Workspace>('Plan');
+  const [selectedTask, setSelectedTask] = useState(0);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(
     () => loadTuiPreferences(cwd).selectedAgent,
   ); // null = auto
@@ -160,6 +189,10 @@ export function App({
     setAttachedId(id);
     setView(null);
     setSelectedPhase(0);
+    setFocusPane('plan');
+    setWorkspace('Plan');
+    setSelectedTask(0);
+    setExpandedTaskId(null);
     setScreen('run');
     await refreshRuns();
   };
@@ -256,6 +289,10 @@ export function App({
     attachedIdRef.current = null;
     setAttachedId(null);
     setSelectedPhase(0);
+    setFocusPane('plan');
+    setWorkspace('Plan');
+    setSelectedTask(0);
+    setExpandedTaskId(null);
     setView(pending);
     setScreen('run');
     setNotice('submitted — waiting for the daemon to start it');
@@ -282,6 +319,10 @@ export function App({
     attachedIdRef.current = null;
     setAttachedId(null);
     setView(null);
+    setFocusPane('plan');
+    setWorkspace('Plan');
+    setSelectedTask(0);
+    setExpandedTaskId(null);
     setScreen('list');
     void refreshRuns();
   };
@@ -359,10 +400,34 @@ export function App({
       }
 
       // run screen
-      if (key.upArrow) setSelectedPhase((i) => Math.max(0, i - 1));
-      else if (key.downArrow)
-        setSelectedPhase((i) => Math.min(Math.max(0, (view?.phases.length ?? 1) - 1), i + 1));
-      else if (key.escape) back();
+      const workspaceIndex = Number.parseInt(input, 10);
+      if (Number.isInteger(workspaceIndex) && workspaceIndex >= 1 && workspaceIndex <= WORKSPACES.length) {
+        setWorkspace(WORKSPACES[workspaceIndex - 1]!);
+        setFocusPane('plan');
+        return;
+      }
+      if (key.leftArrow) setFocusPane('plan');
+      else if (key.rightArrow) setFocusPane('detail');
+      else if (key.upArrow) {
+        if (focusPane === 'detail') setSelectedTask((i) => Math.max(0, i - 1));
+        else {
+          setSelectedPhase((i) => Math.max(0, i - 1));
+          setSelectedTask(0);
+          setExpandedTaskId(null);
+        }
+      } else if (key.downArrow) {
+        if (focusPane === 'detail') {
+          const taskCount = tasksForPhase(view, selectedPhase).tasks.length;
+          setSelectedTask((i) => Math.min(Math.max(0, taskCount - 1), i + 1));
+        } else {
+          setSelectedPhase((i) => Math.min(Math.max(0, (view?.phases.length ?? 1) - 1), i + 1));
+          setSelectedTask(0);
+          setExpandedTaskId(null);
+        }
+      } else if (key.return && focusPane === 'detail') {
+        const task = tasksForPhase(view, selectedPhase).tasks[selectedTask];
+        if (task) setExpandedTaskId((id) => (id === task.id ? null : task.id));
+      } else if (key.escape) back();
       else if (input === 'x' && attachedId) {
         setNotice('stopping…');
         void client.stop(attachedId);
@@ -381,7 +446,19 @@ export function App({
     { isActive: isRawModeSupported },
   );
 
-  const availableCount = agents.filter((a) => a.available).length;
+  useEffect(() => {
+    if (!view) return;
+    setSelectedPhase((i) => Math.min(Math.max(0, view.phases.length - 1), i));
+  }, [view]);
+
+  useEffect(() => {
+    if (!view) return;
+    const tasks = tasksForPhase(view, selectedPhase).tasks;
+    setSelectedTask((i) => Math.min(Math.max(0, tasks.length - 1), i));
+    if (expandedTaskId && !tasks.some((t) => t.id === expandedTaskId)) setExpandedTaskId(null);
+  }, [expandedTaskId, selectedPhase, view]);
+
+  const availableCount = agents.filter(isRunnableAgent).length;
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -398,7 +475,15 @@ export function App({
         {screen === 'list' ? (
           <RunList runs={runs} selected={selected} agents={agents} />
         ) : (
-          <RunDetail view={view} nowMs={nowMs} selectedPhase={selectedPhase} />
+          <RunDetail
+            view={view}
+            nowMs={nowMs}
+            selectedPhase={selectedPhase}
+            focusPane={focusPane}
+            workspace={workspace}
+            selectedTask={selectedTask}
+            expandedTaskId={expandedTaskId}
+          />
         )}
       </Box>
       {compose.active ? (
@@ -410,6 +495,7 @@ export function App({
         </Box>
       ) : null}
       {notice ? <Text dimColor>{notice}</Text> : null}
+      {readOnlyUrl ? <Text dimColor>web: {readOnlyUrl}</Text> : null}
       <Box justifyContent="space-between">
         <Text dimColor>{hints(compose.active, screen)}</Text>
         <Text>
@@ -425,7 +511,7 @@ export function App({
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
   if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
-  return '↑↓ plan · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [i] new · [q]uit';
+  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
 }
 
 function daemonLabel(d: DaemonStatus | null): { text: string; color: string } {
@@ -504,38 +590,43 @@ function RunList({
       <Box flexDirection="column" borderStyle="round" paddingX={1} width={28}>
         <Text bold>Agents</Text>
         {agents.length === 0 ? <Text dimColor>detecting…</Text> : null}
-        {agents.map((a) => (
-          <Text key={a.id}>
-            <Text color={a.available ? 'green' : 'gray'}>{a.available ? '●' : '○'}</Text> {a.id}
-          </Text>
-        ))}
+        {agents.map((a) => {
+          const runnable = isRunnableAgent(a);
+          const color = runnable ? 'green' : a.available ? 'yellow' : 'gray';
+          const dot = runnable ? '●' : a.available ? '◐' : '○';
+          return (
+            <Text key={a.id}>
+              <Text color={color}>{dot}</Text> {a.id}
+              {a.available && a.authStatus === 'missing' ? <Text dimColor> auth</Text> : null}
+            </Text>
+          );
+        })}
       </Box>
     </Box>
   );
 }
 
-function RunDetail({
+function knowledgeLabel(view: RunView): string | null {
+  const stats = view.codegraphStats;
+  if (view.wikiEntries === 0 && !stats && view.codegraphFiles == null) return null;
+  if (stats) {
+    return `Knowledge · ${view.wikiEntries} wiki · ${stats.files} files · ${stats.internalEdges}/${stats.externalEdges} edges · ${stats.symbols} symbols · ${stats.cycles} cycles`;
+  }
+  return `Knowledge · ${view.wikiEntries} wiki${view.codegraphFiles != null ? ` · ${view.codegraphFiles} files` : ''}`;
+}
+
+function WorkspacePane({
   view,
-  nowMs,
-  selectedPhase,
+  workspace,
+  phaseIdx,
 }: {
-  view: RunView | null;
-  nowMs: number;
-  selectedPhase: number;
+  view: RunView;
+  workspace: Workspace;
+  phaseIdx: number;
 }): React.ReactElement {
-  if (!view) return <Text dimColor>attaching…</Text>;
-  const phaseIdx = view.phases.length > 0 ? Math.min(selectedPhase, view.phases.length - 1) : 0;
-  const stage = view.phases[phaseIdx]?.stage;
-  // Show the tasks of the SELECTED phase (↑↓ moves the cursor) — matching the
-  // reference monitor where the right pane reflects the chosen phase.
-  const tasks = stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks;
-  const activity = (
-    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
-  ).slice(-10);
-  return (
-    <Box flexGrow={1}>
-      <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
-        <Text bold>Plan</Text>
+  if (workspace === 'Plan') {
+    return (
+      <>
         {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}
         {view.phases.map((p: PhaseView, i) => (
           <Text key={p.stage} color={i === phaseIdx ? 'cyan' : undefined}>
@@ -547,29 +638,148 @@ function RunDetail({
             </Text>
           </Text>
         ))}
+      </>
+    );
+  }
+  if (workspace === 'Agents') {
+    return (
+      <>
+        {view.tasks.length === 0 ? <Text dimColor>no agents yet</Text> : null}
+        {view.tasks.map((task) => (
+          <Text key={task.id}>
+            {taskIcon(task.status)} {task.agentId ?? 'unassigned'} <Text dimColor>{task.tokens} tok · {task.toolCount} tools</Text>
+          </Text>
+        ))}
+      </>
+    );
+  }
+  if (workspace === 'Acceptance') {
+    const criteria = view.acceptance?.criteria ?? [];
+    return (
+      <>
+        <Text dimColor>
+          {view.acceptance
+            ? `${view.acceptance.progress.passed}/${view.acceptance.progress.total} complete`
+            : 'no acceptance yet'}
+        </Text>
+        {criteria.map((criterion) => (
+          <Text key={criterion.id}>
+            {criterion.status === 'pass' ? <Text color="green">✓</Text> : criterion.status === 'fail' ? <Text color="red">✗</Text> : <Text dimColor>·</Text>}{' '}
+            {criterion.title.slice(0, 28)}
+          </Text>
+        ))}
+      </>
+    );
+  }
+  if (workspace === 'Knowledge') {
+    return (
+      <>
+        <Text>{knowledgeLabel(view) ?? 'No project knowledge yet'}</Text>
+        {view.knowledgeEvents.slice(-6).map((event) => (
+          <Text key={event.id}>
+            ◇ {event.title.slice(0, 28)}
+          </Text>
+        ))}
+      </>
+    );
+  }
+  if (workspace === 'Reports') {
+    return (
+      <>
+        {view.reports.length === 0 ? <Text dimColor>no reports yet</Text> : null}
+        {view.reports.slice(-8).map((report) => (
+          <Text key={report.id}>
+            ▣ {report.title.slice(0, 28)}
+          </Text>
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      {view.riskGates.length === 0 ? <Text dimColor>no open gates</Text> : null}
+      {view.riskGates.slice(-6).map((gate) => (
+        <Text key={gate.id}>
+          {gate.status === 'open' ? <Text color="yellow">⚠</Text> : <Text color="green">✓</Text>} {gate.question.slice(0, 28)}
+        </Text>
+      ))}
+    </>
+  );
+}
+
+function RunDetail({
+  view,
+  nowMs,
+  selectedPhase,
+  focusPane,
+  workspace,
+  selectedTask,
+  expandedTaskId,
+}: {
+  view: RunView | null;
+  nowMs: number;
+  selectedPhase: number;
+  focusPane: FocusPane;
+  workspace: Workspace;
+  selectedTask: number;
+  expandedTaskId: string | null;
+}): React.ReactElement {
+  if (!view) return <Text dimColor>attaching…</Text>;
+  const { phaseIdx, stage, tasks } = tasksForPhase(view, selectedPhase);
+  const activity = (
+    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
+  ).slice(-10);
+  const knowledge = knowledgeLabel(view);
+  return (
+    <Box flexGrow={1}>
+      <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
+        <Text bold color={focusPane === 'plan' ? 'cyan' : undefined}>
+          {focusPane === 'plan' ? '› ' : ''}
+          {workspace}
+        </Text>
+        <Text dimColor>{WORKSPACES.map((item, i) => `${i + 1}:${item === workspace ? `[${item}]` : item}`).join(' ')}</Text>
+        <WorkspacePane view={view} workspace={workspace} phaseIdx={phaseIdx} />
       </Box>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
         <Text bold>Activity</Text>
+        {knowledge ? <Text dimColor>{knowledge.slice(0, 82)}</Text> : null}
         {activity.length === 0 ? <Text dimColor>waiting for planner…</Text> : null}
         {activity.map((p, i) => (
           <Text key={`${i}-${p.slice(0, 12)}`} dimColor>
             {p.slice(0, 82)}
           </Text>
         ))}
-        <Text bold>
+        <Text bold color={focusPane === 'detail' ? 'cyan' : undefined}>
+          {focusPane === 'detail' ? '› ' : ''}
           Detail{stage != null ? ` · ${stage}` : ''} · {tasks.length} agents
         </Text>
-        {tasks.map((t) => {
+        {tasks.map((t, i) => {
           const el = t.startedAt != null ? fmtDuration((t.finishedAt ?? nowMs) - t.startedAt) : '—';
+          const selected = focusPane === 'detail' && i === selectedTask;
+          const expanded = expandedTaskId === t.id;
           return (
-            <Text key={t.id}>
-              {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 36)}
-              <Text dimColor>
-                {'   '}
-                {t.agentId ? `${t.agentId} · ` : ''}
-                {t.tokens} tok · {t.toolCount} tools · {el}
+            <React.Fragment key={t.id}>
+              <Text color={selected ? 'cyan' : undefined}>
+                {selected ? '›' : ' '}
+                {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 36)}
+                <Text dimColor>
+                  {'   '}
+                  {t.agentId ? `${t.agentId} · ` : ''}
+                  {t.tokens} tok · {t.toolCount} tools · {el}
+                </Text>
               </Text>
-            </Text>
+              {expanded ? (
+                <>
+                  <Text dimColor>
+                    {'   '}id: {t.id} · status: {t.status} · role: {t.role}
+                  </Text>
+                  <Text dimColor>
+                    {'   '}agent: {t.agentId ?? 'unassigned'} · tokens: {t.tokens} · tools: {t.toolCount} · time: {el}
+                  </Text>
+                  <Text dimColor>{'   '}title: {t.title}</Text>
+                </>
+              ) : null}
+            </React.Fragment>
           );
         })}
       </Box>

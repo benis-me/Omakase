@@ -27,6 +27,20 @@ import { createIdGenerator, createUniqueRunIdGenerator, type IdGenerator } from 
 import { CodeGraph } from './knowledge/codegraph.js';
 import { ProjectWiki } from './knowledge/wiki.js';
 import type { KnowledgeStore } from './knowledge/store.js';
+import {
+  acceptanceProgress,
+  applyStructuredReview,
+  createAcceptanceCriteria,
+  type AcceptanceCriterion,
+} from './acceptance.js';
+import { createIteration, finishIteration, type IterationSnapshot } from './iterations.js';
+import { answerRiskGate, createRiskGate, type RiskGateSnapshot } from './risk-gates.js';
+import { createReportArtifact, type ReportArtifact, type ReportKind } from './reports.js';
+import {
+  createKnowledgeEvent,
+  knowledgeEventToWikiEntry,
+  type KnowledgeEvent,
+} from './knowledge/events.js';
 import { BUILTIN_AGENT_ID, createModelPolicy, type ModelPolicy } from './modes/policy.js';
 import { Inbox, type InboxAppendOptions } from './inbox.js';
 import {
@@ -39,7 +53,7 @@ import { RuleRouter, createAgentRouter, type RouteDecision, type Router } from '
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
 import type { ControlPoll, ControlSource } from './supervisor/control.js';
-import type { OrchestratorEvent, ReviewCriterion, RunStatus } from './run-events.js';
+import type { AcceptanceSnapshot, OrchestratorEvent, ReviewCriterion, RunStatus } from './run-events.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
 export interface RunBudget {
@@ -53,6 +67,11 @@ export interface RunResult {
   summary: string;
   plan: RunRecord['plan'];
   wiki: RunRecord['wiki'];
+  acceptance: AcceptanceSnapshot;
+  iterations: IterationSnapshot[];
+  riskGates: RiskGateSnapshot[];
+  reports: ReportArtifact[];
+  knowledgeEvents: KnowledgeEvent[];
   events: OrchestratorEvent[];
   spentTokens: number;
   spentCostUsd: number;
@@ -100,15 +119,21 @@ export interface OrchestratorOptions {
   controlPoll?: ControlPoll;
 }
 
+const REVIEW_REJECTS =
+  /\b(reject|rejected|needs work|needs more|incomplete|not done|insufficient|revise|fail(?:ed|s)?)\b/;
+const REVIEW_APPROVES =
+  /\b(approve|approved|lgtm|looks good|pass(?:ed|es)?|complete|all good|done)\b/;
+
+function isUncertainReviewText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return text.trim().length > 0 && !REVIEW_REJECTS.test(lower) && !REVIEW_APPROVES.test(lower);
+}
+
 /** Parse a reviewer's free-form verdict. */
 export function parseReview(text: string): { approved: boolean; notes: string } {
   const lower = text.toLowerCase();
-  const rejects = /\b(reject|rejected|needs work|needs more|incomplete|not done|insufficient|revise|fail(?:ed|s)?)\b/.test(
-    lower,
-  );
-  const approves = /\b(approve|approved|lgtm|looks good|pass(?:ed|es)?|complete|all good|done)\b/.test(
-    lower,
-  );
+  const rejects = REVIEW_REJECTS.test(lower);
+  const approves = REVIEW_APPROVES.test(lower);
   const notes = text.trim();
   // Blank/no verdict is not an approval — a real reviewer always says something.
   if (notes.length === 0) return { approved: false, notes };
@@ -200,11 +225,19 @@ class RunController implements RunHandle {
   private spentTokens = 0;
   private spentCostUsd = 0;
   private budgetExhausted = false;
+  private readonly hasUserAcceptanceCriteria: boolean;
 
   private readonly stream = createPushStream<OrchestratorEvent>();
   private readonly eventLog: OrchestratorEvent[] = [];
   private readonly inbox: Inbox;
   private wiki: ProjectWiki;
+  private acceptance: AcceptanceSnapshot = { criteria: [], progress: { passed: 0, total: 0, complete: false } };
+  private iterations: IterationSnapshot[] = [];
+  private riskGates: RiskGateSnapshot[] = [];
+  private reports: ReportArtifact[] = [];
+  private knowledgeEvents: KnowledgeEvent[] = [];
+  private gateWaiter: Deferred | null = null;
+  private uncertainReviewCount = 0;
   private graph: PlanGraph;
   private routeDecision: RouteDecision | undefined;
   private available: DetectedAgent[] = [];
@@ -268,6 +301,7 @@ class RunController implements RunHandle {
     this.budget = options.budget;
     this.control = options.control;
     this.controlPoll = options.controlPoll;
+    this.hasUserAcceptanceCriteria = (request.acceptanceCriteria ?? []).some((criterion) => criterion.trim().length > 0);
     this.resuming = Boolean(resumeFrom);
     this.createdAt = resumeFrom?.createdAt ?? this.clock();
 
@@ -276,6 +310,11 @@ class RunController implements RunHandle {
       this.ids = options.idGenerator ?? createIdGenerator(resumeFrom.checkpointSeq + 1000);
       this.routeDecision = resumeFrom.routeDecision;
       this.wiki = ProjectWiki.fromJSON(resumeFrom.wiki, { clock: this.clock });
+      this.acceptance = resumeFrom.acceptance ?? this.createInitialAcceptance();
+      this.iterations = resumeFrom.iterations ? structuredClone(resumeFrom.iterations) : [];
+      this.riskGates = resumeFrom.riskGates ? structuredClone(resumeFrom.riskGates) : [];
+      this.reports = resumeFrom.reports ? structuredClone(resumeFrom.reports) : [];
+      this.knowledgeEvents = resumeFrom.knowledgeEvents ? structuredClone(resumeFrom.knowledgeEvents) : [];
       this.graph = PlanGraph.fromSnapshot(resumeFrom.plan, { clock: this.clock });
       this.inbox = Inbox.restore(resumeFrom.inbox, { clock: this.clock });
       // Drop the interrupted run's terminal run-finished marker(s) so the
@@ -306,6 +345,7 @@ class RunController implements RunHandle {
       this.wiki = new ProjectWiki({ clock: this.clock });
       this.graph = new PlanGraph({ idGenerator: this.ids, clock: this.clock });
       this.inbox = new Inbox({ clock: this.clock });
+      this.acceptance = this.createInitialAcceptance();
     }
     this.attachGraphListener();
 
@@ -338,6 +378,8 @@ class RunController implements RunHandle {
     this.cancelUnfinishedTasks();
     this.pauseGate?.resolve();
     this.pauseGate = null;
+    this.gateWaiter?.resolve();
+    this.gateWaiter = null;
   }
 
   appendUserInput(text: string, options: InboxAppendOptions = {}): void {
@@ -348,6 +390,170 @@ class RunController implements RunHandle {
   private emit(event: OrchestratorEvent): void {
     this.eventLog.push(event);
     this.stream.push(event);
+  }
+
+  private createInitialAcceptance(): AcceptanceSnapshot {
+    const criteria = createAcceptanceCriteria({
+      prompt: this.request.prompt,
+      rawCriteria: this.request.acceptanceCriteria,
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    return { criteria, progress: acceptanceProgress(criteria) };
+  }
+
+  private setAcceptance(criteria: readonly AcceptanceCriterion[]): void {
+    this.acceptance = {
+      criteria: criteria.map((criterion) => ({
+        ...criterion,
+        evidence: criterion.evidence.map((evidence) => ({ ...evidence })),
+      })),
+      progress: acceptanceProgress(criteria),
+    };
+    this.emit({ type: 'acceptance-updated', acceptance: this.acceptance });
+  }
+
+  private emitAcceptance(): void {
+    this.emit({ type: 'acceptance-updated', acceptance: this.acceptance });
+  }
+
+  private startIteration(reason: string, taskIds: readonly string[]): IterationSnapshot {
+    const iteration = createIteration({
+      index: this.iterations.length + 1,
+      reason,
+      taskIds,
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.iterations = [...this.iterations, iteration];
+    this.emit({ type: 'iteration-updated', iteration, iterations: this.iterations });
+    return iteration;
+  }
+
+  private completeIteration(iteration: IterationSnapshot): void {
+    const failedCriteria = this.acceptance.criteria
+      .filter((criterion) => criterion.status === 'fail')
+      .map((criterion) => criterion.title);
+    const nextStrategy =
+      this.cancelled ? 'cancel' : failedCriteria.length > 0 ? 'replan' : this.graph.isComplete() ? 'finish' : 'continue';
+    const updated = finishIteration(iteration, {
+      status: 'complete',
+      reviewSummary: this.computeSummary('running'),
+      failedCriteria,
+      nextStrategy,
+      clock: this.clock,
+    });
+    this.iterations = this.iterations.map((item) => (item.id === updated.id ? updated : item));
+    this.emit({ type: 'iteration-updated', iteration: updated, iterations: this.iterations });
+  }
+
+  private acceptanceCriteriaText(): string[] {
+    return this.acceptance.criteria.map((criterion) => criterion.title);
+  }
+
+  private createReport(kind: ReportKind, title: string, summary: string, markdown: string, taskId?: string): void {
+    const report = createReportArtifact({
+      runId: this.id,
+      kind,
+      title,
+      summary,
+      markdown,
+      ...(taskId ? { taskId } : {}),
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.reports = [...this.reports, report];
+    this.emit({ type: 'report-created', report, reports: this.reports });
+
+    const knowledge = createKnowledgeEvent({
+      runId: this.id,
+      kind: 'report',
+      title,
+      body: summary,
+      ...(taskId ? { taskId } : {}),
+      reportId: report.id,
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.knowledgeEvents = [...this.knowledgeEvents, knowledge];
+    const wikiEntry = knowledgeEventToWikiEntry(knowledge);
+    this.wiki.add(wikiEntry.kind, {
+      title: wikiEntry.title,
+      body: wikiEntry.body,
+      tags: wikiEntry.tags,
+      source: wikiEntry.source,
+    });
+    this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
+    this.emitKnowledge();
+  }
+
+  private createPlanningReport(): void {
+    const tasks = this.graph.tasks();
+    const summary = `Planned ${tasks.length} task(s).`;
+    const markdown = [
+      '# Planning report',
+      '',
+      summary,
+      '',
+      ...tasks.map((task) => `- ${task.id}: ${task.title} [${task.role}]`),
+    ].join('\n');
+    this.createReport('planning', 'Planning report', summary, markdown);
+  }
+
+  private createReviewReport(taskId: string, approved: boolean, notes: string): void {
+    const summary = `Review ${approved ? 'approved' : 'rejected'}: ${notes || '(no notes)'}`;
+    const markdown = [
+      '# Review report',
+      '',
+      summary,
+      '',
+      `Acceptance: ${this.acceptance.progress.passed}/${this.acceptance.progress.total}`,
+    ].join('\n');
+    this.createReport('review', 'Review report', summary, markdown, taskId);
+  }
+
+  private replaceAcceptanceCriteria(rawCriteria: readonly string[]): void {
+    const criteria = createAcceptanceCriteria({
+      prompt: this.request.prompt,
+      rawCriteria,
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    }).map((criterion) => ({ ...criterion, source: 'user' as const }));
+    this.setAcceptance(criteria);
+  }
+
+  private answerGate(gateId: string, answer: string, criteria?: readonly string[]): void {
+    const existing = this.riskGates.find((gate) => gate.id === gateId && gate.status === 'open');
+    if (!existing) return;
+    if (criteria && criteria.length > 0) this.replaceAcceptanceCriteria(criteria);
+    const updated = answerRiskGate(existing, { answer, criteria, clock: this.clock });
+    this.riskGates = this.riskGates.map((gate) => (gate.id === gateId ? updated : gate));
+    this.emit({ type: 'risk-gate-answered', gate: updated, gates: this.riskGates });
+    this.gateWaiter?.resolve();
+    this.gateWaiter = null;
+  }
+
+  private async openRiskGate(input: {
+    reason: RiskGateSnapshot['reason'];
+    question: string;
+    taskId?: string;
+  }): Promise<RiskGateSnapshot> {
+    const gate = createRiskGate({
+      reason: input.reason,
+      question: input.question,
+      ...(input.taskId ? { taskId: input.taskId } : {}),
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.riskGates = [...this.riskGates, gate];
+    this.status = 'waiting-for-user';
+    this.gateWaiter = deferred();
+    this.emit({ type: 'risk-gate-opened', gate, gates: this.riskGates });
+    await this.checkpoint();
+    await this.gateWaiter.promise;
+    this.status = 'running';
+    await this.checkpoint();
+    return this.riskGates.find((item) => item.id === gate.id) ?? gate;
   }
 
   private attachGraphListener(): void {
@@ -443,14 +649,22 @@ class RunController implements RunHandle {
       case 'input':
         if (command.text) this.appendUserInput(command.text);
         break;
+      case 'answer-gate':
+        if (command.gateId && command.answer) this.answerGate(command.gateId, command.answer, command.criteria);
+        break;
+      case 'edit-criteria':
+        if (command.criteria) this.replaceAcceptanceCriteria(command.criteria);
+        break;
     }
   }
 
   private emitKnowledge(): void {
+    const codegraph = this.codegraph ? this.codegraph.stats() : null;
     this.emit({
       type: 'knowledge-updated',
       wikiEntries: this.wiki.size,
-      codegraphFiles: this.codegraph ? this.codegraph.size : null,
+      codegraphFiles: codegraph ? codegraph.files : null,
+      codegraph,
     });
   }
 
@@ -598,7 +812,7 @@ class RunController implements RunHandle {
         .filter((t): t is TaskNode => Boolean(t))
         .map((t) => `- ${t.title}: ${t.result?.summary ?? '(no summary)'}`)
         .join('\n');
-      const criteria = this.request.acceptanceCriteria ?? [];
+      const criteria = this.acceptanceCriteriaText();
       if (criteria.length > 0) {
         return [
           'You are reviewing completed work against acceptance criteria.',
@@ -644,6 +858,7 @@ class RunController implements RunHandle {
       // would make the persisted sequence self-contradictory.
       if (!this.resuming) {
         this.emit({ type: 'run-started', runId: this.id, request: this.request, mode: this.mode });
+        this.emitAcceptance();
         // Persist immediately so detached clients can correlate the queue token
         // and show the run before routing/planning has produced any tasks.
         await this.checkpointProgress();
@@ -657,7 +872,13 @@ class RunController implements RunHandle {
         });
       }
       this.available = await this.detectAvailable();
-      if (!this.resuming) await this.loadPersistedKnowledge();
+      if (!this.resuming) {
+        await this.loadPersistedKnowledge();
+        if (this.wiki.size > 0 || this.codegraph) {
+          this.emitKnowledge();
+          await this.checkpoint();
+        }
+      }
 
       if (!this.resuming) {
         await this.hooks.emit('beforeRoute', { request: this.request });
@@ -666,12 +887,21 @@ class RunController implements RunHandle {
         this.emit({ type: 'routed', decision: this.routeDecision });
 
         if (this.routeDecision.kind === 'simple') {
-          this.graph.addTask({
+          const worker = this.graph.addTask({
             title: 'Handle request',
             description: this.request.prompt,
             role: 'worker',
             tags: ['simple'],
           });
+          if (this.hasUserAcceptanceCriteria) {
+            this.graph.addTask({
+              title: 'Review and verify the work',
+              description: 'Review the completed work against the acceptance criteria.',
+              role: 'reviewer',
+              dependsOn: [worker.id],
+              tags: ['Review'],
+            });
+          }
         } else {
           this.graph = this.defaultPlanner
             ? await this.planWithDefaultPlanner()
@@ -691,10 +921,12 @@ class RunController implements RunHandle {
           this.attachGraphListener();
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         }
+        this.createPlanningReport();
       }
 
       await this.checkpoint();
       await this.loop();
+      this.applyImplicitAcceptanceIfNeeded();
 
       const status = this.computeFinalStatus();
       this.status = status;
@@ -758,7 +990,15 @@ class RunController implements RunHandle {
         break;
       }
 
-      await this.runBatch(ready);
+      const iteration = this.startIteration(
+        iterations === 0 ? 'initial-plan' : 'continue',
+        ready.map((task) => task.id),
+      );
+      try {
+        await this.runBatch(ready);
+      } finally {
+        this.completeIteration(iteration);
+      }
       iterations += 1;
     }
   }
@@ -843,6 +1083,7 @@ class RunController implements RunHandle {
       .catch(() => undefined);
 
     this.wiki.recordTask(task.id, task.title, result.status, result.text.slice(0, 500), {
+      runId: this.id,
       role: task.role,
       agentId: assignment.agentId,
       tokens: usageTokens(result.usage),
@@ -881,11 +1122,24 @@ class RunController implements RunHandle {
         else this.graph.setStatus(task.id, 'failed');
         return;
       }
-      const criteria = this.request.acceptanceCriteria ?? [];
+      const criteria = this.acceptanceCriteriaText();
+      const hasStructuredVerdict = criteria.length > 0 && Boolean(extractJsonArray(result.text));
+      const uncertain = !hasStructuredVerdict && isUncertainReviewText(result.text);
       const review =
-        criteria.length > 0
-          ? parseStructuredReview(result.text, criteria)
-          : { ...parseReview(result.text), criteria: undefined as ReviewCriterion[] | undefined };
+        uncertain && criteria.length > 0
+          ? {
+              approved: false,
+              criteria: criteria.map((criterion) => ({
+                criterion,
+                met: false,
+                note: 'Reviewer could not verify this criterion.',
+              })),
+              notes: result.text.trim(),
+            }
+          : criteria.length > 0
+            ? parseStructuredReview(result.text, criteria)
+            : { ...parseReview(result.text), criteria: undefined as ReviewCriterion[] | undefined };
+      this.uncertainReviewCount = uncertain ? this.uncertainReviewCount + 1 : 0;
       this.graph.setResult(task.id, {
         success: review.approved,
         summary,
@@ -902,8 +1156,30 @@ class RunController implements RunHandle {
         notes: review.notes.slice(0, 300),
         ...(review.criteria ? { criteria: review.criteria } : {}),
       });
+      if (review.criteria) {
+        this.setAcceptance(
+          applyStructuredReview(this.acceptance.criteria, review.criteria, {
+            clock: this.clock,
+            taskId: task.id,
+          }),
+        );
+      }
+      this.createReviewReport(task.id, review.approved, review.notes.slice(0, 300));
       if (review.approved) this.graph.setStatus(task.id, 'succeeded');
-      else await this.handleReviewRejection(task, review.notes);
+      else if (uncertain && this.uncertainReviewCount >= 2) {
+        const gate = await this.openRiskGate({
+          reason: 'review-uncertain',
+          question: 'Reviewer could not verify the acceptance criteria twice. Continue, edit criteria, or stop?',
+          taskId: task.id,
+        });
+        if (this.cancelled) return;
+        await this.handleReviewRejection(
+          task,
+          `${review.notes}\nUser gate answer: ${gate.answer ?? '(no answer)'}`,
+        );
+      } else {
+        await this.handleReviewRejection(task, review.notes);
+      }
       return;
     }
 
@@ -970,9 +1246,13 @@ class RunController implements RunHandle {
     try {
       const wikiSnapshot = await this.knowledgeStore.loadWiki();
       if (wikiSnapshot) this.wiki = ProjectWiki.fromJSON(wikiSnapshot, { clock: this.clock });
-      if (!this.codegraph) {
+      const shouldRefreshCodegraph = !this.codegraph;
+      if (shouldRefreshCodegraph) {
         const cgSnapshot = await this.knowledgeStore.loadCodegraph();
         if (cgSnapshot) this.codegraph = CodeGraph.fromJSON(cgSnapshot);
+      }
+      if (shouldRefreshCodegraph && this.request.cwd) {
+        this.codegraph = await CodeGraph.scan({ root: this.request.cwd });
       }
     } catch {
       // Corrupt persisted knowledge is non-fatal — start from what we have.
@@ -999,6 +1279,12 @@ class RunController implements RunHandle {
         await this.knowledgeStore.saveWiki({ entries: [...byId.values()] });
       }
       if (this.codegraph) await this.knowledgeStore.saveCodegraph(this.codegraph.toJSON());
+      if (this.knowledgeEvents.length > 0) {
+        const onDisk = await this.knowledgeStore.loadKnowledgeEvents();
+        const byId = new Map(onDisk.map((event) => [event.id, event] as const));
+        for (const event of this.knowledgeEvents) byId.set(event.id, event);
+        await this.knowledgeStore.saveKnowledgeEvents([...byId.values()]);
+      }
     } catch {
       // Best-effort persistence; never fail a run over it.
     }
@@ -1033,7 +1319,8 @@ class RunController implements RunHandle {
     if (this.finished) return; // never overwrite the terminal record
     this.checkpointSeq += 1;
     this.emit({ type: 'heartbeat', at: this.clock() });
-    await this.store.save(this.buildRecord('running', this.computeSummary('running')));
+    const status = this.status === 'waiting-for-user' ? 'waiting-for-user' : 'running';
+    await this.store.save(this.buildRecord(status, this.computeSummary(status)));
     await this.persistKnowledge();
   }
 
@@ -1041,14 +1328,34 @@ class RunController implements RunHandle {
     if (this.finished) return;
     this.checkpointSeq += 1;
     this.emit({ type: 'heartbeat', at: this.clock() });
-    await this.store.save(this.buildRecord('running', this.computeSummary('running'))).catch(() => undefined);
+    const status = this.status === 'waiting-for-user' ? 'waiting-for-user' : 'running';
+    await this.store.save(this.buildRecord(status, this.computeSummary(status))).catch(() => undefined);
+  }
+
+  private applyImplicitAcceptanceIfNeeded(): void {
+    if (this.hasUserAcceptanceCriteria || !this.graph.succeeded() || this.acceptance.progress.complete) return;
+    const now = this.clock();
+    this.setAcceptance(
+      this.acceptance.criteria.map((criterion) => ({
+        ...criterion,
+        status: 'pass',
+        evidence: [
+          ...criterion.evidence,
+          { text: 'All planned tasks succeeded', createdAt: now },
+        ],
+        updatedAt: now,
+      })),
+    );
   }
 
   private computeFinalStatus(): RunStatus {
     if (this.cancelled) return 'cancelled';
     const tasks = this.graph.tasks();
     if (tasks.length === 0) return 'succeeded';
-    if (tasks.every((t) => t.status === 'succeeded')) return 'succeeded';
+    if (tasks.every((t) => t.status === 'succeeded')) {
+      if (this.hasUserAcceptanceCriteria && !this.acceptance.progress.complete) return 'incomplete';
+      return 'succeeded';
+    }
     if (tasks.some((t) => t.status === 'failed' || t.status === 'blocked')) return 'failed';
     // Non-terminal, non-failed work remains (e.g. the iteration cap was hit):
     // the run made progress but isn't done. Distinct from a hard failure.
@@ -1070,6 +1377,11 @@ class RunController implements RunHandle {
       ...(this.routeDecision ? { routeDecision: this.routeDecision } : {}),
       plan: this.graph.snapshot(),
       wiki: this.wiki.toJSON(),
+      acceptance: this.acceptance,
+      iterations: this.iterations,
+      riskGates: this.riskGates,
+      reports: this.reports,
+      knowledgeEvents: this.knowledgeEvents,
       inbox: this.inbox.snapshot(),
       events: this.eventLog,
       summary,
@@ -1090,6 +1402,11 @@ class RunController implements RunHandle {
       summary,
       plan: this.graph.snapshot(),
       wiki: this.wiki.toJSON(),
+      acceptance: this.acceptance,
+      iterations: this.iterations,
+      riskGates: this.riskGates,
+      reports: this.reports,
+      knowledgeEvents: this.knowledgeEvents,
       events: [...this.eventLog],
       spentTokens: this.spentTokens,
       spentCostUsd: this.spentCostUsd,

@@ -47,6 +47,42 @@ function sampleView(): RunView {
   };
 }
 
+function multiAgentView(): RunView {
+  return {
+    ...sampleView(),
+    tasks: [
+      {
+        id: 't1',
+        title: 'first focused agent',
+        role: 'worker',
+        status: 'running',
+        tags: ['logic'],
+        tokens: 10,
+        toolCount: 1,
+        startedAt: 0,
+        finishedAt: null,
+        agentId: 'codex',
+      },
+      {
+        id: 't2',
+        title: 'second focused agent',
+        role: 'reviewer',
+        status: 'running',
+        tags: ['logic'],
+        tokens: 5,
+        toolCount: 0,
+        startedAt: 0,
+        finishedAt: null,
+        agentId: 'claude',
+      },
+    ],
+    phases: [{ stage: 'logic', done: 0, total: 2 }],
+    activeAgents: 2,
+    totalAgents: 2,
+    totalTokens: 15,
+  };
+}
+
 function viewForRun(id: string, title: string): RunView {
   return {
     ...sampleView(),
@@ -74,6 +110,8 @@ function fakeClient(overrides: Partial<RunControllerClient> = {}): RunController
     pause: vi.fn(async () => {}),
     resume: vi.fn(async () => {}),
     sendInput: vi.fn(async () => {}),
+    answerGate: vi.fn(async () => {}),
+    editCriteria: vi.fn(async () => {}),
     ...overrides,
   } as unknown as RunControllerClient;
 }
@@ -105,6 +143,75 @@ describe('TUI App (persistent client)', () => {
     expect(frame).toContain('120 tok');
     expect(frame).toContain('2 tools');
     expect(frame).toMatch(/agents ·/); // header N/M agents · elapsed
+    unmount();
+  });
+
+  it('shows the read-only server URL and switches workspaces', async () => {
+    const rich: RunView = {
+      ...sampleView(),
+      acceptance: {
+        criteria: [
+          {
+            id: 'criterion-1',
+            title: 'feature works',
+            description: 'feature works',
+            status: 'pass',
+            evidence: [],
+            source: 'planner',
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+        progress: { passed: 1, total: 1, complete: true },
+      },
+      reports: [
+        {
+          id: 'report-1',
+          runId: 'r1',
+          kind: 'planning',
+          title: 'Planning report',
+          summary: 'planned one task',
+          markdown: '# Planning report',
+          taskId: null,
+          createdAt: 0,
+        },
+      ],
+      riskGates: [
+        {
+          id: 'gate-1',
+          status: 'open',
+          reason: 'review-uncertain',
+          question: 'Continue?',
+          answer: null,
+          criteria: null,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    };
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(rich);
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" readOnlyUrl="http://127.0.0.1:4555" />,
+    );
+    await tick();
+    expect(lastFrame() ?? '').toContain('web: http://127.0.0.1:4555');
+    stdin.write('3');
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('Acceptance');
+    expect(lastFrame() ?? '').toContain('feature works');
+    stdin.write('5');
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('Reports');
+    expect(lastFrame() ?? '').toContain('Planning report');
+    stdin.write('6');
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('Gate');
+    expect(lastFrame() ?? '').toContain('Continue?');
     unmount();
   });
 
@@ -402,6 +509,54 @@ describe('TUI App (persistent client)', () => {
     expect(frame).toContain('Detail · review');
     expect(frame).toContain('review it');
     expect(frame).not.toContain('build it');
+    unmount();
+  });
+
+  it('←→ switches focus between Plan and Detail panes', async () => {
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(multiAgentView());
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" />,
+    );
+    await tick();
+    expect(lastFrame() ?? '').toContain('› Plan');
+    stdin.write('[C'); // right arrow
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('› Detail');
+    stdin.write('[D'); // left arrow
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('› Plan');
+    unmount();
+  });
+
+  it('Detail focus can select and expand an agent row', async () => {
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(multiAgentView());
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" />,
+    );
+    await tick();
+    stdin.write('[C'); // focus Detail
+    await tick(20);
+    stdin.write('[B'); // select second agent row
+    await tick(20);
+    stdin.write('\r'); // expand
+    await tick(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('second focused agent');
+    expect(frame).toContain('id: t2');
+    expect(frame).toContain('status: running');
+    expect(frame).toContain('agent: claude');
+    expect(frame).toContain('tokens: 5');
+    expect(frame).toContain('tools: 0');
     unmount();
   });
 });

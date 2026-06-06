@@ -15,6 +15,7 @@ import { FileRunStore, MemoryRunStore } from '../src/supervisor/run-store.js';
 import {
   FakeControlSource,
   FileControlSource,
+  isValidControlCommand,
   writeControl,
   type ControlPoll,
 } from '../src/supervisor/control.js';
@@ -217,6 +218,22 @@ describe('control across resume/restart', () => {
 });
 
 describe('FileControlSource', () => {
+  it('validates gate-answer and criteria-edit commands', () => {
+    expect(isValidControlCommand({
+      seq: 1,
+      command: 'answer-gate',
+      gateId: 'gate-1',
+      answer: 'continue',
+    })).toBe(true);
+    expect(isValidControlCommand({
+      seq: 2,
+      command: 'edit-criteria',
+      criteria: ['works', 'has tests'],
+    })).toBe(true);
+    expect(isValidControlCommand({ seq: 3, command: 'answer-gate' })).toBe(false);
+    expect(isValidControlCommand({ seq: 4, command: 'edit-criteria', criteria: [1] })).toBe(false);
+  });
+
   it('round-trips a command written atomically and tolerates missing/torn files', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-control-'));
     const src = new FileControlSource(dir);

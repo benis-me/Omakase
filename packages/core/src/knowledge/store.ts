@@ -11,6 +11,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CodeGraphSnapshot } from './codegraph.js';
 import { ProjectWiki, type WikiEntry, type WikiSnapshot } from './wiki.js';
+import { renderKnowledgeEventsMarkdown, type KnowledgeEvent } from './events.js';
 
 export interface KnowledgeStore {
   loadWiki(): Promise<WikiSnapshot | null>;
@@ -22,6 +23,8 @@ export interface KnowledgeStore {
    * stores that don't implement it fall back to caller-side load+merge+save.
    */
   mergeWiki?(entries: WikiEntry[]): Promise<void>;
+  loadKnowledgeEvents(): Promise<KnowledgeEvent[]>;
+  saveKnowledgeEvents(events: KnowledgeEvent[]): Promise<void>;
   loadCodegraph(): Promise<CodeGraphSnapshot | null>;
   saveCodegraph(snapshot: CodeGraphSnapshot): Promise<void>;
 }
@@ -53,6 +56,22 @@ function isCodegraphSnapshot(value: unknown): value is CodeGraphSnapshot {
       Array.isArray((n as { imports?: unknown }).imports) &&
       Array.isArray((n as { exports?: unknown }).exports) &&
       Array.isArray((n as { symbols?: unknown }).symbols),
+  );
+}
+
+function isKnowledgeEventArray(value: unknown): value is KnowledgeEvent[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (event) =>
+        Boolean(event) &&
+        typeof (event as KnowledgeEvent).id === 'string' &&
+        typeof (event as KnowledgeEvent).runId === 'string' &&
+        typeof (event as KnowledgeEvent).kind === 'string' &&
+        typeof (event as KnowledgeEvent).title === 'string' &&
+        typeof (event as KnowledgeEvent).body === 'string' &&
+        typeof (event as KnowledgeEvent).createdAt === 'number',
+    )
   );
 }
 
@@ -121,6 +140,16 @@ export class FileKnowledgeStore implements KnowledgeStore {
     const byId = new Map((onDisk?.entries ?? []).map((e) => [e.id, e] as const));
     for (const entry of entries) byId.set(entry.id, entry);
     await this.saveWiki({ entries: [...byId.values()] });
+  }
+
+  async loadKnowledgeEvents(): Promise<KnowledgeEvent[]> {
+    const value = await this.readJson('knowledge-events.json');
+    return isKnowledgeEventArray(value) ? value : [];
+  }
+
+  async saveKnowledgeEvents(events: KnowledgeEvent[]): Promise<void> {
+    await this.writeJson('knowledge-events.json', events);
+    await this.writeText('knowledge-events.md', renderKnowledgeEventsMarkdown(events));
   }
 
   async loadCodegraph(): Promise<CodeGraphSnapshot | null> {

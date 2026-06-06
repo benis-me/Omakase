@@ -55,6 +55,15 @@ export interface CodeGraphSnapshot {
   nodes: CodeNode[];
 }
 
+export interface CodeGraphStats {
+  files: number;
+  internalEdges: number;
+  externalEdges: number;
+  symbols: number;
+  cycles: number;
+  byLanguage: Record<string, number>;
+}
+
 export interface ScanOptions {
   root: string;
   include?: RegExp;
@@ -424,13 +433,7 @@ export class CodeGraph {
     return found;
   }
 
-  stats(): {
-    files: number;
-    internalEdges: number;
-    externalEdges: number;
-    symbols: number;
-    byLanguage: Record<string, number>;
-  } {
+  stats(): CodeGraphStats {
     let internalEdges = 0;
     let externalEdges = 0;
     let symbols = 0;
@@ -443,7 +446,14 @@ export class CodeGraph {
         else if (edge.to) internalEdges += 1;
       }
     }
-    return { files: this.nodes.size, internalEdges, externalEdges, symbols, byLanguage };
+    return {
+      files: this.nodes.size,
+      internalEdges,
+      externalEdges,
+      symbols,
+      cycles: this.cycles().length,
+      byLanguage,
+    };
   }
 
   toJSON(): CodeGraphSnapshot {

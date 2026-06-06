@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL_OPTION, parseLineSeparatedModels } from '../shared.js';
+import { DEFAULT_MODEL_OPTION, parseStrictLineSeparatedModels } from '../shared.js';
 import type { RuntimeAgentDef } from '../types.js';
 
 export const cursorAgentDef: RuntimeAgentDef = {
@@ -7,7 +7,7 @@ export const cursorAgentDef: RuntimeAgentDef = {
   bin: 'cursor-agent',
   binEnvVar: 'CURSOR_AGENT_BIN',
   versionArgs: ['--version'],
-  listModels: { args: ['models'], parse: parseLineSeparatedModels, timeoutMs: 8000 },
+  listModels: { args: ['models'], parse: parseStrictLineSeparatedModels, timeoutMs: 8000 },
   fallbackModels: [DEFAULT_MODEL_OPTION],
   buildArgs(_prompt, _imagePaths, _extraAllowedDirs = [], options = {}) {
     const args = ['--print', '--output-format', 'text'];

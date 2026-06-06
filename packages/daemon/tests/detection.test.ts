@@ -7,6 +7,7 @@ import { AgentSpawnError } from '../src/runtime/errors.js';
 import { resolveExecutable } from '../src/runtimes/executables.js';
 import { createRegistry, RuntimeRegistry } from '../src/runtimes/registry.js';
 import { claudeAgentDef } from '../src/runtimes/defs/claude.js';
+import { cursorAgentDef } from '../src/runtimes/defs/cursor-agent.js';
 import type { RuntimeAgentDef } from '../src/runtimes/types.js';
 import type { SpawnRequest, Transport } from '../src/runtime/transport.js';
 import { createFakeTransport } from '../src/testing/index.js';
@@ -177,6 +178,39 @@ describe('detectAgents', () => {
     const pi = byId.get('pi');
     expect(pi?.modelsSource).toBe('live');
     expect(pi?.models.map((m) => m.id)).toContain('anthropic/claude-sonnet-4-5');
+  });
+
+  it('filters cursor-agent login/banner noise out of live model listings', async () => {
+    makeBin('cursor-agent');
+    const registry = createRegistry([cursorAgentDef], { includeBuiltins: false });
+    const transport = createFakeTransport((ctrl) => {
+      const name = path.basename(ctrl.request.command);
+      const args = ctrl.request.args.join(' ');
+      if (name === 'cursor-agent' && args === '--version') {
+        ctrl.emitStdout('cursor-agent 1.0\n');
+        ctrl.exit(0);
+        return;
+      }
+      if (name === 'cursor-agent' && args === 'models') {
+        ctrl.emitStdout(
+          [
+            'gpt-5',
+            ')){↗↗ Cursor Agent',
+            'Press any key to sign in...',
+            'claude-sonnet-4.5',
+            'ttttt/tZZfff^>',
+          ].join('\n'),
+        );
+        ctrl.exit(0);
+        return;
+      }
+      ctrl.exit(0);
+    });
+
+    const agents = await detectAgents(registry, detectOpts({ transport }));
+    const cursor = agents[0]!;
+    expect(cursor.modelsSource).toBe('live');
+    expect(cursor.models.map((m) => m.id)).toEqual(['default', 'gpt-5', 'claude-sonnet-4.5']);
   });
 
   it('detects capabilities from --help and feeds them into buildArgs', async () => {

@@ -9,11 +9,15 @@ function pad(value: string, width: number): string {
   return value.length >= width ? value : value + ' '.repeat(width - value.length);
 }
 
+function isRunnableAgent(agent: DetectedAgent): boolean {
+  return agent.available && agent.authStatus !== 'missing';
+}
+
 export function formatAgentsTable(agents: DetectedAgent[]): string {
   const rows = agents.map((a) => ({
     id: a.id,
     name: a.name,
-    status: a.available ? 'available' : 'absent',
+    status: isRunnableAgent(a) ? 'runnable' : a.available ? 'auth-missing' : 'absent',
     version: a.version ?? '—',
     auth: a.authStatus,
     models: `${a.models.length} (${a.modelsSource})`,
@@ -30,9 +34,9 @@ export function formatAgentsTable(agents: DetectedAgent[]): string {
   for (const r of rows) {
     lines.push(cols.map((c) => pad(String(r[c]), widths[c])).join('  '));
   }
-  const availableCount = agents.filter((a) => a.available).length;
+  const availableCount = agents.filter(isRunnableAgent).length;
   lines.push('');
-  lines.push(`${availableCount}/${agents.length} agents available`);
+  lines.push(`${availableCount}/${agents.length} agents runnable`);
   // Surface why a pinned-but-unavailable agent is absent (e.g. a bad binEnvVar
   // override), so the operator isn't left guessing.
   const reasons = agents.filter((a) => !a.available && a.unavailableReason);
@@ -51,7 +55,14 @@ export function formatRunSummary(view: RunView): string {
     lines.push('Tasks:');
     for (const t of view.tasks) lines.push(`  [${t.status}] (${t.role}) ${t.title}`);
   }
-  lines.push(`Knowledge: ${view.wikiEntries} wiki entries${view.codegraphFiles != null ? `, ${view.codegraphFiles} files` : ''}`);
+  if (view.codegraphStats) {
+    const stats = view.codegraphStats;
+    lines.push(
+      `Knowledge: ${view.wikiEntries} wiki entries, ${stats.files} files, ${stats.internalEdges}/${stats.externalEdges} edges, ${stats.symbols} symbols, ${stats.cycles} cycles`,
+    );
+  } else {
+    lines.push(`Knowledge: ${view.wikiEntries} wiki entries${view.codegraphFiles != null ? `, ${view.codegraphFiles} files` : ''}`);
+  }
   if (view.summary) lines.push(view.summary);
   return lines.join('\n');
 }
