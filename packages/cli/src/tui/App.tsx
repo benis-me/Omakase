@@ -101,6 +101,11 @@ type FocusPane = 'plan' | 'detail';
 type Workspace = 'Plan' | 'Agents' | 'Acceptance' | 'Knowledge' | 'Reports' | 'Gate';
 const WORKSPACES: readonly Workspace[] = ['Plan', 'Agents', 'Acceptance', 'Knowledge', 'Reports', 'Gate'];
 type ComposeKind = 'new' | 'note' | 'criteria' | 'gate';
+const SUBMITTED_NOTICE = 'submitted — waiting for the daemon to start it';
+
+function isSubmittedNotice(notice: string | null): boolean {
+  return notice === SUBMITTED_NOTICE;
+}
 
 function taskIcon(status: TaskView['status']): string {
   switch (status) {
@@ -214,6 +219,7 @@ export function App({
     setSelectedTask(0);
     setExpandedTaskId(null);
     setScreen('run');
+    setNotice((current) => (isSubmittedNotice(current) ? null : current));
     await refreshRuns();
   };
 
@@ -315,7 +321,7 @@ export function App({
     setExpandedTaskId(null);
     setView(pending);
     setScreen('run');
-    setNotice('submitted — waiting for the daemon to start it');
+    setNotice(SUBMITTED_NOTICE);
     void refreshRuns();
     void resolveSubmittedRun(t);
   };
@@ -328,7 +334,7 @@ export function App({
         await attach(id);
         return;
       }
-      setNotice('submitted — waiting for the daemon to start it');
+      setNotice(SUBMITTED_NOTICE);
       await refreshRuns();
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -344,6 +350,7 @@ export function App({
     setSelectedTask(0);
     setExpandedTaskId(null);
     setScreen('list');
+    setNotice((current) => (isSubmittedNotice(current) ? null : current));
     void refreshRuns();
   };
 

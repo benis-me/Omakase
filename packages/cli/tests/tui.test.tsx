@@ -461,6 +461,12 @@ describe('TUI App (persistent client)', () => {
     expect(client.resolveRunId).toHaveBeenCalledTimes(2);
     expect(lastFrame() ?? '').toContain('daemon attached task');
     expect(lastFrame() ?? '').toContain('running');
+    expect(lastFrame() ?? '').not.toContain('submitted — waiting for the daemon to start it');
+
+    stdin.write('\u001b');
+    await tick(40);
+    expect(lastFrame() ?? '').toContain('Runs');
+    expect(lastFrame() ?? '').not.toContain('submitted — waiting for the daemon to start it');
     unmount();
   });
 

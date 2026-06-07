@@ -253,6 +253,7 @@ class RunController implements RunHandle {
 
   private readonly stream = createPushStream<OrchestratorEvent>();
   private readonly eventLog: OrchestratorEvent[] = [];
+  private readonly supportWork = new Set<Promise<void>>();
   private readonly inbox: Inbox;
   private wiki: ProjectWiki;
   private acceptance: AcceptanceSnapshot = { criteria: [], progress: { passed: 0, total: 0, complete: false } };
@@ -544,6 +545,25 @@ class RunController implements RunHandle {
     return { agentRunId, agentLabel: `${assignment.agentId}#${suffix}` };
   }
 
+  private launchSupportWork(phase: string, work: () => Promise<void>): void {
+    const promise = (async () => {
+      try {
+        await work();
+      } catch (err) {
+        this.emit({ type: 'error', phase, message: errorMessage(err) });
+        await this.checkpointSupportProgress().catch(() => undefined);
+      }
+    })();
+    this.supportWork.add(promise);
+    void promise.finally(() => this.supportWork.delete(promise));
+  }
+
+  private async drainSupportWork(): Promise<void> {
+    while (this.supportWork.size > 0) {
+      await Promise.allSettled([...this.supportWork]);
+    }
+  }
+
   private async runSupportAgent(
     role: Extract<AgentRole, 'reporter' | 'wiki-curator'>,
     prompt: string,
@@ -583,17 +603,18 @@ class RunController implements RunHandle {
     this.activeAborts.add(abort);
     input.signal = abort.signal;
     this.emit({ type: 'agent-assigned', role, taskId: null, title: role, assignment, ...identity });
-    await this.checkpointProgress();
+    await this.checkpointSupportProgress();
     const acc = createResultAccumulator();
     try {
       for await (const event of this.runtime.streamAgentEvents(input)) {
         acc.push(event);
         this.emit({ type: 'agent-event', role, taskId: null, assignment, ...identity, event });
-        await this.checkpointProgress();
+        await this.checkpointSupportProgress();
       }
     } catch (err) {
       const message = errorMessage(err);
       this.emit({ type: 'error', phase: role, message });
+      await this.checkpointSupportProgress().catch(() => undefined);
       return {
         assignment,
         result: {
@@ -719,6 +740,7 @@ class RunController implements RunHandle {
     });
     this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
     this.emitKnowledge();
+    await this.checkpointSupportProgress({ persistKnowledge: true });
     await this.createWikiSynthesis(`report:${kind}`, report);
   }
 
@@ -747,6 +769,7 @@ class RunController implements RunHandle {
     });
     this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
     this.emitKnowledge();
+    await this.checkpointSupportProgress({ persistKnowledge: true });
   }
 
   private async createPlanningReport(): Promise<void> {
@@ -762,6 +785,10 @@ class RunController implements RunHandle {
     await this.createReport('planning', 'Planning report', summary, markdown);
   }
 
+  private schedulePlanningReport(): void {
+    this.launchSupportWork('planning-report', () => this.createPlanningReport());
+  }
+
   private async createReviewReport(taskId: string, approved: boolean, notes: string): Promise<void> {
     const summary = `Review ${approved ? 'approved' : 'rejected'}: ${notes || '(no notes)'}`;
     const markdown = [
@@ -772,6 +799,14 @@ class RunController implements RunHandle {
       `Acceptance: ${this.acceptance.progress.passed}/${this.acceptance.progress.total}`,
     ].join('\n');
     await this.createReport('review', 'Review report', summary, markdown, taskId);
+  }
+
+  private scheduleReviewReport(taskId: string, approved: boolean, notes: string): void {
+    this.launchSupportWork('review-report', () => this.createReviewReport(taskId, approved, notes));
+  }
+
+  private scheduleWikiSynthesis(reason: string, report: ReportArtifact | null = null): void {
+    this.launchSupportWork('wiki-synthesis', () => this.createWikiSynthesis(reason, report));
   }
 
   private setPlannerAcceptanceCriteria(rawCriteria: readonly string[]): void {
@@ -1354,7 +1389,7 @@ class RunController implements RunHandle {
           this.attachGraphListener();
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         }
-        await this.createPlanningReport();
+        this.schedulePlanningReport();
       }
 
       await this.checkpoint();
@@ -1372,9 +1407,6 @@ class RunController implements RunHandle {
         tags: ['run', status],
         source: `run:${this.id}`,
       });
-      if (!this.cancelled) {
-        await this.createWikiSynthesis(`run:${status}`);
-      }
       this.finished = true;
       this.emit({ type: 'run-finished', status, summary });
       // Terminal persistence is best-effort: a disk error (ENOSPC, EACCES, a
@@ -1383,6 +1415,8 @@ class RunController implements RunHandle {
       // contradictory run-finished. persistKnowledge is already self-guarding.
       await this.store.save(this.buildRecord(status, summary)).catch(() => undefined);
       await this.persistKnowledge();
+      if (!this.cancelled) this.scheduleWikiSynthesis(`run:${status}`);
+      await this.drainSupportWork();
       return this.buildResult(status, summary);
     } catch (err) {
       // A run that already reached its terminal state must never be re-finished
@@ -1604,7 +1638,7 @@ class RunController implements RunHandle {
           }),
         );
       }
-      await this.createReviewReport(task.id, review.approved, review.notes.slice(0, 300));
+      this.scheduleReviewReport(task.id, review.approved, review.notes.slice(0, 300));
       if (review.approved) this.graph.setStatus(task.id, 'succeeded');
       else if (uncertain && this.uncertainReviewCount >= 2) {
         const gate = await this.openRiskGate({
@@ -1800,6 +1834,14 @@ class RunController implements RunHandle {
     this.emit({ type: 'heartbeat', at: this.clock() });
     const status = this.status === 'waiting-for-user' ? 'waiting-for-user' : 'running';
     await this.store.save(this.buildRecord(status, this.computeSummary(status))).catch(() => undefined);
+  }
+
+  private async checkpointSupportProgress(options: { persistKnowledge?: boolean } = {}): Promise<void> {
+    this.checkpointSeq += 1;
+    this.emit({ type: 'heartbeat', at: this.clock() });
+    const status = this.finished ? this.status : this.status === 'waiting-for-user' ? 'waiting-for-user' : 'running';
+    await this.store.save(this.buildRecord(status, this.computeSummary(status))).catch(() => undefined);
+    if (options.persistKnowledge) await this.persistKnowledge();
   }
 
   private applyImplicitAcceptanceIfNeeded(): void {

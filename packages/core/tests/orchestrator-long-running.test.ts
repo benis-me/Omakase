@@ -17,6 +17,10 @@ const complexRouter: Router = {
   route: () => ({ kind: 'complex', reason: 'complex', confidence: 1, signals: [], suggestedRole: 'worker' }),
 };
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function orchForReview(verdicts: unknown[]) {
   let reviewIndex = 0;
   const exec = createScriptedAgent((input) => {
@@ -742,5 +746,114 @@ describe('orchestrator long-running acceptance loop', () => {
     });
     expect(result.knowledgeEvents.some((event) => event.kind === 'synthesis')).toBe(true);
     expect(result.knowledgeEvents.some((event) => event.body.includes('Agent-authored project wiki'))).toBe(true);
+  });
+
+  it('does not let planning support agents block the first worker dispatch', async () => {
+    let reporterStarted!: () => void;
+    let releaseReporter!: () => void;
+    let workerStarted!: () => void;
+    const reporterStartedP = new Promise<void>((resolve) => (reporterStarted = resolve));
+    const releaseReporterP = new Promise<void>((resolve) => (releaseReporter = resolve));
+    const workerStartedP = new Promise<void>((resolve) => (workerStarted = resolve));
+    const roleCalls: string[] = [];
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        roleCalls.push(role);
+        if (role === 'reporter') {
+          reporterStarted();
+          await releaseReporterP;
+          yield { type: 'text_delta', delta: '# Planning report\n\nReporter output.' };
+          return;
+        }
+        if (role === 'wiki-curator') {
+          yield { type: 'text_delta', delta: 'Wiki output.' };
+          return;
+        }
+        workerStarted();
+        yield { type: 'text_delta', delta: 'worker done' };
+      }
+      return gen();
+    };
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: { route: () => ({ kind: 'simple', reason: 'test', confidence: 1, signals: [], suggestedRole: 'worker' }) },
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const handle = orch.start({ prompt: 'complete the main worker', metadata: { supportAgents: true } });
+    await reporterStartedP;
+    const workerStartedBeforeReporterReleased = await Promise.race([
+      workerStartedP.then(() => true),
+      delay(100).then(() => false),
+    ]);
+    releaseReporter();
+    const result = await handle.result;
+
+    expect(result.status).toBe('succeeded');
+    expect(roleCalls).toContain('worker');
+    expect(workerStartedBeforeReporterReleased).toBe(true);
+  });
+
+  it('emits terminal status before final wiki-curator support work finishes', async () => {
+    let releaseFinalWiki!: () => void;
+    let finalWikiStarted!: () => void;
+    const releaseFinalWikiP = new Promise<void>((resolve) => (releaseFinalWiki = resolve));
+    const finalWikiStartedP = new Promise<void>((resolve) => (finalWikiStarted = resolve));
+    let wikiCalls = 0;
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        if (role === 'reporter') {
+          yield { type: 'text_delta', delta: '# Planning report\n\nReporter output.' };
+          return;
+        }
+        if (role === 'wiki-curator') {
+          wikiCalls += 1;
+          if (wikiCalls >= 2) {
+            finalWikiStarted();
+            await releaseFinalWikiP;
+          }
+          yield { type: 'text_delta', delta: 'Wiki output.' };
+          return;
+        }
+        yield { type: 'text_delta', delta: 'worker done' };
+      }
+      return gen();
+    };
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: { route: () => ({ kind: 'simple', reason: 'test', confidence: 1, signals: [], suggestedRole: 'worker' }) },
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const handle = orch.start({ prompt: 'complete the main worker', metadata: { supportAgents: true } });
+    const sawRunFinishedP = (async () => {
+      for await (const event of handle.events) {
+        if (event.type === 'run-finished') return true;
+      }
+      return false;
+    })();
+
+    const finalWikiStartedBeforeTimeout = await Promise.race([
+      finalWikiStartedP.then(() => true),
+      delay(500).then(() => false),
+    ]);
+    const finishedBeforeFinalWikiReleased = await Promise.race([
+      sawRunFinishedP,
+      delay(100).then(() => false),
+    ]);
+    releaseFinalWiki();
+    const result = await handle.result;
+
+    expect(result.status).toBe('succeeded');
+    expect(finalWikiStartedBeforeTimeout).toBe(true);
+    expect(finishedBeforeFinalWikiReleased).toBe(true);
   });
 });
