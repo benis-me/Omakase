@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { CodeGraphSnapshot } from './codegraph.js';
 import { ProjectWiki, type WikiEntry, type WikiSnapshot } from './wiki.js';
 import { renderKnowledgeEventsMarkdown, type KnowledgeEvent } from './events.js';
+import { buildWikiPages, renderWikiPagesMarkdown, type WikiPage } from './pages.js';
 
 export interface KnowledgeStore {
   loadWiki(): Promise<WikiSnapshot | null>;
@@ -25,6 +26,8 @@ export interface KnowledgeStore {
   mergeWiki?(entries: WikiEntry[]): Promise<void>;
   loadKnowledgeEvents(): Promise<KnowledgeEvent[]>;
   saveKnowledgeEvents(events: KnowledgeEvent[]): Promise<void>;
+  loadWikiPages(): Promise<WikiPage[]>;
+  saveWikiPages(pages: WikiPage[]): Promise<void>;
   loadCodegraph(): Promise<CodeGraphSnapshot | null>;
   saveCodegraph(snapshot: CodeGraphSnapshot): Promise<void>;
 }
@@ -75,6 +78,23 @@ function isKnowledgeEventArray(value: unknown): value is KnowledgeEvent[] {
   );
 }
 
+function isWikiPageArray(value: unknown): value is WikiPage[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (page) =>
+        Boolean(page) &&
+        typeof (page as WikiPage).id === 'string' &&
+        typeof (page as WikiPage).title === 'string' &&
+        typeof (page as WikiPage).body === 'string' &&
+        Array.isArray((page as WikiPage).sourceEventIds) &&
+        Array.isArray((page as WikiPage).sourceRunIds) &&
+        Array.isArray((page as WikiPage).authorAgentIds) &&
+        typeof (page as WikiPage).updatedAt === 'number',
+    )
+  );
+}
+
 export class FileKnowledgeStore implements KnowledgeStore {
   private seq = 0;
   constructor(private readonly dir: string) {}
@@ -108,6 +128,7 @@ export class FileKnowledgeStore implements KnowledgeStore {
   private async writeWikiArtifacts(snapshot: WikiSnapshot): Promise<void> {
     await this.writeJson('wiki.json', snapshot);
     await this.writeText('wiki.md', `${ProjectWiki.fromJSON(snapshot).toMarkdown()}\n`);
+    await this.refreshWikiPages();
   }
 
   async loadWiki(): Promise<WikiSnapshot | null> {
@@ -150,6 +171,24 @@ export class FileKnowledgeStore implements KnowledgeStore {
   async saveKnowledgeEvents(events: KnowledgeEvent[]): Promise<void> {
     await this.writeJson('knowledge-events.json', events);
     await this.writeText('knowledge-events.md', renderKnowledgeEventsMarkdown(events));
+    await this.refreshWikiPages();
+  }
+
+  async loadWikiPages(): Promise<WikiPage[]> {
+    const value = await this.readJson('wiki-pages.json');
+    return isWikiPageArray(value) ? value : [];
+  }
+
+  async saveWikiPages(pages: WikiPage[]): Promise<void> {
+    await this.writeJson('wiki-pages.json', pages);
+    await this.writeText('wiki-pages.md', renderWikiPagesMarkdown(pages));
+  }
+
+  private async refreshWikiPages(): Promise<void> {
+    const events = await this.loadKnowledgeEvents();
+    const wiki = await this.loadWiki();
+    const pages = buildWikiPages(events, wiki);
+    await this.saveWikiPages(pages);
   }
 
   async loadCodegraph(): Promise<CodeGraphSnapshot | null> {

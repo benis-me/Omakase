@@ -124,6 +124,8 @@ export {
   renderKnowledgeEventsMarkdown,
 } from './knowledge/events.js';
 export type { KnowledgeEvent, KnowledgeEventKind } from './knowledge/events.js';
+export { buildWikiPages, renderWikiPagesMarkdown } from './knowledge/pages.js';
+export type { WikiPage, WikiPageId } from './knowledge/pages.js';
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export { Orchestrator, parseReview, parseStructuredReview } from './orchestrator.js';

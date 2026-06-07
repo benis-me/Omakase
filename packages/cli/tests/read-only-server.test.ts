@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FileKnowledgeStore, MemoryRunStore, type RunRecord } from '@omakase/core';
+import { FileKnowledgeStore, MemoryRunStore, createKnowledgeEvent, type RunRecord, type WikiPage } from '@omakase/core';
 import { startReadOnlyServer } from '../src/read-only-server.js';
 
 function record(id: string): RunRecord {
@@ -123,6 +123,17 @@ describe('read-only report/wiki server', () => {
         },
       ],
     });
+    await knowledgeStore.saveKnowledgeEvents([
+      createKnowledgeEvent({
+        runId: 'run-1',
+        kind: 'synthesis',
+        title: 'Live project knowledge',
+        body: 'Agent-authored knowledge pages summarize stable project facts.',
+        authorAgentId: 'codex',
+        clock: () => 0,
+        nextId: (prefix) => `${prefix}-1`,
+      }),
+    ]);
     await knowledgeStore.saveCodegraph({
       root: dir,
       nodes: [
@@ -144,19 +155,24 @@ describe('read-only report/wiki server', () => {
       const reports = await fetch(`${server.url}/api/reports`).then((res) => res.json() as Promise<unknown[]>);
       expect(reports).toHaveLength(1);
       const wiki = await fetch(`${server.url}/api/wiki`).then((res) => res.text());
-      expect(wiki).toContain('Uses TypeScript');
+      expect(wiki).toContain('Live project knowledge');
+      const wikiPages = await fetch(`${server.url}/api/wiki/pages`).then((res) => res.json() as Promise<WikiPage[]>);
+      expect(wikiPages[0]?.id).toBe('overview');
+      expect(wikiPages[0]?.body).toContain('Agent-authored knowledge pages');
       const home = await fetch(server.url).then((res) => res.text());
       expect(home).toContain('Planning report');
-      expect(home).toContain('Project Wiki');
-      expect(home).toContain('Uses TypeScript');
+      expect(home).toContain('Project Knowledge');
+      expect(home).toContain('Live project knowledge');
       expect(home).toContain('Omakase Mission Control');
       expect(home).toContain('data-region="reports"');
+      expect(home).toContain('data-region="wiki-pages"');
       expect(home).toContain('data-region="acceptance"');
       expect(home).toContain('data-region="iterations"');
       expect(home).toContain('data-region="agents"');
       expect(home).toContain('data-region="codegraph"');
       expect(home).toContain('data-region="events"');
       expect(home).toContain('fetch("/api/reports"');
+      expect(home).toContain('fetch("/api/wiki/pages"');
       expect(home).toContain('setInterval(refreshDashboard');
       expect(home).not.toContain('http-equiv="refresh"');
       const runs = await fetch(`${server.url}/api/runs`).then((res) => res.json() as Promise<unknown[]>);

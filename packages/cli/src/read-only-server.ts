@@ -1,5 +1,13 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
-import { CodeGraph, ProjectWiki, type KnowledgeStore, type RunRecord, type RunStore } from '@omakase/core';
+import {
+  CodeGraph,
+  ProjectWiki,
+  renderWikiPagesMarkdown,
+  type KnowledgeStore,
+  type RunRecord,
+  type RunStore,
+  type WikiPage,
+} from '@omakase/core';
 
 export interface ReadOnlyServerOptions {
   store: RunStore;
@@ -216,9 +224,31 @@ async function rawEvents(store: RunStore): Promise<Array<{ runId: string; label:
   return out.slice(-160).reverse();
 }
 
-async function wikiMarkdown(knowledgeStore: KnowledgeStore | undefined): Promise<string> {
+async function wikiPages(knowledgeStore: KnowledgeStore | undefined): Promise<WikiPage[]> {
+  if (!knowledgeStore) return [];
+  const pages = await knowledgeStore.loadWikiPages();
+  if (pages.length > 0) return pages;
   const wiki = await knowledgeStore?.loadWiki();
-  return wiki ? `${ProjectWiki.fromJSON(wiki).toMarkdown()}\n` : '# Project Wiki\n';
+  if (!wiki) return [];
+  const body = ProjectWiki.fromJSON(wiki).toMarkdown();
+  if (!body.trim()) return [];
+  const updatedAt = Math.max(0, ...wiki.entries.map((entry) => entry.updatedAt));
+  return [
+    {
+      id: 'overview',
+      title: 'Project Wiki',
+      body,
+      sourceEventIds: [],
+      sourceRunIds: [],
+      authorAgentIds: [],
+      updatedAt,
+    },
+  ];
+}
+
+async function wikiMarkdown(knowledgeStore: KnowledgeStore | undefined): Promise<string> {
+  const pages = await wikiPages(knowledgeStore);
+  return pages.length > 0 ? `${renderWikiPagesMarkdown(pages)}\n` : '# Project Knowledge Base\n';
 }
 
 async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | undefined): Promise<string> {
@@ -231,6 +261,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   const codegraph = await codegraphSummary(knowledgeStore);
   const eventList = await rawEvents(store);
   const wiki = await wikiMarkdown(knowledgeStore);
+  const pageList = await wikiPages(knowledgeStore);
   const reportHtml =
     reportList.length === 0
       ? '<p class="empty">No reports yet.</p>'
@@ -317,6 +348,21 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           .slice(0, 20)
           .map((item) => `<li><span>${escapeHtml(item.type)}</span>${escapeHtml(item.label)}<small>${escapeHtml(item.runId)}</small></li>`)
           .join('\n');
+  const wikiPagesHtml =
+    pageList.length === 0
+      ? '<p class="empty">No wiki pages yet.</p>'
+      : pageList
+          .map(
+            (page) => `<article class="wiki-page">
+  <header>
+    <h3>${escapeHtml(page.title)}</h3>
+    <span>${escapeHtml(page.authorAgentIds.length > 0 ? page.authorAgentIds.join(', ') : 'derived')}</span>
+  </header>
+  <pre>${escapeHtml(page.body)}</pre>
+  <p>${escapeHtml(page.sourceEventIds.length > 0 ? `source events: ${page.sourceEventIds.join(', ')}` : 'source: wiki entries')}</p>
+</article>`,
+          )
+          .join('\n');
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -361,13 +407,13 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     .metric:nth-child(4) { border-top-color: #111827; }
     .metric strong { font-size: 28px; line-height: 1; }
     .metric span { color: var(--muted); font-size: 12px; }
-    .report, .run-row, .compact-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); display: grid; gap: 10px; }
-    .report + .report, .run-row + .run-row, .compact-row + .compact-row { margin-top: 10px; }
-    .report header, .run-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 12px; }
+    .report, .run-row, .compact-row, .wiki-page { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); display: grid; gap: 10px; }
+    .report + .report, .run-row + .run-row, .compact-row + .compact-row, .wiki-page + .wiki-page { margin-top: 10px; }
+    .report header, .wiki-page header, .run-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 12px; }
     .compact-row { grid-template-columns: minmax(110px, .7fr) minmax(88px, auto) minmax(0, 1.7fr); align-items: baseline; }
     .compact-row p { color: var(--muted); font-size: 12px; }
     .compact-row span { color: var(--accent); font-size: 12px; }
-    .report span, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
+    .report span, .wiki-page span, .wiki-page p, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
     .status { border-radius: 999px; padding: 4px 8px; background: #e9f6dc; color: #385f1b; font-size: 12px; }
     pre { margin: 0; overflow: auto; white-space: pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .wiki { max-height: 560px; border-radius: 8px; border: 1px solid var(--line); background: #fbfcff; padding: 14px; }
@@ -397,7 +443,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       <div class="metric"><strong data-metric="runs">${runList.length}</strong><span>Runs</span></div>
       <div class="metric"><strong data-metric="reports">${reportList.length}</strong><span>Reports</span></div>
       <div class="metric"><strong data-metric="active">${runList.filter((run) => run.status === 'running' || run.status === 'waiting-for-user').length}</strong><span>Active</span></div>
-      <div class="metric"><strong data-metric="wiki">${wiki.split('\n').filter((line) => line.startsWith('### ')).length}</strong><span>Wiki Entries</span></div>
+      <div class="metric"><strong data-metric="wiki">${pageList.length}</strong><span>Wiki Pages</span></div>
     </section>
     <div class="grid">
       <div class="stack">
@@ -432,7 +478,11 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           <div data-region="codegraph">${codegraphHtml}</div>
         </section>
         <section>
-          <h2>Project Wiki</h2>
+          <h2>Project Knowledge</h2>
+          <div data-region="wiki-pages">${wikiPagesHtml}</div>
+        </section>
+        <section>
+          <h2>Wiki Markdown</h2>
           <pre class="wiki" data-region="wiki">${escapeHtml(wiki)}</pre>
         </section>
         <section>
@@ -451,11 +501,13 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
     const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
     const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
+    const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: wiki entries') + '</p></article>';
     async function refreshDashboard() {
-      const [reports, runs, wiki, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
+      const [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         fetch("/api/reports").then((res) => res.json()),
         fetch("/api/runs").then((res) => res.json()),
         fetch("/api/wiki").then((res) => res.text()),
+        fetch("/api/wiki/pages").then((res) => res.json()),
         fetch("/api/activity").then((res) => res.json()),
         fetch("/api/acceptance").then((res) => res.json()),
         fetch("/api/iterations").then((res) => res.json()),
@@ -466,6 +518,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       document.querySelector('[data-region="reports"]').innerHTML = reports.length ? reports.map(reportHtml).join('') : '<p class="empty">No reports yet.</p>';
       document.querySelector('[data-region="runs"]').innerHTML = runs.length ? runs.map(runHtml).join('') : '<p class="empty">No runs yet.</p>';
       document.querySelector('[data-region="wiki"]').textContent = wiki;
+      document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
       document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
       document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
       document.querySelector('[data-region="iterations"]').innerHTML = iterations.length ? iterations.slice(0, 12).map(iterationHtml).join('') : '<p class="empty">No iterations yet.</p>';
@@ -475,7 +528,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       document.querySelector('[data-metric="runs"]').textContent = runs.length;
       document.querySelector('[data-metric="reports"]').textContent = reports.length;
       document.querySelector('[data-metric="active"]').textContent = runs.filter((run) => run.status === 'running' || run.status === 'waiting-for-user').length;
-      document.querySelector('[data-metric="wiki"]').textContent = wiki.split('\\n').filter((line) => line.startsWith('### ')).length;
+      document.querySelector('[data-metric="wiki"]').textContent = wikiPages.length;
       document.querySelector('#last-updated').textContent = 'Read-only · updated ' + new Date().toLocaleTimeString();
     }
     setInterval(refreshDashboard, 2000);
@@ -535,6 +588,10 @@ export async function startReadOnlyServer(options: ReadOnlyServerOptions): Promi
       }
       if (url.pathname === '/api/events') {
         sendJson(res, 200, await rawEvents(options.store));
+        return;
+      }
+      if (url.pathname === '/api/wiki/pages') {
+        sendJson(res, 200, await wikiPages(options.knowledgeStore));
         return;
       }
       if (url.pathname === '/api/wiki') {

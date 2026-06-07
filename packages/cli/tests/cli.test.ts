@@ -2,8 +2,8 @@ import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createAgentRuntime } from '@omakase/daemon';
-import { MemoryRunStore, Orchestrator, type WorkMode } from '@omakase/core';
+import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
+import { MemoryRunStore, Orchestrator, projectKnowledgeStore, type WorkMode } from '@omakase/core';
 import { createCli, parseArgs } from '../src/cli.js';
 
 const OFFLINE = { env: { PATH: '' }, includeWellKnownPathDirs: false } as const;
@@ -16,11 +16,12 @@ function harness() {
     error: (t) => err.push(t),
     detectionOptions: OFFLINE,
     createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-    createOrchestrator: (runtime, mode: WorkMode) =>
+    createOrchestrator: (runtime, mode: WorkMode, options) =>
       new Orchestrator({
         runtime,
         store: new MemoryRunStore(),
         defaultMode: mode,
+        ...(options?.cwd ? { knowledgeStore: projectKnowledgeStore(options.cwd) } : {}),
         detectionOptions: OFFLINE,
       }),
   });
@@ -121,6 +122,31 @@ describe('omakase run', () => {
     const events = lines.map((l) => JSON.parse(l));
     expect(events[0]).toHaveProperty('type', 'run-started');
     expect(events.at(-1)).toHaveProperty('type', 'run-finished');
+  });
+
+  it('persists project knowledge pages for direct --cwd runs', async () => {
+    const cli = createCli({
+      write: () => {},
+      error: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () =>
+        createAgentRuntime({
+          executors: {
+            codex: createScriptedAgent((input) => {
+              const role = String(input.metadata?.role ?? 'worker');
+              if (role === 'reporter') return [{ type: 'text_delta', delta: 'Project summary report' }];
+              if (role === 'wiki-curator') return [{ type: 'text_delta', delta: 'Project summary: durable agent-authored page.' }];
+              return [{ type: 'text_delta', delta: 'worker done' }];
+            }),
+          },
+          detection: OFFLINE,
+          now: () => 0,
+        }),
+    });
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-run-knowledge-'));
+    const code = await cli.main(['run', 'summarize project knowledge', '--cwd', cwd, '--agent', 'codex']);
+    expect(code).toBe(0);
+    expect(readFileSync(path.join(cwd, '.omakase', 'wiki-pages.json'), 'utf8')).toContain('Project summary');
   });
 });
 

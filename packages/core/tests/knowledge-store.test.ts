@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
 import { MemoryRunStore } from '../src/supervisor/run-store.js';
+import { createKnowledgeEvent } from '../src/knowledge/events.js';
 import { FileKnowledgeStore, projectKnowledgeStore } from '../src/knowledge/store.js';
 import { ProjectWiki, type WikiEntry } from '../src/knowledge/wiki.js';
 import { CodeGraph } from '../src/knowledge/codegraph.js';
@@ -81,6 +82,50 @@ describe('FileKnowledgeStore', () => {
     const store = new FileKnowledgeStore(dir);
     await store.mergeWiki([entry('wiki-1', 'Uses pnpm')]);
     expect(readFileSync(path.join(dir, 'wiki.md'), 'utf8')).toContain('Uses pnpm');
+  });
+
+  it('writes durable agent-authored wiki pages beside knowledge events', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-wiki-pages-'));
+    const store = new FileKnowledgeStore(dir);
+    const event = createKnowledgeEvent({
+      runId: 'run-1',
+      kind: 'synthesis',
+      title: 'Runtime ownership',
+      body: 'The daemon owns execution and the TUI replays persisted state.',
+      authorAgentId: 'codex',
+      clock: () => 5,
+      nextId: (prefix) => `${prefix}-1`,
+    });
+
+    await store.saveKnowledgeEvents([event]);
+
+    const pages = await store.loadWikiPages();
+    expect(pages.map((page) => page.id)).toEqual(['overview']);
+    expect(pages[0]?.body).toContain('The daemon owns execution');
+    expect(readFileSync(path.join(dir, 'wiki-pages.md'), 'utf8')).toContain('Project Knowledge Base');
+    expect(readFileSync(path.join(dir, 'wiki-pages.json'), 'utf8')).toContain('Runtime ownership');
+  });
+
+  it('refreshes wiki pages from knowledge-flavored wiki entries when only wiki exists', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-wiki-pages-'));
+    const store = new FileKnowledgeStore(dir);
+    await store.mergeWiki([
+      {
+        id: 'knowledge-1',
+        kind: 'decision',
+        title: 'Use durable run store',
+        body: 'Runs are replayed from persisted JSON records.',
+        tags: ['knowledge', 'decision', 'run:run-1', 'agent:codex'],
+        source: 'knowledge:run-1:knowledge-1',
+        createdAt: 0,
+        updatedAt: 1,
+      },
+    ]);
+
+    const pages = await store.loadWikiPages();
+    expect(pages.map((page) => page.id)).toEqual(['decisions']);
+    expect(pages[0]?.sourceEventIds).toEqual(['knowledge-1']);
+    expect(pages[0]?.body).toContain('Use durable run store');
   });
 });
 

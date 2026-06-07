@@ -111,7 +111,7 @@ export interface CliDeps {
   write?: (text: string) => void;
   error?: (text: string) => void;
   createRuntime?: () => AgentRuntime;
-  createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode) => Orchestrator;
+  createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode, options?: { cwd?: string }) => Orchestrator;
   detectionOptions?: DetectionOptions;
   /** Ensure the project's detached daemon is running (injected for tests). */
   ensureDaemon?: (cwd: string, serveArgs?: string[]) => Promise<DaemonInfo>;
@@ -207,8 +207,14 @@ export function createCli(deps: CliDeps = {}): Cli {
     (() => createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 }));
   const createOrchestrator =
     deps.createOrchestrator ??
-    ((runtime: AgentRuntime, mode: WorkMode) =>
-      new Orchestrator({ runtime, store: new MemoryRunStore(), defaultMode: mode }));
+    ((runtime: AgentRuntime, mode: WorkMode, options?: { cwd?: string }) =>
+      new Orchestrator({
+        runtime,
+        store: new MemoryRunStore(),
+        defaultMode: mode,
+        ...(options?.cwd ? { knowledgeStore: projectKnowledgeStore(options.cwd) } : {}),
+        ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+      }));
 
   async function agentsCommand(options: ParsedArgs['options']): Promise<number> {
     const runtime = createRuntime();
@@ -227,6 +233,7 @@ export function createCli(deps: CliDeps = {}): Cli {
       return 1;
     }
     const mode = resolveMode(options.mode);
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
     const runtime = createRuntime();
     // --offline / --agent <id> force every role onto one agent (the built-in by
     // default), so a run completes with no model calls and no installed CLIs.
@@ -242,16 +249,17 @@ export function createCli(deps: CliDeps = {}): Cli {
             runtime,
             store: new MemoryRunStore(),
             defaultMode: agentOverride ? 'custom' : mode,
+            knowledgeStore: projectKnowledgeStore(cwd),
             ...(agentOverride
               ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
               : {}),
             ...(budget ? { budget } : {}),
             ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
           })
-        : createOrchestrator(runtime, mode);
+        : createOrchestrator(runtime, mode, { cwd });
     const request: OrchestrationRequest = {
       prompt: task,
-      cwd: typeof options.cwd === 'string' ? options.cwd : process.cwd(),
+      cwd,
       mode: agentOverride ? 'custom' : mode,
     };
     const handle = orchestrator.start(request);
