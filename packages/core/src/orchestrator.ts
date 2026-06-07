@@ -31,6 +31,7 @@ import {
   acceptanceProgress,
   applyStructuredReview,
   createAcceptanceCriteria,
+  type AcceptanceSource,
   type AcceptanceCriterion,
 } from './acceptance.js';
 import { createIteration, finishIteration, type IterationSnapshot } from './iterations.js';
@@ -55,6 +56,7 @@ import type { RunRecord, RunStore } from './supervisor/run-store.js';
 import type { ControlPoll, ControlSource } from './supervisor/control.js';
 import type {
   AcceptanceSnapshot,
+  InboxItemSnapshot,
   OrchestratorEvent,
   ReviewCriterion,
   RunStatus,
@@ -562,6 +564,8 @@ class RunController implements RunHandle {
     const abort = new AbortController();
     this.activeAborts.add(abort);
     input.signal = abort.signal;
+    this.emit({ type: 'agent-assigned', role, taskId: null, title: role, assignment });
+    await this.checkpointProgress();
     const acc = createResultAccumulator();
     try {
       for await (const event of this.runtime.streamAgentEvents(input)) {
@@ -760,6 +764,26 @@ class RunController implements RunHandle {
       nextId: (prefix) => this.ids.next(prefix),
     });
     this.setAcceptance(criteria);
+  }
+
+  private appendAcceptanceCriterion(rawCriterion: string, source: AcceptanceSource): AcceptanceCriterion | null {
+    const title = rawCriterion.replace(/\s+/g, ' ').trim();
+    if (!title) return null;
+    const existing = this.acceptance.criteria.find((criterion) => criterion.title === title);
+    if (existing) return existing;
+    const now = this.clock();
+    const criterion: AcceptanceCriterion = {
+      id: this.ids.next('criterion'),
+      title,
+      description: title,
+      status: 'pending',
+      evidence: [],
+      source,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.setAcceptance([...this.acceptance.criteria, criterion]);
+    return criterion;
   }
 
   private replaceAcceptanceCriteria(rawCriteria: readonly string[]): void {
@@ -1322,7 +1346,7 @@ class RunController implements RunHandle {
       if (this.inbox.hasPending()) {
         for (const item of this.inbox.drain()) {
           this.emit({ type: 'user-input', item });
-          this.applyUserInput(item.text);
+          this.applyUserInput(item);
         }
         await this.replan('user-input');
       }
@@ -1408,6 +1432,9 @@ class RunController implements RunHandle {
     await this.hooks
       .emit('beforeAgentRun', { role: task.role, assignment, input, task })
       .catch((e) => this.emit({ type: 'error', phase: 'beforeAgentRun', message: errorMessage(e) }));
+
+    this.emit({ type: 'agent-assigned', role: task.role, taskId: task.id, title: task.title, assignment });
+    await this.checkpointProgress();
 
     const acc = createResultAccumulator();
     try {
@@ -1634,22 +1661,52 @@ class RunController implements RunHandle {
     }
   }
 
-  private applyUserInput(text: string): void {
+  private applyUserInput(item: InboxItemSnapshot): void {
+    const text = item.text;
+    if (item.kind === 'requirement') {
+      this.appendAcceptanceCriterion(text, 'user');
+    }
     const worker = this.graph.addTask({
       title: `User input: ${text.slice(0, 48)}`,
       description: text,
       role: 'worker',
       tags: ['user-input'],
     });
+    this.ensureReviewerForUpdatedRequirements(worker.id);
+  }
+
+  private ensureReviewerForUpdatedRequirements(workerId: string): void {
     const reviewer = [...this.graph.tasks()]
       .reverse()
-      .find((t) => t.role === 'reviewer' && t.status !== 'failed');
+      .find((t) => t.role === 'reviewer' && t.status !== 'failed' && t.status !== 'cancelled');
     if (reviewer) {
-      reviewer.dependsOn.push(worker.id);
+      if (!reviewer.dependsOn.includes(workerId)) reviewer.dependsOn.push(workerId);
       if (reviewer.status === 'succeeded' || reviewer.status === 'ready') {
         this.graph.setStatus(reviewer.id, 'pending');
       }
+      return;
     }
+    if (!this.requiresExplicitAcceptance()) return;
+    const dependsOn = this.graph
+      .tasks()
+      .filter((task) => task.role !== 'reviewer')
+      .map((task) => task.id);
+    this.graph.addTask({
+      title: 'Review and verify updated requirements',
+      description: 'Review completed work against the updated user acceptance criteria.',
+      role: 'reviewer',
+      dependsOn,
+      tags: ['Review'],
+    });
+  }
+
+  private requiresExplicitAcceptance(): boolean {
+    return (
+      this.hasUserAcceptanceCriteria ||
+      this.acceptance.criteria.some(
+        (criterion) => criterion.source === 'user' || criterion.source === 'reviewer' || criterion.source === 'replan',
+      )
+    );
   }
 
   private async replan(reason: ReplanReason): Promise<void> {
@@ -1677,7 +1734,7 @@ class RunController implements RunHandle {
   }
 
   private applyImplicitAcceptanceIfNeeded(): void {
-    if (this.hasUserAcceptanceCriteria || !this.graph.succeeded() || this.acceptance.progress.complete) return;
+    if (this.requiresExplicitAcceptance() || !this.graph.succeeded() || this.acceptance.progress.complete) return;
     const now = this.clock();
     this.setAcceptance(
       this.acceptance.criteria.map((criterion) => ({
@@ -1697,7 +1754,7 @@ class RunController implements RunHandle {
     const tasks = this.graph.tasks();
     if (tasks.length === 0) return 'succeeded';
     if (tasks.every((t) => t.status === 'succeeded')) {
-      if (this.hasUserAcceptanceCriteria && !this.acceptance.progress.complete) return 'incomplete';
+      if (this.requiresExplicitAcceptance() && !this.acceptance.progress.complete) return 'incomplete';
       return 'succeeded';
     }
     if (tasks.some((t) => t.status === 'failed' || t.status === 'blocked')) return 'failed';

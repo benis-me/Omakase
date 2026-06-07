@@ -20,7 +20,12 @@ export const cursorAgentDef: RuntimeAgentDef = {
   streamFormat: 'plain-text',
   auth: {
     envVars: ['CURSOR_API_KEY'],
-    homeFiles: ['.cursor/cli-config.json'],
+    statusCommand: {
+      args: ['status'],
+      okPattern: /logged in|authenticated/i,
+      missingPattern: /not logged in|sign in|login/i,
+      timeoutMs: 5000,
+    },
   },
   installUrl: 'https://docs.cursor.com/en/cli/overview',
 };

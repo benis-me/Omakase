@@ -25,8 +25,8 @@ export const geminiAgentDef: RuntimeAgentDef = {
   streamFormat: 'plain-text',
   supportsImagePaths: true,
   auth: {
-    envVars: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
-    homeFiles: ['.gemini/oauth_creds.json', '.config/gcloud'],
+    envVars: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GENAI_USE_GCA'],
+    homeFiles: ['.gemini/oauth_creds.json', '.gemini/settings.json'],
   },
   installUrl: 'https://github.com/google-gemini/gemini-cli',
 };

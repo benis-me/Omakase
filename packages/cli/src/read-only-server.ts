@@ -184,6 +184,8 @@ function eventActivityLabel(event: RunRecord['events'][number]): string {
       return `plan · ${event.snapshot.tasks.length} tasks`;
     case 'task-finished':
       return `${event.role} · ${event.title}`;
+    case 'agent-assigned':
+      return `assigned · ${event.role}/${event.assignment.agentId}`;
     case 'agent-event':
       return `${event.role} · ${event.assignment.agentId} · ${event.event.type}`;
     case 'run-finished':

@@ -87,6 +87,13 @@ export type OrchestratorEvent =
       at?: number;
     }
   | {
+      type: 'agent-assigned';
+      role: AgentRole;
+      taskId: string | null;
+      title?: string;
+      assignment: RoleAssignment;
+    }
+  | {
       type: 'agent-event';
       role: AgentRole;
       taskId: string | null;

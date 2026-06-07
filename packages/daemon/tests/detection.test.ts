@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { resolveExecutable } from '../src/runtimes/executables.js';
 import { createRegistry, RuntimeRegistry } from '../src/runtimes/registry.js';
 import { claudeAgentDef } from '../src/runtimes/defs/claude.js';
 import { cursorAgentDef } from '../src/runtimes/defs/cursor-agent.js';
+import { geminiAgentDef } from '../src/runtimes/defs/gemini.js';
 import type { RuntimeAgentDef } from '../src/runtimes/types.js';
 import type { SpawnRequest, Transport } from '../src/runtime/transport.js';
 import { createFakeTransport } from '../src/testing/index.js';
@@ -211,6 +212,41 @@ describe('detectAgents', () => {
     const cursor = agents[0]!;
     expect(cursor.modelsSource).toBe('live');
     expect(cursor.models.map((m) => m.id)).toEqual(['default', 'gpt-5', 'claude-sonnet-4.5']);
+  });
+
+  it('does not treat cursor-agent cli config as authentication when status says logged out', async () => {
+    makeBin('cursor-agent');
+    const home = mkdtempSync(path.join(os.tmpdir(), 'omakase-cursorhome-'));
+    mkdirSync(path.join(home, '.cursor'), { recursive: true });
+    writeFileSync(path.join(home, '.cursor/cli-config.json'), '{}');
+    const transport = createFakeTransport((ctrl) => {
+      const name = path.basename(ctrl.request.command);
+      const args = ctrl.request.args.join(' ');
+      if (name === 'cursor-agent' && args === '--version') {
+        ctrl.emitStdout('cursor-agent 1.0\n');
+        ctrl.exit(0);
+        return;
+      }
+      if (name === 'cursor-agent' && args === 'status') {
+        ctrl.emitStdout('Not logged in\n');
+        ctrl.exit(0);
+        return;
+      }
+      ctrl.exit(0);
+    });
+
+    const cursor = await detectAgent(cursorAgentDef, detectOpts({ transport, home }));
+    expect(cursor.authStatus).toBe('missing');
+  });
+
+  it('does not treat generic gcloud config as Gemini CLI authentication', async () => {
+    makeBin('gemini');
+    const home = mkdtempSync(path.join(os.tmpdir(), 'omakase-geminihome-'));
+    mkdirSync(path.join(home, '.config/gcloud'), { recursive: true });
+    writeFileSync(path.join(home, '.config/gcloud/application_default_credentials.json'), '{}');
+
+    const gemini = await detectAgent(geminiAgentDef, detectOpts({ home }));
+    expect(gemini.authStatus).toBe('missing');
   });
 
   it('detects capabilities from --help and feeds them into buildArgs', async () => {

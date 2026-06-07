@@ -116,6 +116,48 @@ describe('view-model', () => {
     expect(view.tasks[0]?.startedAt).toBe(123);
   });
 
+  it('attaches agent assignment before streamed usage or tools arrive', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'planned',
+      snapshot: {
+        seq: 1,
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Collect package evidence',
+            description: 'Collect package evidence',
+            role: 'worker',
+            status: 'pending',
+            dependsOn: [],
+            attempts: 0,
+            tags: ['implementation'],
+            createdAt: 0,
+            metadata: {},
+          },
+        ],
+      },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-assigned',
+      role: 'worker',
+      taskId: 'task-1',
+      title: 'Collect package evidence',
+      assignment: {
+        role: 'worker',
+        agentId: 'codex',
+        model: null,
+        reasoning: null,
+        rationale: 'normal: distributed worker 1/2 (codex)',
+      },
+    } as any);
+
+    expect(view.tasks[0]?.agentId).toBe('codex');
+    expect(view.tasks[0]?.tokens).toBe(0);
+    expect(view.tasks[0]?.toolCount).toBe(0);
+    expect(view.activity.at(-1)).toContain('assigned worker/codex');
+  });
+
   it('collects planner phrases from streamed agent events', () => {
     let view = initialRunView('normal');
     view = reduceRunView(view, {

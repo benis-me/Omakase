@@ -63,6 +63,13 @@ export interface RuntimeAuthHints {
   envVars?: string[];
   /** Paths relative to the home directory that, if present, imply auth. */
   homeFiles?: string[];
+  /** Optional command probe whose output can prove logged-in or logged-out state. */
+  statusCommand?: {
+    args: string[];
+    okPattern: RegExp;
+    missingPattern?: RegExp;
+    timeoutMs?: number;
+  };
 }
 
 export interface RuntimeAgentDef {

@@ -169,6 +169,8 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `◇ knowledge event: ${event.event.title}`;
     case 'task-status':
       return `  · ${event.title}: ${event.from} → ${event.to}`;
+    case 'agent-assigned':
+      return `  ⇄ assigned ${event.role}/${event.assignment.agentId}${event.title ? ` to ${event.title}` : ''}`;
     case 'task-finished':
       return `  ${event.success ? '✓' : '✗'} [${event.role}] ${event.title}`;
     case 'review':
@@ -346,6 +348,13 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
               agentId: null,
             },
           ];
+      return derive({ ...next, tasks });
+    }
+    case 'agent-assigned': {
+      const agentId = event.assignment?.agentId ?? null;
+      const tasks = event.taskId
+        ? view.tasks.map((t) => (t.id === event.taskId ? { ...t, agentId: agentId ?? t.agentId } : t))
+        : view.tasks;
       return derive({ ...next, tasks });
     }
     case 'agent-event': {

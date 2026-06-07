@@ -246,14 +246,37 @@ async function fetchModels(
   return fallback;
 }
 
-function probeAuth(
+async function probeAuth(
   def: RuntimeAgentDef,
+  bin: string,
+  env: NodeJS.ProcessEnv,
   ctx: ResolvedDetectionContext,
-): { status: AuthStatus; message: string | undefined } {
+): Promise<{ status: AuthStatus; message: string | undefined }> {
   const hints = def.auth;
   if (!hints) return { status: 'unknown', message: undefined };
   for (const envVar of hints.envVars ?? []) {
     if (ctx.env[envVar]) return { status: 'ok', message: undefined };
+  }
+  if (hints.statusCommand) {
+    try {
+      const result = await execCollect(
+        ctx.transport,
+        { command: bin, args: hints.statusCommand.args, env, cwd: ctx.cwd },
+        { timeoutMs: hints.statusCommand.timeoutMs ?? 3000 },
+      );
+      const text = `${result.stdout}\n${result.stderr}`;
+      if (hints.statusCommand.missingPattern?.test(text)) {
+        return {
+          status: 'missing',
+          message: `No credentials found — sign in to ${def.name}`,
+        };
+      }
+      if (hints.statusCommand.okPattern.test(text)) {
+        return { status: 'ok', message: undefined };
+      }
+    } catch {
+      // Fall through to static hints when the status command is unavailable.
+    }
   }
   for (const file of hints.homeFiles ?? []) {
     if (existsSync(path.join(ctx.home, file))) {
@@ -295,7 +318,7 @@ async function probe(
   const [capabilities, models, auth] = await Promise.all([
     probeCapabilities(def, resolution.selectedPath, env, ctx),
     fetchModels(def, resolution.selectedPath, env, ctx),
-    Promise.resolve(probeAuth(def, ctx)),
+    probeAuth(def, resolution.selectedPath, env, ctx),
   ]);
 
   return {
