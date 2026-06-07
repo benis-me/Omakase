@@ -272,4 +272,104 @@ describe('read-only report/wiki server', () => {
       await server.close();
     }
   });
+
+  it('serves a run inspector with task, agent, report, knowledge, and event detail', async () => {
+    const store = new MemoryRunStore();
+    const rich = record('run-detail');
+    rich.knowledgeEvents = [
+      createKnowledgeEvent({
+        runId: 'run-detail',
+        kind: 'synthesis',
+        title: 'Run detail knowledge',
+        body: 'The run inspector shows task and agent evidence without opening raw JSON.',
+        authorAgentId: 'codex',
+        clock: () => 5,
+        nextId: (prefix) => `${prefix}-1`,
+      }),
+    ];
+    (rich.knowledgeEvents[0] as { authorAgentId?: string }).authorAgentId = undefined;
+    rich.events = [
+      ...rich.events,
+      {
+        type: 'agent-assigned',
+        role: 'worker',
+        taskId: 'task-1',
+        title: 'Implement parser',
+        assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#task-1',
+      },
+      {
+        type: 'agent-event',
+        role: 'worker',
+        taskId: 'task-1',
+        assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#task-1',
+        event: { type: 'tool_use', id: 'tool-1', name: 'read', input: { path: 'package.json' } },
+      },
+      {
+        type: 'agent-event',
+        role: 'worker',
+        taskId: 'task-1',
+        assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#task-1',
+        event: { type: 'usage', usage: { totalTokens: 42 } },
+      },
+      {
+        type: 'agent-event',
+        role: 'worker',
+        taskId: 'task-1',
+        assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#task-1',
+        event: { type: 'text_delta', delta: 'parser evidence ready' },
+      },
+      { type: 'run-finished', status: 'succeeded', summary: 'done' },
+    ];
+    await store.save(rich);
+
+    const server = await startReadOnlyServer({ store });
+    try {
+      const detail = await fetch(`${server.url}/api/run/run-detail/detail`).then(
+        (res) =>
+          res.json() as Promise<{
+            run: { id: string; status: string; taskDone: number; taskTotal: number };
+            tasks: Array<{ id: string; agentLabel: string | null; tokens: number; tools: number }>;
+            agents: Array<{ agentLabel: string | null; tokens: number; tools: number; lastEventType: string | null; lastText: string | null }>;
+            reports: unknown[];
+            knowledgeEvents: unknown[];
+            events: Array<{ type: string; label: string }>;
+          }>,
+      );
+
+      expect(detail.run).toMatchObject({ id: 'run-detail', status: 'succeeded', taskDone: 1, taskTotal: 1 });
+      expect(detail.tasks[0]).toMatchObject({ id: 'task-1', agentLabel: 'codex#task-1', tokens: 42, tools: 1 });
+      expect(detail.agents[0]).toMatchObject({
+        agentLabel: 'codex#task-1',
+        tokens: 42,
+        tools: 1,
+        lastEventType: 'text_delta',
+        lastText: 'parser evidence ready',
+      });
+      expect(detail.reports).toHaveLength(1);
+      expect(detail.knowledgeEvents).toHaveLength(1);
+      expect(detail.events.map((event) => event.type)).toContain('run-finished');
+
+      const home = await fetch(server.url).then((res) => res.text());
+      expect(home).toContain('Run Inspector');
+      expect(home).toContain('data-region="run-detail"');
+      expect(home).toContain('data-run-id="run-detail"');
+      expect(home).toContain('<h3>Reports</h3>');
+      expect(home).toContain('Planning report');
+      expect(home).toContain('<h3>Knowledge</h3>');
+      expect(home).toContain('Run detail knowledge');
+      expect(home).toContain('<h3>Iterations</h3>');
+      expect(home).toContain('initial-plan');
+      expect(home).toContain('fetch("/api/run/" + encodeURIComponent(activeRunId) + "/detail"');
+    } finally {
+      await server.close();
+    }
+  });
 });

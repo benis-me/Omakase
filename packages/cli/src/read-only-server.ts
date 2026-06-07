@@ -34,8 +34,23 @@ function sendJson(res: ServerResponse, status: number, value: unknown): void {
   send(res, status, JSON.stringify(value, null, 2), 'application/json; charset=utf-8');
 }
 
-function escapeHtml(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+interface AgentSummary {
+  runId: string;
+  taskId: string | null;
+  title: string;
+  role: string;
+  status: string;
+  agentId: string | null;
+  agentRunId: string | null;
+  agentLabel: string | null;
+  tokens: number;
+  tools: number;
+  lastEventType: string | null;
+  lastText: string | null;
 }
 
 async function reports(store: RunStore): Promise<NonNullable<RunRecord['reports']>> {
@@ -66,20 +81,32 @@ async function runSummaries(store: RunStore): Promise<Array<{
   reports: number;
   knowledgeEvents: number;
 }>> {
-  return (await records(store)).map((record) => {
-    const tasks = record.plan.tasks ?? [];
-    return {
-      id: record.id,
-      title: record.request.prompt,
-      status: record.status,
-      summary: record.summary,
-      updatedAt: record.updatedAt,
-      taskTotal: tasks.length,
-      taskDone: tasks.filter((task) => task.status === 'succeeded').length,
-      reports: record.reports?.length ?? 0,
-      knowledgeEvents: record.knowledgeEvents?.length ?? 0,
-    };
-  });
+  return (await records(store)).map(runSummaryFromRecord);
+}
+
+function runSummaryFromRecord(record: RunRecord): {
+  id: string;
+  title: string;
+  status: RunRecord['status'];
+  summary: string;
+  updatedAt: number;
+  taskTotal: number;
+  taskDone: number;
+  reports: number;
+  knowledgeEvents: number;
+} {
+  const tasks = record.plan.tasks ?? [];
+  return {
+    id: record.id,
+    title: record.request.prompt,
+    status: record.status,
+    summary: record.summary,
+    updatedAt: record.updatedAt,
+    taskTotal: tasks.length,
+    taskDone: tasks.filter((task) => task.status === 'succeeded').length,
+    reports: record.reports?.length ?? 0,
+    knowledgeEvents: record.knowledgeEvents?.length ?? 0,
+  };
 }
 
 async function acceptanceSummaries(store: RunStore): Promise<Array<{
@@ -125,9 +152,101 @@ async function agentSummaries(store: RunStore): Promise<Array<{
   tokens: number;
   tools: number;
 }>> {
-  const out: Array<{
-    runId: string;
-    taskId: string | null;
+  return (await records(store)).flatMap(agentSummariesForRecord).slice(0, 120);
+}
+
+function agentSummariesForRecord(record: RunRecord): AgentSummary[] {
+  const out: AgentSummary[] = [];
+  const stats = new Map<
+    string,
+    {
+      agentId: string | null;
+      agentRunId: string | null;
+      agentLabel: string | null;
+      tokens: number;
+      tools: number;
+      lastEventType: string | null;
+      lastText: string | null;
+    }
+  >();
+  for (const event of record.events) {
+    if (event.type !== 'agent-event' && event.type !== 'agent-assigned') continue;
+    const key = event.agentRunId ?? event.taskId ?? `support:${event.role}:${event.assignment.agentId}`;
+    const prev = stats.get(key) ?? {
+      agentId: event.assignment.agentId,
+      agentRunId: event.agentRunId ?? null,
+      agentLabel: event.agentLabel ?? null,
+      tokens: 0,
+      tools: 0,
+      lastEventType: null,
+      lastText: null,
+    };
+    if (event.type === 'agent-assigned') {
+      prev.agentId = event.assignment.agentId;
+      prev.agentRunId = event.agentRunId ?? prev.agentRunId;
+      prev.agentLabel = event.agentLabel ?? prev.agentLabel;
+      stats.set(key, prev);
+      continue;
+    }
+    prev.lastEventType = event.event.type;
+    if (event.event.type === 'text_delta' || event.event.type === 'thinking_delta') {
+      prev.lastText = event.event.delta.slice(0, 240);
+    }
+    if (event.event.type === 'tool_use') prev.tools += 1;
+    if (event.event.type === 'usage') {
+      prev.tokens += event.event.usage.totalTokens ?? (event.event.usage.inputTokens ?? 0) + (event.event.usage.outputTokens ?? 0);
+    }
+    prev.agentId = event.assignment.agentId;
+    prev.agentRunId = event.agentRunId ?? prev.agentRunId;
+    prev.agentLabel = event.agentLabel ?? prev.agentLabel;
+    stats.set(key, prev);
+  }
+
+  for (const task of record.plan.tasks ?? []) {
+    const stat = [...stats.values()].find((item) => item.agentLabel?.endsWith(`#${task.id}`)) ?? stats.get(task.id);
+    out.push({
+      runId: record.id,
+      taskId: task.id,
+      title: task.title,
+      role: task.role,
+      status: task.status,
+      agentId: stat?.agentId ?? task.result?.agentId ?? null,
+      agentRunId: stat?.agentRunId ?? null,
+      agentLabel: stat?.agentLabel ?? null,
+      tokens: stat?.tokens ?? 0,
+      tools: stat?.tools ?? 0,
+      lastEventType: stat?.lastEventType ?? null,
+      lastText: stat?.lastText ?? null,
+    });
+  }
+  for (const [key, stat] of stats) {
+    const taskBacked = (record.plan.tasks ?? []).some((task) => stat.agentLabel?.endsWith(`#${task.id}`) || key === task.id);
+    if (taskBacked) continue;
+    const support = key.startsWith('support:') ? key.split(':') : [];
+    const role = support[1] ?? stat.agentLabel?.split('#')[1] ?? 'support';
+    const agentId = support[2] ?? stat.agentId;
+    out.push({
+      runId: record.id,
+      taskId: null,
+      title: role ?? 'support',
+      role: role ?? 'support',
+      status: 'support',
+      agentId: agentId ?? stat.agentId,
+      agentRunId: stat.agentRunId,
+      agentLabel: stat.agentLabel,
+      tokens: stat.tokens,
+      tools: stat.tools,
+      lastEventType: stat.lastEventType,
+      lastText: stat.lastText,
+    });
+  }
+  return out;
+}
+
+function runDetail(record: RunRecord): {
+  run: ReturnType<typeof runSummaryFromRecord>;
+  tasks: Array<{
+    id: string;
     title: string;
     role: string;
     status: string;
@@ -136,71 +255,40 @@ async function agentSummaries(store: RunStore): Promise<Array<{
     agentLabel: string | null;
     tokens: number;
     tools: number;
-  }> = [];
-  for (const record of await records(store)) {
-    const stats = new Map<string, { agentId: string | null; agentRunId: string | null; agentLabel: string | null; tokens: number; tools: number }>();
-    for (const event of record.events) {
-      if (event.type !== 'agent-event' && event.type !== 'agent-assigned') continue;
-      const key = event.agentRunId ?? event.taskId ?? `support:${event.role}:${event.assignment.agentId}`;
-      const prev = stats.get(key) ?? {
-        agentId: event.assignment.agentId,
-        agentRunId: event.agentRunId ?? null,
-        agentLabel: event.agentLabel ?? null,
-        tokens: 0,
-        tools: 0,
-      };
-      if (event.type === 'agent-assigned') {
-        prev.agentId = event.assignment.agentId;
-        prev.agentRunId = event.agentRunId ?? prev.agentRunId;
-        prev.agentLabel = event.agentLabel ?? prev.agentLabel;
-        stats.set(key, prev);
-        continue;
-      }
-      if (event.event.type === 'usage') {
-        prev.tokens += event.event.usage.totalTokens ?? (event.event.usage.inputTokens ?? 0) + (event.event.usage.outputTokens ?? 0);
-      }
-      if (event.event.type === 'tool_use') prev.tools += 1;
-      prev.agentId = event.assignment.agentId;
-      prev.agentRunId = event.agentRunId ?? prev.agentRunId;
-      prev.agentLabel = event.agentLabel ?? prev.agentLabel;
-      stats.set(key, prev);
-    }
-    for (const task of record.plan.tasks ?? []) {
-      const stat = [...stats.values()].find((item) => item.agentLabel?.endsWith(`#${task.id}`)) ?? stats.get(task.id);
-      out.push({
-        runId: record.id,
-        taskId: task.id,
+    summary: string | null;
+  }>;
+  agents: AgentSummary[];
+  acceptance: RunRecord['acceptance'];
+  iterations: NonNullable<RunRecord['iterations']>;
+  reports: NonNullable<RunRecord['reports']>;
+  knowledgeEvents: NonNullable<RunRecord['knowledgeEvents']>;
+  events: Array<{ type: string; label: string }>;
+} {
+  const agents = agentSummariesForRecord(record);
+  return {
+    run: runSummaryFromRecord(record),
+    tasks: (record.plan.tasks ?? []).map((task) => {
+      const agent = agents.find((item) => item.taskId === task.id);
+      return {
+        id: task.id,
         title: task.title,
         role: task.role,
         status: task.status,
-        agentId: stat?.agentId ?? task.result?.agentId ?? null,
-        agentRunId: stat?.agentRunId ?? null,
-        agentLabel: stat?.agentLabel ?? null,
-        tokens: stat?.tokens ?? 0,
-        tools: stat?.tools ?? 0,
-      });
-    }
-    for (const [key, stat] of stats) {
-      const taskBacked = (record.plan.tasks ?? []).some((task) => stat.agentLabel?.endsWith(`#${task.id}`) || key === task.id);
-      if (taskBacked) continue;
-      const support = key.startsWith('support:') ? key.split(':') : [];
-      const role = support[1] ?? stat.agentLabel?.split('#')[1] ?? 'support';
-      const agentId = support[2] ?? stat.agentId;
-      out.push({
-        runId: record.id,
-        taskId: null,
-        title: role ?? 'support',
-        role: role ?? 'support',
-        status: 'support',
-        agentId: agentId ?? stat.agentId,
-        agentRunId: stat.agentRunId,
-        agentLabel: stat.agentLabel,
-        tokens: stat.tokens,
-        tools: stat.tools,
-      });
-    }
-  }
-  return out.slice(0, 120);
+        agentId: agent?.agentId ?? task.result?.agentId ?? null,
+        agentRunId: agent?.agentRunId ?? null,
+        agentLabel: agent?.agentLabel ?? null,
+        tokens: agent?.tokens ?? 0,
+        tools: agent?.tools ?? 0,
+        summary: task.result?.summary ?? null,
+      };
+    }),
+    agents,
+    acceptance: record.acceptance,
+    iterations: record.iterations ?? [],
+    reports: record.reports ?? [],
+    knowledgeEvents: record.knowledgeEvents ?? [],
+    events: record.events.slice(-80).map((event) => ({ type: event.type, label: eventActivityLabel(event) })),
+  };
 }
 
 async function codegraphSummary(knowledgeStore: KnowledgeStore | undefined): Promise<(ReturnType<CodeGraph['stats']> & { root: string }) | null> {
@@ -290,9 +378,92 @@ function wikiPageSourceLabel(page: WikiPage): string {
   return 'source: derived';
 }
 
+function renderRunDetailHtml(detail: ReturnType<typeof runDetail> | null): string {
+  if (!detail) return '<p class="empty">Select a run to inspect tasks, agents, reports, and events.</p>';
+  const criteria = detail.acceptance?.criteria ?? [];
+  const tasks = detail.tasks
+    .map(
+      (task) => `<article class="compact-row">
+  <strong>${escapeHtml(task.id)}</strong>
+  <span>${escapeHtml(task.status)} · ${escapeHtml(task.agentLabel ?? task.agentId ?? 'unassigned')}</span>
+  <p>${escapeHtml(task.title)} · ${task.tokens} tok · ${task.tools} tools</p>
+</article>`,
+    )
+    .join('');
+  const agents = detail.agents
+    .slice(0, 12)
+    .map(
+      (agent) => `<article class="compact-row">
+  <strong>${escapeHtml(agent.agentLabel ?? agent.agentId ?? 'unassigned')}</strong>
+  <span>${escapeHtml(agent.role)} · ${escapeHtml(agent.lastEventType ?? agent.status)}</span>
+  <p>${escapeHtml(agent.lastText ?? agent.title)} · ${agent.tokens} tok · ${agent.tools} tools</p>
+</article>`,
+    )
+    .join('');
+  const events = detail.events
+    .slice(-12)
+    .reverse()
+    .map((event) => `<li><span>${escapeHtml(event.type)}</span>${escapeHtml(event.label)}<small>${escapeHtml(detail.run.id)}</small></li>`)
+    .join('');
+  const reports = detail.reports
+    .slice(-6)
+    .reverse()
+    .map(
+      (report) => `<article class="compact-row">
+  <strong>${escapeHtml(report.kind)}</strong>
+  <span>${escapeHtml(report.authorAgentId ?? 'fallback')}</span>
+  <p>${escapeHtml(report.title)} · ${escapeHtml(report.summary)}</p>
+</article>`,
+    )
+    .join('');
+  const knowledgeEvents = detail.knowledgeEvents
+    .slice(-6)
+    .reverse()
+    .map(
+      (event) => `<article class="compact-row">
+  <strong>${escapeHtml(event.kind)}</strong>
+  <span>${escapeHtml(event.authorAgentId)}</span>
+  <p>${escapeHtml(event.title)} · ${escapeHtml(event.body.slice(0, 180))}</p>
+</article>`,
+    )
+    .join('');
+  const iterations = detail.iterations
+    .slice(-6)
+    .reverse()
+    .map(
+      (iteration) => `<article class="compact-row">
+  <strong>#${iteration.index}</strong>
+  <span>${escapeHtml(iteration.status)}</span>
+  <p>${escapeHtml(iteration.reason)}${iteration.nextStrategy ? ` → ${escapeHtml(iteration.nextStrategy)}` : ''}</p>
+</article>`,
+    )
+    .join('');
+  return `<article class="run-inspector">
+  <header>
+    <h3>${escapeHtml(detail.run.id)}</h3>
+    <span>${escapeHtml(detail.run.status)} · ${detail.run.taskDone}/${detail.run.taskTotal} tasks · ${detail.reports.length} reports · ${detail.knowledgeEvents.length} knowledge</span>
+  </header>
+  <p>${escapeHtml(detail.run.summary || detail.run.title)}</p>
+  <div class="detail-grid">
+    <div><h3>Tasks</h3>${tasks || '<p class="empty">No tasks yet.</p>'}</div>
+    <div><h3>Agents</h3>${agents || '<p class="empty">No agents yet.</p>'}</div>
+  </div>
+  <div class="detail-grid">
+    <div><h3>Acceptance</h3><p>${escapeHtml(criteria.map((criterion) => `${criterion.status}: ${criterion.title}`).join(' · ') || 'No acceptance criteria yet.')}</p></div>
+    <div><h3>Recent Events</h3><ul class="activity">${events || '<li><span>empty</span>No events yet.<small></small></li>'}</ul></div>
+  </div>
+  <div class="detail-grid">
+    <div><h3>Reports</h3>${reports || '<p class="empty">No reports yet.</p>'}</div>
+    <div><h3>Knowledge</h3>${knowledgeEvents || '<p class="empty">No knowledge events yet.</p>'}</div>
+  </div>
+  <div><h3>Iterations</h3>${iterations || '<p class="empty">No iterations yet.</p>'}</div>
+</article>`;
+}
+
 async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | undefined): Promise<string> {
   const reportList = await reports(store);
   const runList = await runSummaries(store);
+  const latestRecord = (await records(store))[0] ?? null;
   const activityList = await activity(store);
   const acceptanceList = await acceptanceSummaries(store);
   const iterationList = await iterationSummaries(store);
@@ -301,6 +472,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   const eventList = await rawEvents(store);
   const wiki = await wikiMarkdown(knowledgeStore);
   const pageList = await wikiPages(knowledgeStore);
+  const detailHtml = renderRunDetailHtml(latestRecord ? runDetail(latestRecord) : null);
   const reportHtml =
     reportList.length === 0
       ? '<p class="empty">No reports yet.</p>'
@@ -325,6 +497,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   <div><strong>${escapeHtml(run.id)}</strong><p>${escapeHtml(run.title)}</p></div>
   <span class="status">${escapeHtml(run.status)}</span>
   <span>${run.taskDone}/${run.taskTotal}</span>
+  <button type="button" data-run-id="${escapeHtml(run.id)}">inspect</button>
 </article>`,
           )
           .join('\n');
@@ -447,13 +620,18 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     .metric strong { font-size: 28px; line-height: 1; }
     .metric span { color: var(--muted); font-size: 12px; }
     .report, .run-row, .compact-row, .wiki-page { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); display: grid; gap: 10px; }
+    .run-inspector { display: grid; gap: 12px; }
     .report + .report, .run-row + .run-row, .compact-row + .compact-row, .wiki-page + .wiki-page { margin-top: 10px; }
     .report header, .wiki-page header, .run-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 12px; }
+    .run-inspector header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .compact-row { grid-template-columns: minmax(110px, .7fr) minmax(88px, auto) minmax(0, 1.7fr); align-items: baseline; }
     .compact-row p { color: var(--muted); font-size: 12px; }
     .compact-row span { color: var(--accent); font-size: 12px; }
-    .report span, .wiki-page span, .wiki-page p, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
+    .report span, .wiki-page span, .wiki-page p, .run-inspector span, .run-inspector p, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
     .status { border-radius: 999px; padding: 4px 8px; background: #e9f6dc; color: #385f1b; font-size: 12px; }
+    button { border: 1px solid var(--line); background: #fff; color: var(--accent); border-radius: 6px; padding: 5px 8px; font: 12px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
     pre { margin: 0; overflow: auto; white-space: pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .wiki { max-height: 560px; border-radius: 8px; border: 1px solid var(--line); background: #fbfcff; padding: 14px; }
     .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -465,7 +643,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       .meta { justify-self: start; }
       h1 { max-width: 16ch; font-size: 24px; line-height: 1.08; overflow-wrap: normal; }
       .sub { max-width: 32ch; }
-      .report header, .run-row, .compact-row, .activity li { grid-template-columns: 1fr; }
+      .report header, .run-row, .compact-row, .activity li, .detail-grid, .run-inspector header { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -493,6 +671,10 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
         <section>
           <h2>Runs</h2>
           <div data-region="runs">${runsHtml}</div>
+        </section>
+        <section>
+          <h2>Run Inspector</h2>
+          <div data-region="run-detail">${detailHtml}</div>
         </section>
         <section>
           <h2>Acceptance</h2>
@@ -534,7 +716,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   <script>
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     const reportHtml = (report) => '<article class="report"><header><h3>' + escapeHtml(report.title) + '</h3><span>' + escapeHtml(report.kind) + ' · ' + escapeHtml(report.runId) + ' · ' + escapeHtml(report.authorAgentId || 'fallback') + '</span></header><p>' + escapeHtml(report.summary) + '</p><pre>' + escapeHtml(report.markdown) + '</pre></article>';
-    const runHtml = (run) => '<article class="run-row"><div><strong>' + escapeHtml(run.id) + '</strong><p>' + escapeHtml(run.title) + '</p></div><span class="status">' + escapeHtml(run.status) + '</span><span>' + run.taskDone + '/' + run.taskTotal + '</span></article>';
+    const runHtml = (run) => '<article class="run-row"><div><strong>' + escapeHtml(run.id) + '</strong><p>' + escapeHtml(run.title) + '</p></div><span class="status">' + escapeHtml(run.status) + '</span><span>' + run.taskDone + '/' + run.taskTotal + '</span><button type="button" data-run-id="' + escapeHtml(run.id) + '">inspect</button></article>';
     const activityHtml = (item) => '<li><span>' + escapeHtml(item.type) + '</span>' + escapeHtml(item.label) + '<small>' + escapeHtml(item.runId) + '</small></li>';
     const acceptanceHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>' + item.progress.passed + '/' + item.progress.total + '</span><p>' + escapeHtml(item.criteria.map((criterion) => criterion.status + ': ' + criterion.title).join(' · ')) + '</p></article>';
     const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
@@ -542,6 +724,34 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
     const wikiPageSourceLabel = (page) => page.sourceKind === 'codegraph' ? 'source: codegraph' : page.sourceKind === 'wiki' ? 'source: wiki entries' : page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: derived';
     const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(wikiPageSourceLabel(page)) + '</p></article>';
+    let activeRunId = ${JSON.stringify(runList[0]?.id ?? '')};
+    const runDetailHtml = (detail) => {
+      if (!detail || !detail.run) return '<p class="empty">Select a run to inspect tasks, agents, reports, and events.</p>';
+      const tasks = (detail.tasks || []).map((task) => '<article class="compact-row"><strong>' + escapeHtml(task.id) + '</strong><span>' + escapeHtml(task.status) + ' · ' + escapeHtml(task.agentLabel || task.agentId || 'unassigned') + '</span><p>' + escapeHtml(task.title) + ' · ' + task.tokens + ' tok · ' + task.tools + ' tools</p></article>').join('');
+      const agents = (detail.agents || []).slice(0, 12).map((agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentLabel || agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.lastEventType || agent.status) + '</span><p>' + escapeHtml(agent.lastText || agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>').join('');
+      const criteria = detail.acceptance && detail.acceptance.criteria ? detail.acceptance.criteria : [];
+      const events = (detail.events || []).slice(-12).reverse().map((event) => '<li><span>' + escapeHtml(event.type) + '</span>' + escapeHtml(event.label) + '<small>' + escapeHtml(detail.run.id) + '</small></li>').join('');
+      const reports = (detail.reports || []).slice(-6).reverse().map((report) => '<article class="compact-row"><strong>' + escapeHtml(report.kind) + '</strong><span>' + escapeHtml(report.authorAgentId || 'fallback') + '</span><p>' + escapeHtml(report.title) + ' · ' + escapeHtml(report.summary) + '</p></article>').join('');
+      const knowledgeEvents = (detail.knowledgeEvents || []).slice(-6).reverse().map((event) => '<article class="compact-row"><strong>' + escapeHtml(event.kind) + '</strong><span>' + escapeHtml(event.authorAgentId) + '</span><p>' + escapeHtml(event.title) + ' · ' + escapeHtml((event.body || '').slice(0, 180)) + '</p></article>').join('');
+      const iterations = (detail.iterations || []).slice(-6).reverse().map((iteration) => '<article class="compact-row"><strong>#' + iteration.index + '</strong><span>' + escapeHtml(iteration.status) + '</span><p>' + escapeHtml(iteration.reason + (iteration.nextStrategy ? ' → ' + iteration.nextStrategy : '')) + '</p></article>').join('');
+      return '<article class="run-inspector"><header><h3>' + escapeHtml(detail.run.id) + '</h3><span>' + escapeHtml(detail.run.status) + ' · ' + detail.run.taskDone + '/' + detail.run.taskTotal + ' tasks · ' + (detail.reports || []).length + ' reports · ' + (detail.knowledgeEvents || []).length + ' knowledge</span></header><p>' + escapeHtml(detail.run.summary || detail.run.title) + '</p><div class="detail-grid"><div><h3>Tasks</h3>' + (tasks || '<p class="empty">No tasks yet.</p>') + '</div><div><h3>Agents</h3>' + (agents || '<p class="empty">No agents yet.</p>') + '</div></div><div class="detail-grid"><div><h3>Acceptance</h3><p>' + escapeHtml(criteria.map((criterion) => criterion.status + ': ' + criterion.title).join(' · ') || 'No acceptance criteria yet.') + '</p></div><div><h3>Recent Events</h3><ul class="activity">' + (events || '<li><span>empty</span>No events yet.<small></small></li>') + '</ul></div></div><div class="detail-grid"><div><h3>Reports</h3>' + (reports || '<p class="empty">No reports yet.</p>') + '</div><div><h3>Knowledge</h3>' + (knowledgeEvents || '<p class="empty">No knowledge events yet.</p>') + '</div></div><div><h3>Iterations</h3>' + (iterations || '<p class="empty">No iterations yet.</p>') + '</div></article>';
+    };
+    async function refreshRunDetail() {
+      const region = document.querySelector('[data-region="run-detail"]');
+      if (!region) return;
+      if (!activeRunId) {
+        region.innerHTML = runDetailHtml(null);
+        return;
+      }
+      const detail = await fetch("/api/run/" + encodeURIComponent(activeRunId) + "/detail").then((res) => res.json());
+      region.innerHTML = runDetailHtml(detail);
+    }
+    document.addEventListener('click', (event) => {
+      const target = event.target && event.target.closest ? event.target.closest('[data-run-id]') : null;
+      if (!target) return;
+      activeRunId = target.getAttribute('data-run-id') || activeRunId;
+      void refreshRunDetail();
+    });
     async function refreshDashboard() {
       const [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         fetch("/api/reports").then((res) => res.json()),
@@ -557,6 +767,8 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       ]);
       document.querySelector('[data-region="reports"]').innerHTML = reports.length ? reports.map(reportHtml).join('') : '<p class="empty">No reports yet.</p>';
       document.querySelector('[data-region="runs"]').innerHTML = runs.length ? runs.map(runHtml).join('') : '<p class="empty">No runs yet.</p>';
+      if (!activeRunId && runs[0]) activeRunId = runs[0].id;
+      await refreshRunDetail();
       document.querySelector('[data-region="wiki"]').textContent = wiki;
       document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
       document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
@@ -589,6 +801,13 @@ export async function startReadOnlyServer(options: ReadOnlyServerOptions): Promi
       const url = new URL(req.url ?? '/', `http://${host}`);
       if (url.pathname === '/') {
         send(res, 200, await renderHome(options.store, options.knowledgeStore), 'text/html; charset=utf-8');
+        return;
+      }
+      if (url.pathname.startsWith('/api/run/') && url.pathname.endsWith('/detail')) {
+        const id = decodeURIComponent(url.pathname.slice('/api/run/'.length, -'/detail'.length));
+        const record = await options.store.load(id);
+        if (!record) sendJson(res, 404, { error: 'run not found' });
+        else sendJson(res, 200, runDetail(record));
         return;
       }
       if (url.pathname.startsWith('/api/run/')) {
