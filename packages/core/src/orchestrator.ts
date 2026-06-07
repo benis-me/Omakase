@@ -216,6 +216,13 @@ function summarizeMarkdown(markdown: string, fallback: string): string {
   return (line ?? fallback).slice(0, 300);
 }
 
+function boundedReviewExcerpt(text: string, limit = 6000): string {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit * 0.6);
+  const tail = limit - head;
+  return `${text.slice(0, head)}\n\n[...truncated ${text.length - limit} chars...]\n\n${text.slice(-tail)}`;
+}
+
 class RunController implements RunHandle {
   readonly id: string;
   readonly result: Promise<RunResult>;
@@ -527,6 +534,16 @@ class RunController implements RunHandle {
     return this.acceptance.criteria.map((criterion) => criterion.title);
   }
 
+  private createAgentIdentity(
+    assignment: ReturnType<ModelPolicy['select']>,
+    role: AgentRole,
+    taskId: string | null,
+  ): { agentRunId: string; agentLabel: string } {
+    const agentRunId = this.ids.next('agent-run');
+    const suffix = taskId ?? role;
+    return { agentRunId, agentLabel: `${assignment.agentId}#${suffix}` };
+  }
+
   private async runSupportAgent(
     role: Extract<AgentRole, 'reporter' | 'wiki-curator'>,
     prompt: string,
@@ -553,24 +570,25 @@ class RunController implements RunHandle {
         },
       };
     }
+    const identity = this.createAgentIdentity(assignment, role, null);
     const input: AgentRunInput = {
       agentId: assignment.agentId,
       prompt,
       ...(this.request.cwd ? { cwd: this.request.cwd } : {}),
       model: assignment.model,
       reasoning: assignment.reasoning,
-      metadata: { role, runId: this.id },
+      metadata: { role, runId: this.id, ...identity },
     };
     const abort = new AbortController();
     this.activeAborts.add(abort);
     input.signal = abort.signal;
-    this.emit({ type: 'agent-assigned', role, taskId: null, title: role, assignment });
+    this.emit({ type: 'agent-assigned', role, taskId: null, title: role, assignment, ...identity });
     await this.checkpointProgress();
     const acc = createResultAccumulator();
     try {
       for await (const event of this.runtime.streamAgentEvents(input)) {
         acc.push(event);
-        this.emit({ type: 'agent-event', role, taskId: null, assignment, event });
+        this.emit({ type: 'agent-event', role, taskId: null, assignment, ...identity, event });
         await this.checkpointProgress();
       }
     } catch (err) {
@@ -967,9 +985,10 @@ class RunController implements RunHandle {
       'Respond with ONLY a JSON object: {"acceptanceCriteria": string[], "tasks": object[]}.',
       'Each task object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
       'phase is the user-visible stage name shown in the TUI, such as Discovery, Core, TUI, Verification, or Docs.',
+      'The tasks array is WORKER tasks only. Do not include reviewer, review, approval, or final verification tasks; Omakase automatically adds one reviewer task after the workers.',
       'acceptanceCriteria must be concrete, testable, product-facing completion checks.',
       'Do not create acceptance criteria about reviewer approval, report creation, wiki curator execution, strategy events, session logs, or harness internals.',
-      'For broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
+      'If the request specifies an exact number of worker tasks, obey that count. Otherwise, for broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
       'Do not collapse unrelated work into one task.',
       'Do not include reporter, report-writing, wiki-curator, wiki-synthesis, sidecar, or support-agent tasks in tasks; Omakase runs those outside the main task graph.',
       'dependsOn uses zero-based indices of earlier tasks.',
@@ -1039,6 +1058,10 @@ class RunController implements RunHandle {
         idsByInputIndex[index] = undefined;
         continue;
       }
+      if (this.isSystemReviewPlanTask(raw, title, description)) {
+        idsByInputIndex[index] = undefined;
+        continue;
+      }
       const dependsOn = Array.isArray(item.dependsOn)
         ? item.dependsOn
             .map((idx) => (typeof idx === 'number' ? idsByInputIndex[idx] : undefined))
@@ -1064,6 +1087,28 @@ class RunController implements RunHandle {
     });
     graph.refreshReadiness();
     return { graph, acceptanceCriteria };
+  }
+
+  private isSystemReviewPlanTask(raw: unknown, title: string, description: string): boolean {
+    const item = raw as { role?: unknown; phase?: unknown; kind?: unknown };
+    const role = typeof item.role === 'string' ? item.role.trim().toLowerCase() : '';
+    if (role === 'reviewer' || role === 'review') return true;
+    const phase = typeof item.phase === 'string' ? item.phase : '';
+    const kind = typeof item.kind === 'string' ? item.kind : '';
+    const text = [title, description, phase, kind].join(' ').toLowerCase();
+    const startsWithSystemReview = /^\s*(review|approve|验收|审查|复核)\b/i.test(title);
+    const startsWithVerification = /^\s*(verify|validate)\b/i.test(title);
+    const reviewerIntent =
+      text.includes('reviewer task') ||
+      text.includes('review task') ||
+      text.includes('review and verify') ||
+      text.includes('review completed work') ||
+      text.includes('approve when') ||
+      text.includes('approval') ||
+      ((text.includes('worker result') || text.includes('worker output')) &&
+        (text.includes('review') || text.includes('verify') || text.includes('approve'))) ||
+      (text.includes('acceptance criteria') && (text.includes('review') || text.includes('reviewer') || text.includes('approve')));
+    return (startsWithSystemReview || startsWithVerification) && reviewerIntent;
   }
 
   private isOutOfBandPlanTask(raw: unknown, title: string, description: string): boolean {
@@ -1099,6 +1144,13 @@ class RunController implements RunHandle {
     if (text.includes('strategy event') || text.includes('strategy-update') || text.includes('strategy-updated')) return true;
     if (text.includes('session log') || text.includes('session-log')) return true;
     if (text.includes('harness internal') || text.includes('harness-level')) return true;
+    if (text.includes('task graph') || text.includes('planned task graph')) return true;
+    if (text.includes('dependency-free worker task') || text.includes('user-facing task graph')) return true;
+    if (text.includes('exactly') && text.includes('worker task')) return true;
+    if (text.includes('normal-mode') && text.includes('task') && text.includes('worker')) return true;
+    if (text.includes('agent distribution') || text.includes('normal-mode agent')) return true;
+    if (text.includes('offline') && (text.includes('builtin') || text.includes('scripted'))) return true;
+    if (text.includes('fallback') && (text.includes('builtin') || text.includes('scripted'))) return true;
     return false;
   }
 
@@ -1120,6 +1172,7 @@ class RunController implements RunHandle {
 
     const assignment = this.policy.select('planner', { available: this.available });
     if (assignment.agentId === BUILTIN_AGENT_ID) return fallback();
+    const identity = this.createAgentIdentity(assignment, 'planner', null);
 
     const input: AgentRunInput = {
       agentId: assignment.agentId,
@@ -1127,13 +1180,15 @@ class RunController implements RunHandle {
       ...(this.request.cwd ? { cwd: this.request.cwd } : {}),
       model: assignment.model,
       reasoning: assignment.reasoning,
-      metadata: { role: 'planner' },
+      metadata: { role: 'planner', runId: this.id, ...identity },
     };
     const acc = createResultAccumulator();
+    this.emit({ type: 'agent-assigned', role: 'planner', taskId: null, title: 'planner', assignment, ...identity });
+    await this.checkpointProgress();
     try {
       for await (const event of this.runtime.streamAgentEvents(input)) {
         acc.push(event);
-        this.emit({ type: 'agent-event', role: 'planner', taskId: null, assignment, event });
+        this.emit({ type: 'agent-event', role: 'planner', taskId: null, assignment, ...identity, event });
         await this.checkpointProgress();
       }
     } catch (err) {
@@ -1175,7 +1230,20 @@ class RunController implements RunHandle {
       const completed = task.dependsOn
         .map((id) => this.graph.get(id))
         .filter((t): t is TaskNode => Boolean(t))
-        .map((t) => `- ${t.title}: ${t.result?.summary ?? '(no summary)'}`)
+        .map((t) => {
+          const resultText = t.result?.output || t.result?.summary || '(no output)';
+          const lines = [
+            `- ${t.title} (${t.id})`,
+            `  status: ${t.status}`,
+            t.result?.agentId ? `  agent: ${t.result.agentId}` : '',
+            '  output:',
+            boundedReviewExcerpt(resultText)
+              .split('\n')
+              .map((line) => `    ${line}`)
+              .join('\n'),
+          ].filter(Boolean);
+          return lines.join('\n');
+        })
         .join('\n');
       const criteria = this.acceptanceCriteriaText();
       if (criteria.length > 0) {
@@ -1409,6 +1477,7 @@ class RunController implements RunHandle {
       taskTitle: task.title,
       taskType: task.tags[0] ?? task.role,
     });
+    const identity = this.createAgentIdentity(assignment, task.role, task.id);
     this.graph.incrementAttempts(task.id);
     this.graph.setStatus(task.id, 'running');
     // Persist the 'running' transition NOW (the next checkpoint is only after the
@@ -1422,7 +1491,7 @@ class RunController implements RunHandle {
       ...(this.request.cwd ? { cwd: this.request.cwd } : {}),
       model: assignment.model,
       reasoning: assignment.reasoning,
-      metadata: { role: task.role, taskId: task.id },
+      metadata: { role: task.role, taskId: task.id, runId: this.id, ...identity },
     };
 
     const abort = new AbortController();
@@ -1433,14 +1502,14 @@ class RunController implements RunHandle {
       .emit('beforeAgentRun', { role: task.role, assignment, input, task })
       .catch((e) => this.emit({ type: 'error', phase: 'beforeAgentRun', message: errorMessage(e) }));
 
-    this.emit({ type: 'agent-assigned', role: task.role, taskId: task.id, title: task.title, assignment });
+    this.emit({ type: 'agent-assigned', role: task.role, taskId: task.id, title: task.title, assignment, ...identity });
     await this.checkpointProgress();
 
     const acc = createResultAccumulator();
     try {
       for await (const event of this.runtime.streamAgentEvents(input)) {
         acc.push(event);
-        this.emit({ type: 'agent-event', role: task.role, taskId: task.id, assignment, event });
+        this.emit({ type: 'agent-event', role: task.role, taskId: task.id, assignment, ...identity, event });
         await this.checkpointProgress();
       }
     } finally {

@@ -92,12 +92,20 @@ export type OrchestratorEvent =
       taskId: string | null;
       title?: string;
       assignment: RoleAssignment;
+      /** Unique identity for this concrete agent process/invocation. */
+      agentRunId?: string;
+      /** User-facing label that distinguishes concurrent runs on the same adapter. */
+      agentLabel?: string;
     }
   | {
       type: 'agent-event';
       role: AgentRole;
       taskId: string | null;
       assignment: RoleAssignment;
+      /** Unique identity for this concrete agent process/invocation. */
+      agentRunId?: string;
+      /** User-facing label that distinguishes concurrent runs on the same adapter. */
+      agentLabel?: string;
       event: AgentEvent;
     }
   | {

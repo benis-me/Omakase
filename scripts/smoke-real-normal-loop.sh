@@ -11,11 +11,12 @@ Omakase real normal-mode multi-agent smoke test for this repository.
 Constraints:
 - Read-only. Do not edit files.
 - Treat this as a complex task that should use normal-mode multi-agent worker distribution.
-- Planner should create exactly two independent worker tasks and one reviewer task.
+- If only one authenticated real CLI is available, use multiple independent real worker instances on that CLI; do not fall back to offline/builtin/scripted agents.
+- Planner should create exactly two independent worker tasks. Omakase automatically adds the reviewer task; the planner must not add review, approval, or verification tasks.
 - Do not put reporter, wiki curator, strategy-update, event-log, session-log, or .omakase persistence checks into the acceptance criteria or main task graph; the external smoke harness validates those JSON events after the run.
-- Package worker must inspect only `/Users/ben/Projects/Omakase2/package.json` and make its first output line: `NORMAL_PACKAGE_EVIDENCE path=/Users/ben/Projects/Omakase2/package.json readOnly=true`.
-- Docs worker must inspect only `/Users/ben/Projects/Omakase2/README.md` and make its first output line: `NORMAL_DOC_EVIDENCE path=/Users/ben/Projects/Omakase2/README.md readOnly=true`.
-- Reviewer should approve when both first-line evidence markers are present.
+- Package worker must inspect only `/Users/ben/Projects/Omakase2/package.json` and include this exact marker string anywhere in its worker output: `NORMAL_PACKAGE_EVIDENCE path=/Users/ben/Projects/Omakase2/package.json readOnly=true`.
+- Docs worker must inspect only `/Users/ben/Projects/Omakase2/README.md` and include this exact marker string anywhere in its worker output: `NORMAL_DOC_EVIDENCE path=/Users/ben/Projects/Omakase2/README.md readOnly=true`.
+- Reviewer should approve when both exact marker strings are present anywhere in worker outputs and no file edits are claimed. Do not reject because of skill/process preambles or line-boundary placement.
 - Do not run nested omakase commands.
 PROMPT
 )}"
@@ -32,8 +33,8 @@ const agents = JSON.parse(process.env.AGENTS_JSON ?? '[]');
 const ready = agents
   .filter((agent) => agent.available && agent.authStatus === 'ok' && !['builtin', 'scripted'].includes(agent.id))
   .map((agent) => agent.id);
-if (ready.length < 2) {
-  console.error(`need at least 2 authenticated available agents, found ${ready.length}: ${ready.join(', ') || '(none)'}`);
+if (ready.length < 1) {
+  console.error(`need at least 1 authenticated available real agent, found ${ready.length}: ${ready.join(', ') || '(none)'}`);
   process.exit(1);
 }
 console.log(ready.join(','));
@@ -129,21 +130,23 @@ const assigned = events.filter((event) => event.type === 'agent-assigned');
 const badAgent = assigned.find((event) => ['builtin', 'scripted'].includes(event.assignment?.agentId));
 if (badAgent) fail(`saw fake agent assignment: ${badAgent.assignment?.agentId}`);
 
-const workerAgents = assigned
+const workerAssignments = assigned
   .filter((event) => event.role === 'worker' && event.taskId)
-  .map((event) => event.assignment?.agentId)
-  .filter(Boolean);
-const distinctWorkers = new Set(workerAgents);
-if (distinctWorkers.size < 2) {
-  fail(`expected at least 2 distinct real worker agents, saw: ${workerAgents.join(', ') || '(none)'}`);
+  .filter((event) => event.assignment?.agentId && !['builtin', 'scripted'].includes(event.assignment.agentId));
+const workerAgents = workerAssignments.map((event) => event.assignment?.agentId).filter(Boolean);
+const workerRunIds = workerAssignments.map((event) => event.agentRunId).filter(Boolean);
+const distinctWorkerRuns = new Set(workerRunIds);
+if (distinctWorkerRuns.size < 2) {
+  const labels = workerAssignments.map((event) => event.agentLabel ?? event.assignment?.agentId).filter(Boolean);
+  fail(`expected at least 2 distinct real worker run instances, saw labels: ${labels.join(', ') || '(none)'}`);
 }
 
 const deltas = events
-  .filter((event) => event.type === 'agent-event' && event.event?.type === 'text_delta')
+  .filter((event) => event.type === 'agent-event' && event.role === 'worker' && event.event?.type === 'text_delta')
   .map((event) => event.event.delta ?? '')
   .join('\n');
 if (!deltas.includes('NORMAL_PACKAGE_EVIDENCE')) fail('missing package evidence marker');
 if (!deltas.includes('NORMAL_DOC_EVIDENCE')) fail('missing docs evidence marker');
 NODE
 
-echo "smoke-real-normal-loop: passed using real normal-mode agents ($auth_agents); output: $OUT"
+echo "smoke-real-normal-loop: passed using real normal-mode agent pool ($auth_agents); output: $OUT"

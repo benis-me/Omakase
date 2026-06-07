@@ -158,6 +158,93 @@ describe('view-model', () => {
     expect(view.activity.at(-1)).toContain('assigned worker/codex');
   });
 
+  it('keeps same-runtime worker instances visibly distinct', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'planned',
+      snapshot: {
+        seq: 1,
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Collect package evidence',
+            description: 'Collect package evidence',
+            role: 'worker',
+            status: 'running',
+            dependsOn: [],
+            attempts: 0,
+            tags: ['implementation'],
+            createdAt: 0,
+            metadata: {},
+          },
+          {
+            id: 'task-2',
+            title: 'Collect docs evidence',
+            description: 'Collect docs evidence',
+            role: 'worker',
+            status: 'running',
+            dependsOn: [],
+            attempts: 0,
+            tags: ['implementation'],
+            createdAt: 0,
+            metadata: {},
+          },
+        ],
+      },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-assigned',
+      role: 'worker',
+      taskId: 'task-1',
+      title: 'Collect package evidence',
+      agentRunId: 'agent-run-1',
+      agentLabel: 'codex#task-1',
+      assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-assigned',
+      role: 'worker',
+      taskId: 'task-2',
+      title: 'Collect docs evidence',
+      agentRunId: 'agent-run-2',
+      agentLabel: 'codex#task-2',
+      assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'worker',
+      taskId: 'task-1',
+      agentRunId: 'agent-run-1',
+      agentLabel: 'codex#task-1',
+      assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'usage', usage: { totalTokens: 11 } },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'worker',
+      taskId: 'task-2',
+      agentRunId: 'agent-run-2',
+      agentLabel: 'codex#task-2',
+      assignment: { role: 'worker', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'usage', usage: { totalTokens: 17 } },
+    } as any);
+
+    expect(view.tasks.map((task) => task.agentId)).toEqual(['codex', 'codex']);
+    expect(view.tasks.map((task) => task.agentRunId)).toEqual(['agent-run-1', 'agent-run-2']);
+    expect(view.tasks.map((task) => task.agentLabel)).toEqual(['codex#task-1', 'codex#task-2']);
+    expect(view.tasks.map((task) => task.tokens)).toEqual([11, 17]);
+    expect(view.phrases).toEqual([
+      'worker/codex#task-1 usage: 11 tok',
+      'worker/codex#task-2 usage: 17 tok',
+    ]);
+    expect(view.events).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('assigned worker/codex#task-1'),
+        expect.stringContaining('assigned worker/codex#task-2'),
+      ]),
+    );
+  });
+
   it('collects planner phrases from streamed agent events', () => {
     let view = initialRunView('normal');
     view = reduceRunView(view, {

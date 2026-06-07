@@ -81,6 +81,14 @@ function isRunnableAgent(agent: DetectedAgent): boolean {
   return agent.available && agent.authStatus !== 'missing';
 }
 
+function isVisibleDetectedAgent(agent: DetectedAgent): boolean {
+  return isRunnableAgent(agent) || agent.available || Boolean(agent.unavailableReason);
+}
+
+function agentDisplay(task: TaskView): string {
+  return task.agentLabel ?? task.agentId ?? 'unassigned';
+}
+
 /** Cycle the "main agent" selection: auto → each available agent → auto. */
 function cycleAgent(current: string | null, agents: DetectedAgent[]): string | null {
   const cycle: Array<string | null> = [null, ...agents.filter(isRunnableAgent).map((a) => a.id)];
@@ -481,7 +489,8 @@ export function App({
     if (expandedTaskId && !tasks.some((t) => t.id === expandedTaskId)) setExpandedTaskId(null);
   }, [expandedTaskId, selectedPhase, view]);
 
-  const availableCount = agents.filter(isRunnableAgent).length;
+  const visibleAgents = agents.filter(isVisibleDetectedAgent);
+  const availableCount = visibleAgents.filter(isRunnableAgent).length;
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -489,14 +498,14 @@ export function App({
         view={view}
         screen={screen}
         availableCount={availableCount}
-        agentTotal={agents.length}
+        agentTotal={visibleAgents.length}
         nowMs={nowMs}
         task={task}
         daemon={daemon}
       />
       <Box flexGrow={1} flexDirection="column">
         {screen === 'list' ? (
-          <RunList runs={runs} selected={selected} agents={agents} />
+          <RunList runs={runs} selected={selected} agents={visibleAgents} />
         ) : (
           <RunDetail
             view={view}
@@ -677,7 +686,7 @@ function WorkspacePane({
         {view.tasks.length === 0 ? <Text dimColor>no agents yet</Text> : null}
         {view.tasks.map((task) => (
           <Text key={task.id}>
-            {taskIcon(task.status)} {task.agentId ?? 'unassigned'} <Text dimColor>{task.tokens} tok · {task.toolCount} tools</Text>
+            {taskIcon(task.status)} {agentDisplay(task)} <Text dimColor>{task.tokens} tok · {task.toolCount} tools</Text>
           </Text>
         ))}
       </>
@@ -796,7 +805,8 @@ function RunDetail({
                 {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 36)}
                 <Text dimColor>
                   {'   '}
-                  {t.agentId ? `${t.agentId} · ` : ''}
+                  {agentDisplay(t)} ·
+                  {' '}
                   {t.tokens} tok · {t.toolCount} tools · {el}
                 </Text>
               </Text>
@@ -808,6 +818,7 @@ function RunDetail({
                   <Text dimColor>
                     {'   '}agent: {t.agentId ?? 'unassigned'} · tokens: {t.tokens} · tools: {t.toolCount} · time: {el}
                   </Text>
+                  {t.agentLabel ? <Text dimColor>{'   '}instance: {t.agentLabel}</Text> : null}
                   <Text dimColor>{'   '}title: {t.title}</Text>
                 </>
               ) : null}

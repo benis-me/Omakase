@@ -39,6 +39,10 @@ export interface TaskView {
   startedAt: number | null;
   finishedAt: number | null;
   agentId: string | null;
+  /** Concrete process/invocation id for this task's current agent run. */
+  agentRunId: string | null;
+  /** Display label that distinguishes same-runtime concurrent workers. */
+  agentLabel: string | null;
 }
 
 /** A run "phase": a group of tasks (by first tag, else role) with progress. */
@@ -116,7 +120,7 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
 function phraseLine(event: OrchestratorEvent): string {
   if (event.type !== 'agent-event') return '';
   const role = event.role;
-  const agent = event.assignment.agentId;
+  const agent = agentDisplay(event);
   const inner = event.event;
   if (inner.type === 'thinking_delta' && inner.delta.trim()) {
     return `${role}/${agent} thinking: ${inner.delta.trim()}`;
@@ -137,6 +141,12 @@ function phraseLine(event: OrchestratorEvent): string {
     return `${role}/${agent} error: ${inner.message}`;
   }
   return '';
+}
+
+function agentDisplay(
+  event: Extract<OrchestratorEvent, { type: 'agent-assigned' | 'agent-event' }>,
+): string {
+  return event.agentLabel ?? event.assignment.agentId;
 }
 
 export function formatEventLine(event: OrchestratorEvent): string {
@@ -170,7 +180,7 @@ export function formatEventLine(event: OrchestratorEvent): string {
     case 'task-status':
       return `  · ${event.title}: ${event.from} → ${event.to}`;
     case 'agent-assigned':
-      return `  ⇄ assigned ${event.role}/${event.assignment.agentId}${event.title ? ` to ${event.title}` : ''}`;
+      return `  ⇄ assigned ${event.role}/${agentDisplay(event)}${event.title ? ` to ${event.title}` : ''}`;
     case 'task-finished':
       return `  ${event.success ? '✓' : '✗'} [${event.role}] ${event.title}`;
     case 'review':
@@ -216,6 +226,8 @@ function upsertTasks(tasks: TaskView[], snapshot: PlanGraphSnapshot): TaskView[]
       startedAt: prev?.startedAt ?? null,
       finishedAt: prev?.finishedAt ?? null,
       agentId: prev?.agentId ?? null,
+      agentRunId: prev?.agentRunId ?? null,
+      agentLabel: prev?.agentLabel ?? null,
     };
   });
 }
@@ -346,20 +358,35 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
               startedAt: startStamp,
               finishedAt: endStamp,
               agentId: null,
+              agentRunId: null,
+              agentLabel: null,
             },
           ];
       return derive({ ...next, tasks });
     }
     case 'agent-assigned': {
       const agentId = event.assignment?.agentId ?? null;
+      const agentRunId = event.agentRunId ?? null;
+      const agentLabel = event.agentLabel ?? null;
       const tasks = event.taskId
-        ? view.tasks.map((t) => (t.id === event.taskId ? { ...t, agentId: agentId ?? t.agentId } : t))
+        ? view.tasks.map((t) =>
+            t.id === event.taskId
+              ? {
+                  ...t,
+                  agentId: agentId ?? t.agentId,
+                  agentRunId: agentRunId ?? t.agentRunId,
+                  agentLabel: agentLabel ?? t.agentLabel,
+                }
+              : t,
+          )
         : view.tasks;
       return derive({ ...next, tasks });
     }
     case 'agent-event': {
       const inner = event.event;
       const agentId = event.assignment?.agentId ?? null;
+      const agentRunId = event.agentRunId ?? null;
+      const agentLabel = event.agentLabel ?? null;
       const addTokens = inner.type === 'usage' ? tokensOf(inner.usage) : 0;
       const tasks = view.tasks.map((t) =>
         t.id === event.taskId
@@ -368,6 +395,8 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
               tokens: t.tokens + addTokens,
               toolCount: t.toolCount + (inner.type === 'tool_use' ? 1 : 0),
               agentId: agentId ?? t.agentId,
+              agentRunId: agentRunId ?? t.agentRunId,
+              agentLabel: agentLabel ?? t.agentLabel,
             }
           : t,
       );

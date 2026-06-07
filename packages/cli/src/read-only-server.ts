@@ -119,6 +119,8 @@ async function agentSummaries(store: RunStore): Promise<Array<{
   role: string;
   status: string;
   agentId: string | null;
+  agentRunId: string | null;
+  agentLabel: string | null;
   tokens: number;
   tools: number;
 }>> {
@@ -129,24 +131,41 @@ async function agentSummaries(store: RunStore): Promise<Array<{
     role: string;
     status: string;
     agentId: string | null;
+    agentRunId: string | null;
+    agentLabel: string | null;
     tokens: number;
     tools: number;
   }> = [];
   for (const record of await records(store)) {
-    const stats = new Map<string, { agentId: string | null; tokens: number; tools: number }>();
+    const stats = new Map<string, { agentId: string | null; agentRunId: string | null; agentLabel: string | null; tokens: number; tools: number }>();
     for (const event of record.events) {
-      if (event.type !== 'agent-event') continue;
-      const key = event.taskId ?? `support:${event.role}:${event.assignment.agentId}`;
-      const prev = stats.get(key) ?? { agentId: event.assignment.agentId, tokens: 0, tools: 0 };
+      if (event.type !== 'agent-event' && event.type !== 'agent-assigned') continue;
+      const key = event.agentRunId ?? event.taskId ?? `support:${event.role}:${event.assignment.agentId}`;
+      const prev = stats.get(key) ?? {
+        agentId: event.assignment.agentId,
+        agentRunId: event.agentRunId ?? null,
+        agentLabel: event.agentLabel ?? null,
+        tokens: 0,
+        tools: 0,
+      };
+      if (event.type === 'agent-assigned') {
+        prev.agentId = event.assignment.agentId;
+        prev.agentRunId = event.agentRunId ?? prev.agentRunId;
+        prev.agentLabel = event.agentLabel ?? prev.agentLabel;
+        stats.set(key, prev);
+        continue;
+      }
       if (event.event.type === 'usage') {
         prev.tokens += event.event.usage.totalTokens ?? (event.event.usage.inputTokens ?? 0) + (event.event.usage.outputTokens ?? 0);
       }
       if (event.event.type === 'tool_use') prev.tools += 1;
       prev.agentId = event.assignment.agentId;
+      prev.agentRunId = event.agentRunId ?? prev.agentRunId;
+      prev.agentLabel = event.agentLabel ?? prev.agentLabel;
       stats.set(key, prev);
     }
     for (const task of record.plan.tasks ?? []) {
-      const stat = stats.get(task.id);
+      const stat = [...stats.values()].find((item) => item.agentLabel?.endsWith(`#${task.id}`)) ?? stats.get(task.id);
       out.push({
         runId: record.id,
         taskId: task.id,
@@ -154,13 +173,18 @@ async function agentSummaries(store: RunStore): Promise<Array<{
         role: task.role,
         status: task.status,
         agentId: stat?.agentId ?? task.result?.agentId ?? null,
+        agentRunId: stat?.agentRunId ?? null,
+        agentLabel: stat?.agentLabel ?? null,
         tokens: stat?.tokens ?? 0,
         tools: stat?.tools ?? 0,
       });
     }
     for (const [key, stat] of stats) {
-      if (!key.startsWith('support:')) continue;
-      const [, role, agentId] = key.split(':');
+      const taskBacked = (record.plan.tasks ?? []).some((task) => stat.agentLabel?.endsWith(`#${task.id}`) || key === task.id);
+      if (taskBacked) continue;
+      const support = key.startsWith('support:') ? key.split(':') : [];
+      const role = support[1] ?? stat.agentLabel?.split('#')[1] ?? 'support';
+      const agentId = support[2] ?? stat.agentId;
       out.push({
         runId: record.id,
         taskId: null,
@@ -168,6 +192,8 @@ async function agentSummaries(store: RunStore): Promise<Array<{
         role: role ?? 'support',
         status: 'support',
         agentId: agentId ?? stat.agentId,
+        agentRunId: stat.agentRunId,
+        agentLabel: stat.agentLabel,
         tokens: stat.tokens,
         tools: stat.tools,
       });
@@ -193,9 +219,9 @@ function eventActivityLabel(event: RunRecord['events'][number]): string {
     case 'task-finished':
       return `${event.role} · ${event.title}`;
     case 'agent-assigned':
-      return `assigned · ${event.role}/${event.assignment.agentId}`;
+      return `assigned · ${event.role}/${event.agentLabel ?? event.assignment.agentId}`;
     case 'agent-event':
-      return `${event.role} · ${event.assignment.agentId} · ${event.event.type}`;
+      return `${event.role} · ${event.agentLabel ?? event.assignment.agentId} · ${event.event.type}`;
     case 'run-finished':
       return `run · ${event.status}`;
     default:
@@ -336,7 +362,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           .slice(0, 16)
           .map(
             (agent) => `<article class="compact-row">
-  <strong>${escapeHtml(agent.agentId ?? 'unassigned')}</strong>
+  <strong>${escapeHtml(agent.agentLabel ?? agent.agentId ?? 'unassigned')}</strong>
   <span>${escapeHtml(agent.role)} · ${escapeHtml(agent.status)}</span>
   <p>${escapeHtml(agent.title)} · ${agent.tokens} tok · ${agent.tools} tools</p>
 </article>`,
@@ -507,7 +533,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const activityHtml = (item) => '<li><span>' + escapeHtml(item.type) + '</span>' + escapeHtml(item.label) + '<small>' + escapeHtml(item.runId) + '</small></li>';
     const acceptanceHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>' + item.progress.passed + '/' + item.progress.total + '</span><p>' + escapeHtml(item.criteria.map((criterion) => criterion.status + ': ' + criterion.title).join(' · ')) + '</p></article>';
     const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
-    const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
+    const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentLabel || agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
     const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
     const wikiPageSourceLabel = (page) => page.sourceKind === 'codegraph' ? 'source: codegraph' : page.sourceKind === 'wiki' ? 'source: wiki entries' : page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: derived';
     const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(wikiPageSourceLabel(page)) + '</p></article>';

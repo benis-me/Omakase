@@ -189,6 +189,367 @@ describe('orchestrator long-running acceptance loop', () => {
     expect(workerAssigned).not.toContain('scripted');
   });
 
+  it('normal mode gives concurrent workers distinct run identities even on one authenticated runtime', async () => {
+    const detected = (id: string): DetectedAgent =>
+      ({
+        id,
+        name: id,
+        bin: id,
+        streamFormat: 'jsonl',
+        promptViaStdin: true,
+        supportsImagePaths: false,
+        supportsCustomModel: true,
+        reasoningOptions: [{ id: 'high', label: 'High' }],
+        externalMcpInjection: undefined,
+        installUrl: undefined,
+        docsUrl: undefined,
+        available: true,
+        path: `/bin/${id}`,
+        version: 'test',
+        models: [{ id: 'default', label: 'Default' }],
+        modelsSource: 'fallback',
+        capabilities: {},
+        authStatus: 'ok',
+        authMessage: undefined,
+      }) as DetectedAgent;
+    const planner: Planner = {
+      plan: (ctx) => {
+        const graph = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+        const a = graph.addTask({ title: 'Collect package evidence', role: 'worker', tags: ['implementation'] });
+        const b = graph.addTask({ title: 'Collect docs evidence', role: 'worker', tags: ['implementation'] });
+        graph.addTask({
+          title: 'Review distributed evidence',
+          role: 'reviewer',
+          dependsOn: [a.id, b.id],
+          tags: ['Review'],
+        });
+        graph.refreshReadiness();
+        return graph;
+      },
+    };
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        yield { type: 'status', label: 'working' };
+        if (role === 'reviewer') {
+          yield {
+            type: 'text_delta',
+            delta: JSON.stringify([
+              { met: true, note: 'Package evidence was collected.' },
+              { met: true, note: 'Docs evidence was collected.' },
+            ]),
+          };
+        } else {
+          yield { type: 'text_delta', delta: `${ctx.input.agentId} completed ${ctx.input.metadata?.taskId}` };
+          yield { type: 'usage', usage: { totalTokens: 7 } };
+        }
+      }
+      return gen();
+    };
+    const runtime = createAgentRuntime({ executors: { codex: exec }, now: () => 0 });
+    (runtime as any).detect = async () => [detected('codex')];
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      planner,
+      policy: createModelPolicy('normal', { ranking: ['codex'] }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      maxConcurrency: 2,
+    });
+
+    const result = await orch.start({
+      prompt: 'collect independent evidence with multiple workers',
+      acceptanceCriteria: ['Package evidence was collected.', 'Docs evidence was collected.'],
+      metadata: { supportAgents: false },
+    }).result;
+
+    expect(result.status).toBe('succeeded');
+    const workerAssignments = result.events.flatMap((event) =>
+      event.type === 'agent-assigned' && event.role === 'worker' ? [event as any] : [],
+    );
+    expect(workerAssignments.map((event) => event.assignment.agentId)).toEqual(['codex', 'codex']);
+    expect(new Set(workerAssignments.map((event) => event.agentRunId)).size).toBe(2);
+    expect(workerAssignments.map((event) => event.agentLabel)).toEqual(
+      expect.arrayContaining([expect.stringContaining('codex#'), expect.stringContaining('codex#')]),
+    );
+  });
+
+  it('filters review-like tasks from agent planner output because the system adds the reviewer', async () => {
+    const detected = (id: string): DetectedAgent =>
+      ({
+        id,
+        name: id,
+        bin: id,
+        streamFormat: 'jsonl',
+        promptViaStdin: true,
+        supportsImagePaths: false,
+        supportsCustomModel: true,
+        reasoningOptions: [{ id: 'high', label: 'High' }],
+        externalMcpInjection: undefined,
+        installUrl: undefined,
+        docsUrl: undefined,
+        available: true,
+        path: `/bin/${id}`,
+        version: 'test',
+        models: [{ id: 'default', label: 'Default' }],
+        modelsSource: 'fallback',
+        capabilities: {},
+        authStatus: 'ok',
+        authMessage: undefined,
+      }) as DetectedAgent;
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        yield { type: 'status', label: 'working' };
+        if (role === 'planner') {
+          yield {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              acceptanceCriteria: ['Package evidence was collected.'],
+              tasks: [
+                { title: 'Collect package evidence', description: 'Inspect package.json.', phase: 'Discovery', dependsOn: [] },
+                { title: 'Collect docs evidence', description: 'Inspect README.md.', phase: 'Discovery', dependsOn: [] },
+                {
+                  title: 'Review normal-mode smoke evidence',
+                  description: 'Use a reviewer task to verify that both worker results contain the required evidence markers.',
+                  phase: 'Verification',
+                  dependsOn: [0, 1],
+                },
+              ],
+            }),
+          };
+        } else if (role === 'reviewer') {
+          yield { type: 'text_delta', delta: JSON.stringify([{ met: true, note: 'Package evidence was collected.' }]) };
+        } else {
+          yield { type: 'text_delta', delta: 'Package evidence was collected.' };
+        }
+      }
+      return gen();
+    };
+    const runtime = createAgentRuntime({ executors: { codex: exec }, now: () => 0 });
+    (runtime as any).detect = async () => [detected('codex')];
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: createModelPolicy('normal', { ranking: ['codex'] }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      maxConcurrency: 2,
+    });
+
+    const result = await orch.start({
+      prompt: 'collect package and docs evidence, then review',
+      metadata: { supportAgents: false },
+    }).result;
+
+    expect(result.status).toBe('succeeded');
+    const workerTitles = result.plan.tasks.filter((task) => task.role === 'worker').map((task) => task.title);
+    expect(workerTitles).toEqual(['Collect package evidence', 'Collect docs evidence']);
+    expect(result.plan.tasks.filter((task) => task.role === 'reviewer')).toHaveLength(1);
+  });
+
+  it('keeps worker tasks that use verify language without reviewer intent', async () => {
+    const detected = (id: string): DetectedAgent =>
+      ({
+        id,
+        name: id,
+        bin: id,
+        streamFormat: 'jsonl',
+        promptViaStdin: true,
+        supportsImagePaths: false,
+        supportsCustomModel: true,
+        reasoningOptions: [{ id: 'high', label: 'High' }],
+        externalMcpInjection: undefined,
+        installUrl: undefined,
+        docsUrl: undefined,
+        available: true,
+        path: `/bin/${id}`,
+        version: 'test',
+        models: [{ id: 'default', label: 'Default' }],
+        modelsSource: 'fallback',
+        capabilities: {},
+        authStatus: 'ok',
+        authMessage: undefined,
+      }) as DetectedAgent;
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        if (role === 'planner') {
+          yield {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              acceptanceCriteria: ['Package evidence marker was emitted.'],
+              tasks: [
+                {
+                  title: 'Verify package evidence marker',
+                  description: 'Inspect package.json and emit the exact package evidence marker.',
+                  phase: 'Discovery',
+                  dependsOn: [],
+                },
+              ],
+            }),
+          };
+        } else if (role === 'reviewer') {
+          yield { type: 'text_delta', delta: JSON.stringify([{ met: true, note: 'Package evidence marker was emitted.' }]) };
+        } else {
+          yield { type: 'text_delta', delta: 'Package evidence marker was emitted.' };
+        }
+      }
+      return gen();
+    };
+    const runtime = createAgentRuntime({ executors: { codex: exec }, now: () => 0 });
+    (runtime as any).detect = async () => [detected('codex')];
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: createModelPolicy('normal', { ranking: ['codex'] }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      maxConcurrency: 2,
+    });
+
+    const result = await orch.start({
+      prompt: 'verify package evidence marker',
+      metadata: { supportAgents: false },
+    }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.plan.tasks.filter((task) => task.role === 'worker').map((task) => task.title)).toEqual([
+      'Verify package evidence marker',
+    ]);
+    expect(result.plan.tasks.filter((task) => task.role === 'reviewer')).toHaveLength(1);
+  });
+
+  it('filters planner-generated process criteria that belong to the harness, not completion', async () => {
+    const detected = (id: string): DetectedAgent =>
+      ({
+        id,
+        name: id,
+        bin: id,
+        streamFormat: 'jsonl',
+        promptViaStdin: true,
+        supportsImagePaths: false,
+        supportsCustomModel: true,
+        reasoningOptions: [{ id: 'high', label: 'High' }],
+        externalMcpInjection: undefined,
+        installUrl: undefined,
+        docsUrl: undefined,
+        available: true,
+        path: `/bin/${id}`,
+        version: 'test',
+        models: [{ id: 'default', label: 'Default' }],
+        modelsSource: 'fallback',
+        capabilities: {},
+        authStatus: 'ok',
+        authMessage: undefined,
+      }) as DetectedAgent;
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        if (role === 'planner') {
+          yield {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              acceptanceCriteria: [
+                'The normal-mode user-facing task graph contains exactly two dependency-free worker tasks.',
+                'Worker execution uses real normal-mode agent distribution with no offline, builtin, or scripted-agent fallback.',
+                'Package evidence was collected.',
+              ],
+              tasks: [{ title: 'Collect package evidence', description: 'Inspect package.json.', phase: 'Discovery', dependsOn: [] }],
+            }),
+          };
+        } else if (role === 'reviewer') {
+          yield { type: 'text_delta', delta: JSON.stringify([{ met: true, note: 'Package evidence was collected.' }]) };
+        } else {
+          yield { type: 'text_delta', delta: 'Package evidence was collected.' };
+        }
+      }
+      return gen();
+    };
+    const runtime = createAgentRuntime({ executors: { codex: exec }, now: () => 0 });
+    (runtime as any).detect = async () => [detected('codex')];
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      policy: createModelPolicy('normal', { ranking: ['codex'] }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const result = await orch.start({ prompt: 'collect package evidence', metadata: { supportAgents: false } }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.acceptance.criteria.map((criterion) => criterion.title)).toEqual(['Package evidence was collected.']);
+  });
+
+  it('gives reviewers full worker output excerpts instead of truncated summaries', async () => {
+    const detected = (id: string): DetectedAgent =>
+      ({
+        id,
+        name: id,
+        bin: id,
+        streamFormat: 'jsonl',
+        promptViaStdin: true,
+        supportsImagePaths: false,
+        supportsCustomModel: true,
+        reasoningOptions: [{ id: 'high', label: 'High' }],
+        externalMcpInjection: undefined,
+        installUrl: undefined,
+        docsUrl: undefined,
+        available: true,
+        path: `/bin/${id}`,
+        version: 'test',
+        models: [{ id: 'default', label: 'Default' }],
+        modelsSource: 'fallback',
+        capabilities: {},
+        authStatus: 'ok',
+        authMessage: undefined,
+      }) as DetectedAgent;
+    let reviewerPrompt = '';
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        if (role === 'reviewer') {
+          reviewerPrompt = ctx.input.prompt;
+          yield { type: 'text_delta', delta: 'APPROVE: full evidence visible' };
+        } else {
+          yield { type: 'text_delta', delta: `${'x'.repeat(600)} NO_EDIT_EVIDENCE no nested omakase commands` };
+        }
+      }
+      return gen();
+    };
+    const runtime = createAgentRuntime({ executors: { codex: exec }, now: () => 0 });
+    (runtime as any).detect = async () => [detected('codex')];
+    const planner: Planner = {
+      plan: (ctx) => {
+        const graph = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+        const worker = graph.addTask({ title: 'Collect long evidence', role: 'worker', tags: ['Discovery'] });
+        graph.addTask({ title: 'Review evidence', role: 'reviewer', dependsOn: [worker.id], tags: ['Review'] });
+        graph.refreshReadiness();
+        return graph;
+      },
+    };
+    const orch = new Orchestrator({
+      runtime,
+      router: complexRouter,
+      planner,
+      policy: createModelPolicy('normal', { ranking: ['codex'] }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    await orch.start({ prompt: 'review long worker evidence', metadata: { supportAgents: false } }).result;
+
+    expect(reviewerPrompt).toContain('NO_EDIT_EVIDENCE');
+    expect(reviewerPrompt).toContain('no nested omakase commands');
+  });
+
   it('emits acceptance and iteration state and only succeeds when all criteria pass', async () => {
     const orch = orchForReview([
       [

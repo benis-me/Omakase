@@ -14,6 +14,13 @@ const TWO_AGENTS = [
   { id: 'claude', available: true },
 ] as unknown as DetectedAgent[];
 
+const NOISY_AGENT_SCAN = [
+  { id: 'codex', available: true, authStatus: 'ok' },
+  { id: 'gemini', available: true, authStatus: 'missing' },
+  { id: 'opencode', available: false, authStatus: 'unknown' },
+  { id: 'claude', available: false, authStatus: 'unknown', unavailableReason: 'CLAUDE_BIN is not executable' },
+] as unknown as DetectedAgent[];
+
 function tick(ms = 60): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -36,6 +43,8 @@ function sampleView(): RunView {
         startedAt: 0,
         finishedAt: null,
         agentId: 'codex',
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#t1',
       },
     ],
     phases: [{ stage: 'logic', done: 0, total: 1 }],
@@ -62,6 +71,8 @@ function multiAgentView(): RunView {
         startedAt: 0,
         finishedAt: null,
         agentId: 'codex',
+        agentRunId: 'agent-run-1',
+        agentLabel: 'codex#t1',
       },
       {
         id: 't2',
@@ -74,6 +85,8 @@ function multiAgentView(): RunView {
         startedAt: 0,
         finishedAt: null,
         agentId: 'claude',
+        agentRunId: 'agent-run-2',
+        agentLabel: 'claude#t2',
       },
     ],
     phases: [{ stage: 'logic', done: 0, total: 2 }],
@@ -140,6 +153,7 @@ describe('TUI App (persistent client)', () => {
     expect(frame).toContain('Detail · logic'); // detail filtered to the selected phase
     expect(frame).toContain('1 agents');
     expect(frame).toContain('worker one');
+    expect(frame).toContain('codex#t1');
     expect(frame).toContain('120 tok');
     expect(frame).toContain('2 tools');
     expect(frame).toMatch(/agents ·/); // header N/M agents · elapsed
@@ -368,6 +382,20 @@ describe('TUI App (persistent client)', () => {
     unmount();
   });
 
+  it('hides absent agent registry noise while keeping actionable auth/setup rows', async () => {
+    const client = fakeClient();
+    const { lastFrame, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" detect={async () => NOISY_AGENT_SCAN} />,
+    );
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('codex');
+    expect(frame).toContain('gemini auth');
+    expect(frame).toContain('claude');
+    expect(frame).not.toContain('opencode');
+    unmount();
+  });
+
   it('carries the selected agent when starting a new task', async () => {
     const client = fakeClient();
     const { stdin, unmount } = render(
@@ -563,8 +591,8 @@ describe('TUI App (persistent client)', () => {
     const twoPhase: RunView = {
       ...sampleView(),
       tasks: [
-        { id: 't1', title: 'build it', role: 'worker', status: 'succeeded', tags: ['logic'], tokens: 10, toolCount: 1, startedAt: 0, finishedAt: 0, agentId: 'codex' },
-        { id: 't2', title: 'review it', role: 'reviewer', status: 'running', tags: ['review'], tokens: 5, toolCount: 0, startedAt: 0, finishedAt: null, agentId: 'claude' },
+        { id: 't1', title: 'build it', role: 'worker', status: 'succeeded', tags: ['logic'], tokens: 10, toolCount: 1, startedAt: 0, finishedAt: 0, agentId: 'codex', agentRunId: 'agent-run-1', agentLabel: 'codex#t1' },
+        { id: 't2', title: 'review it', role: 'reviewer', status: 'running', tags: ['review'], tokens: 5, toolCount: 0, startedAt: 0, finishedAt: null, agentId: 'claude', agentRunId: 'agent-run-2', agentLabel: 'claude#t2' },
       ],
       phases: [
         { stage: 'logic', done: 1, total: 1 },
@@ -638,6 +666,7 @@ describe('TUI App (persistent client)', () => {
     expect(frame).toContain('id: t2');
     expect(frame).toContain('status: running');
     expect(frame).toContain('agent: claude');
+    expect(frame).toContain('instance: claude#t2');
     expect(frame).toContain('tokens: 5');
     expect(frame).toContain('tools: 0');
     unmount();
