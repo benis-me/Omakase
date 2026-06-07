@@ -71,6 +71,7 @@ export type {
   CodeGraphSummary,
   CodeGraphHotspot,
   CodeGraphExternalDependency,
+  CodeSymbolReference,
   ScanOptions,
 } from './knowledge/codegraph.js';
 export { createCodeGraphWatcher } from './knowledge/watch.js';

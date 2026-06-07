@@ -291,10 +291,21 @@ function runDetail(record: RunRecord): {
   };
 }
 
-async function codegraphSummary(knowledgeStore: KnowledgeStore | undefined): Promise<(ReturnType<CodeGraph['stats']> & { root: string }) | null> {
+async function codegraphSummary(
+  knowledgeStore: KnowledgeStore | undefined,
+): Promise<(ReturnType<CodeGraph['stats']> & Pick<ReturnType<CodeGraph['summary']>, 'dependencyHubs' | 'entrypoints' | 'publicApis' | 'symbolReferences'> & { root: string }) | null> {
   const snapshot = await knowledgeStore?.loadCodegraph();
   if (!snapshot) return null;
-  return { root: snapshot.root, ...CodeGraph.fromJSON(snapshot).stats() };
+  const graph = CodeGraph.fromJSON(snapshot);
+  const summary = graph.summary(8);
+  return {
+    root: snapshot.root,
+    ...summary.stats,
+    dependencyHubs: summary.dependencyHubs,
+    entrypoints: summary.entrypoints,
+    publicApis: summary.publicApis,
+    symbolReferences: summary.symbolReferences,
+  };
 }
 
 function eventActivityLabel(event: RunRecord['events'][number]): string {
@@ -397,6 +408,89 @@ function wikiPageSourceLabel(page: WikiPage): string {
   return 'source: derived';
 }
 
+interface WikiGovernanceSummary {
+  pages: number;
+  wikiEntries: number;
+  editableEntries: number;
+  agentPages: number;
+  wikiPages: number;
+  codegraphPages: number;
+  codegraphPresent: boolean;
+  latestUpdatedAt: number | null;
+  sources: Array<{ kind: string; count: number }>;
+}
+
+function isEditableWikiEntry(entry: { source?: string; tags?: string[] }): boolean {
+  return Boolean(
+    entry.source?.startsWith('manual:') ||
+      entry.tags?.includes('manual') ||
+      entry.tags?.includes('tui'),
+  );
+}
+
+async function wikiGovernance(knowledgeStore: KnowledgeStore | undefined): Promise<WikiGovernanceSummary> {
+  if (!knowledgeStore) {
+    return {
+      pages: 0,
+      wikiEntries: 0,
+      editableEntries: 0,
+      agentPages: 0,
+      wikiPages: 0,
+      codegraphPages: 0,
+      codegraphPresent: false,
+      latestUpdatedAt: null,
+      sources: [],
+    };
+  }
+  const [pages, wiki, codegraph] = await Promise.all([
+    wikiPages(knowledgeStore),
+    knowledgeStore.loadWiki(),
+    knowledgeStore.loadCodegraph(),
+  ]);
+  const sourceCounts = new Map<string, number>();
+  for (const page of pages) {
+    const kind = page.sourceKind ?? 'derived';
+    sourceCounts.set(kind, (sourceCounts.get(kind) ?? 0) + 1);
+  }
+  const entries = wiki?.entries ?? [];
+  const editableEntries = entries.filter(isEditableWikiEntry).length;
+  if (editableEntries > 0) sourceCounts.set('manual', (sourceCounts.get('manual') ?? 0) + editableEntries);
+  const latest = Math.max(0, ...pages.map((page) => page.updatedAt), ...entries.map((entry) => entry.updatedAt));
+  return {
+    pages: pages.length,
+    wikiEntries: entries.length,
+    editableEntries,
+    agentPages: pages.filter((page) => page.sourceKind === 'agent').length,
+    wikiPages: pages.filter((page) => page.sourceKind === 'wiki').length,
+    codegraphPages: pages.filter((page) => page.sourceKind === 'codegraph').length,
+    codegraphPresent: Boolean(codegraph),
+    latestUpdatedAt: latest > 0 ? latest : null,
+    sources: [...sourceCounts.entries()]
+      .map(([kind, count]) => ({ kind, count }))
+      .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind)),
+  };
+}
+
+function renderWikiGovernanceHtml(summary: WikiGovernanceSummary): string {
+  const sources =
+    summary.sources.length === 0
+      ? '<p class="empty">No wiki sources yet.</p>'
+      : summary.sources
+          .map((source) => `<span class="source-pill">${escapeHtml(source.kind)} · ${source.count}</span>`)
+          .join('');
+  const updated = summary.latestUpdatedAt == null ? 'not updated' : new Date(summary.latestUpdatedAt).toLocaleString();
+  return `<article class="governance-panel">
+  <div class="governance-metrics">
+    <div><strong>${summary.pages}</strong><span>pages</span></div>
+    <div><strong>${summary.wikiEntries}</strong><span>wiki entries</span></div>
+    <div><strong>${summary.editableEntries}</strong><span>editable</span></div>
+    <div><strong>${summary.codegraphPresent ? 'yes' : 'no'}</strong><span>codegraph</span></div>
+  </div>
+  <p>Agent pages ${summary.agentPages} · wiki-entry pages ${summary.wikiPages} · codegraph pages ${summary.codegraphPages} · latest ${escapeHtml(updated)}</p>
+  <div class="source-row">${sources}</div>
+</article>`;
+}
+
 function renderRunDetailHtml(detail: ReturnType<typeof runDetail> | null): string {
   if (!detail) return '<p class="empty">Select a run to inspect tasks, agents, reports, and events.</p>';
   const criteria = detail.acceptance?.criteria ?? [];
@@ -492,6 +586,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   const eventList = await rawEvents(store);
   const wiki = await wikiMarkdown(knowledgeStore);
   const pageList = await wikiPages(knowledgeStore);
+  const governance = await wikiGovernance(knowledgeStore);
   const detailHtml = renderRunDetailHtml(latestRecord ? runDetail(latestRecord) : null);
   const reportHtml =
     reportList.length === 0
@@ -573,11 +668,18 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
 </article>`,
           )
           .join('\n');
+  const codegraphRefsHtml = codegraph?.symbolReferences.length
+    ? `<ul class="mini-list">${codegraph.symbolReferences
+        .slice(0, 5)
+        .map((ref) => `<li>${escapeHtml(ref.from)} uses ${escapeHtml(ref.local)} from ${escapeHtml(ref.to)}</li>`)
+        .join('')}</ul>`
+    : '';
   const codegraphHtml = codegraph
     ? `<article class="compact-row">
   <strong>${codegraph.files} files</strong>
   <span>${codegraph.internalEdges}/${codegraph.externalEdges} edges</span>
-  <p>${codegraph.symbols} symbols · ${codegraph.cycles} cycles · ${escapeHtml(codegraph.root)}</p>
+  <p>${codegraph.symbols} symbols · ${codegraph.cycles} cycles · ${codegraph.symbolReferences.length} symbol refs · ${escapeHtml(codegraph.root)}</p>
+  ${codegraphRefsHtml}
 </article>`
     : '<p class="empty">No codegraph yet.</p>';
   const eventsHtml =
@@ -602,6 +704,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
 </article>`,
           )
           .join('\n');
+  const governanceHtml = renderWikiGovernanceHtml(governance);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -657,6 +760,14 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     .compact-row span { color: var(--accent); font-size: 12px; }
     .report span, .wiki-page span, .wiki-page p, .run-inspector span, .run-inspector p, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
     .status { border-radius: 999px; padding: 4px 8px; background: #e9f6dc; color: #385f1b; font-size: 12px; }
+    .governance-panel { display: grid; gap: 12px; }
+    .governance-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .governance-metrics div { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfcff; display: grid; gap: 4px; }
+    .governance-metrics strong { font-size: 20px; line-height: 1; }
+    .governance-metrics span, .governance-panel p { color: var(--muted); font-size: 12px; }
+    .source-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .source-pill { border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; background: #fff; color: var(--accent); font-size: 12px; }
+    .mini-list { grid-column: 1 / -1; margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
     button { border: 1px solid var(--line); background: #fff; color: var(--accent); border-radius: 6px; padding: 5px 8px; font: 12px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
     button:hover { border-color: var(--accent); }
     pre { margin: 0; overflow: auto; white-space: pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -670,7 +781,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       .meta { justify-self: start; }
       h1 { max-width: 16ch; font-size: 24px; line-height: 1.08; overflow-wrap: normal; }
       .sub { max-width: 32ch; }
-      .report header, .run-row, .compact-row, .activity li, .detail-grid, .run-inspector header { grid-template-columns: 1fr; }
+      .report header, .run-row, .compact-row, .activity li, .detail-grid, .run-inspector header, .governance-metrics { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -730,6 +841,10 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           <div data-region="codegraph">${codegraphHtml}</div>
         </section>
         <section>
+          <h2>Wiki Governance</h2>
+          <div data-region="wiki-governance">${governanceHtml}</div>
+        </section>
+        <section>
           <h2>Project Knowledge</h2>
           <div data-region="wiki-pages">${wikiPagesHtml}</div>
         </section>
@@ -752,7 +867,17 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const acceptanceHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>' + item.progress.passed + '/' + item.progress.total + '</span><p>' + escapeHtml(item.criteria.map((criterion) => criterion.status + ': ' + criterion.title).join(' · ')) + '</p></article>';
     const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
     const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentLabel || agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
-    const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
+    const codegraphHtml = (codegraph) => {
+      if (!codegraph) return '<p class="empty">No codegraph yet.</p>';
+      const refs = (codegraph.symbolReferences || []).slice(0, 5).map((ref) => '<li>' + escapeHtml(ref.from) + ' uses ' + escapeHtml(ref.local) + ' from ' + escapeHtml(ref.to) + '</li>').join('');
+      return '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + ((codegraph.symbolReferences || []).length) + ' symbol refs · ' + escapeHtml(codegraph.root) + '</p>' + (refs ? '<ul class="mini-list">' + refs + '</ul>' : '') + '</article>';
+    };
+    const wikiGovernanceHtml = (summary) => {
+      if (!summary) return '<p class="empty">No wiki governance yet.</p>';
+      const sources = summary.sources && summary.sources.length ? summary.sources.map((source) => '<span class="source-pill">' + escapeHtml(source.kind) + ' · ' + source.count + '</span>').join('') : '<p class="empty">No wiki sources yet.</p>';
+      const updated = summary.latestUpdatedAt == null ? 'not updated' : new Date(summary.latestUpdatedAt).toLocaleString();
+      return '<article class="governance-panel"><div class="governance-metrics"><div><strong>' + summary.pages + '</strong><span>pages</span></div><div><strong>' + summary.wikiEntries + '</strong><span>wiki entries</span></div><div><strong>' + summary.editableEntries + '</strong><span>editable</span></div><div><strong>' + (summary.codegraphPresent ? 'yes' : 'no') + '</strong><span>codegraph</span></div></div><p>Agent pages ' + summary.agentPages + ' · wiki-entry pages ' + summary.wikiPages + ' · codegraph pages ' + summary.codegraphPages + ' · latest ' + escapeHtml(updated) + '</p><div class="source-row">' + sources + '</div></article>';
+    };
     const wikiPageSourceLabel = (page) => page.sourceKind === 'codegraph' ? 'source: codegraph' : page.sourceKind === 'wiki' ? 'source: wiki entries' : page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: derived';
     const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(wikiPageSourceLabel(page)) + '</p></article>';
     let activeRunId = ${JSON.stringify(runList[0]?.id ?? '')};
@@ -801,11 +926,12 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       void refreshRunDetail();
     });
     async function refreshDashboard() {
-      const [reports, runs, wiki, wikiPages, activity, supportActivity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
+      const [reports, runs, wiki, wikiPages, governance, activity, supportActivity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         jsonOr("/api/reports"),
         jsonOr("/api/runs"),
         textOr("/api/wiki"),
         jsonOr("/api/wiki/pages"),
+        jsonOr("/api/wiki/governance"),
         jsonOr("/api/activity"),
         jsonOr("/api/support-activity"),
         jsonOr("/api/acceptance"),
@@ -822,6 +948,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       await refreshRunDetail();
       if (wiki !== undefined) document.querySelector('[data-region="wiki"]').textContent = wiki;
       if (wikiPages !== undefined) document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
+      if (governance !== undefined) document.querySelector('[data-region="wiki-governance"]').innerHTML = wikiGovernanceHtml(governance);
       if (activity !== undefined) document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
       if (supportActivity !== undefined) document.querySelector('[data-region="support-activity"]').innerHTML = supportActivity.length ? supportActivity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No support activity yet.</p>';
       if (acceptance !== undefined) document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
@@ -835,7 +962,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       }
       if (reports !== undefined) document.querySelector('[data-metric="reports"]').textContent = reports.length;
       if (wikiPages !== undefined) document.querySelector('[data-metric="wiki"]').textContent = wikiPages.length;
-      const failed = [reports, runs, wiki, wikiPages, activity, supportActivity, acceptance, iterations, agents, codegraph, events].some((value) => value === undefined);
+      const failed = [reports, runs, wiki, wikiPages, governance, activity, supportActivity, acceptance, iterations, agents, codegraph, events].some((value) => value === undefined);
       document.querySelector('#last-updated').textContent = failed ? 'Read-only · reconnecting' : 'Read-only · updated ' + new Date().toLocaleTimeString();
     }
     setInterval(refreshDashboard, 2000);
@@ -910,6 +1037,10 @@ export async function startReadOnlyServer(options: ReadOnlyServerOptions): Promi
       }
       if (url.pathname === '/api/wiki/pages') {
         sendJson(res, 200, await wikiPages(options.knowledgeStore));
+        return;
+      }
+      if (url.pathname === '/api/wiki/governance') {
+        sendJson(res, 200, await wikiGovernance(options.knowledgeStore));
         return;
       }
       if (url.pathname === '/api/wiki') {

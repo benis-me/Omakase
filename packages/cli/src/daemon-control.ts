@@ -25,6 +25,7 @@ export interface DaemonInfo {
   startedAt: number;
   version: string;
   cwd: string;
+  sourceKey?: string;
 }
 
 export interface SpawnedDaemon {
@@ -45,11 +46,14 @@ export interface EnsureDaemonDeps {
   now?: () => number;
   execPath?: string;
   scriptPath?: string;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
 }
 
 export interface EnsureDaemonOptions {
   /** Extra args appended after `serve --watch --cwd <cwd>` (dirs, mode, agent…). */
   serveArgs?: string[];
+  /** Stable identity for the launcher/source that produced the daemon. */
+  sourceKey?: string;
 }
 
 /** True if a process with this pid exists (EPERM = exists but not ours). */
@@ -192,16 +196,28 @@ export async function ensureDaemon(
   const spawnFn = deps.spawn ?? defaultSpawn;
   const execPath = deps.execPath ?? process.execPath;
   const scriptPath = deps.scriptPath ?? process.argv[1] ?? '';
+  const kill = deps.kill ?? ((pid, signal) => process.kill(pid, signal));
+  const sourceKey = opts.sourceKey ?? `${execPath}|${scriptPath}`;
 
   // Reuse only a daemon whose pid is alive AND that is fresh — a recent
   // heartbeat, or (during startup) a recent startedAt. This guards against a
   // reused OS pid or a wedged daemon masquerading as live.
   const existing = await readDaemonInfo(p.info);
   if (existing && isAlive(existing.pid)) {
-    const hb = await readHeartbeat(p.heartbeat);
-    const fresh =
-      hb != null ? now() - hb < REUSE_WINDOW_MS : now() - existing.startedAt < REUSE_WINDOW_MS;
-    if (fresh) return existing;
+    if (existing.sourceKey !== sourceKey) {
+      try {
+        kill(existing.pid, 'SIGTERM');
+      } catch {
+        /* exited between the liveness check and signal */
+      }
+      await rm(p.info, { force: true }).catch(() => undefined);
+      await rm(p.heartbeat, { force: true }).catch(() => undefined);
+    } else {
+      const hb = await readHeartbeat(p.heartbeat);
+      const fresh =
+        hb != null ? now() - hb < REUSE_WINDOW_MS : now() - existing.startedAt < REUSE_WINDOW_MS;
+      if (fresh) return existing;
+    }
   }
 
   await mkdir(p.dir, { recursive: true });
@@ -217,14 +233,23 @@ export async function ensureDaemon(
     // Another client is spawning — wait for its daemon.json; else take over a
     // stale lock left by a spawner that died mid-start.
     const info = await waitForDaemon(p.info, isAlive, 3000);
-    if (info) return info;
+    if (info && info.sourceKey === sourceKey) return info;
+    if (info && info.sourceKey !== sourceKey) {
+      try {
+        kill(info.pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      await rm(p.info, { force: true }).catch(() => undefined);
+      await rm(p.heartbeat, { force: true }).catch(() => undefined);
+    }
     await rm(p.lock, { force: true });
     owned = await writeFile(p.lock, String(now()), { flag: 'wx' })
       .then(() => true)
       .catch(() => false);
     if (!owned) {
       const info2 = await waitForDaemon(p.info, isAlive, 3000);
-      if (info2) return info2;
+      if (info2 && info2.sourceKey === sourceKey) return info2;
     }
   }
 
@@ -236,6 +261,7 @@ export async function ensureDaemon(
       startedAt: now(),
       version: DAEMON_VERSION,
       cwd,
+      sourceKey,
     };
     await writeDaemonInfo(cwd, info);
     return info;

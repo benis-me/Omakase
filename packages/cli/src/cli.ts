@@ -145,6 +145,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+function currentDaemonSourceKey(): string {
+  return `${process.execPath}|${process.argv[1] ?? ''}`;
+}
+
 interface AgentBudget {
   agentOverride?: string;
   budget?: { maxTokens?: number; maxCostUsd?: number };
@@ -244,9 +248,32 @@ export function createCli(deps: CliDeps = {}): Cli {
     return null;
   }
 
+  function normalizeWikiTags(tags: readonly string[] = []): string[] {
+    return [...new Set(['knowledge', 'manual', ...tags.map((tag) => tag.trim()).filter(Boolean)])];
+  }
+
   function parseWikiTags(value: string | boolean | undefined): string[] {
     const userTags = typeof value === 'string' ? value.split(',') : [];
-    return [...new Set(['knowledge', 'manual', ...userTags.map((tag) => tag.trim()).filter(Boolean)])];
+    return normalizeWikiTags(userTags);
+  }
+
+  async function addManualWikiEntry(
+    cwd: string,
+    input: { title: string; body?: string; kind?: WikiEntryKind; tags?: string[] },
+  ): Promise<void> {
+    const title = input.title.replace(/\s+/g, ' ').trim();
+    if (!title) throw new Error('wiki title is required');
+    const store = projectKnowledgeStore(cwd);
+    const snapshot = (await store.loadWiki()) ?? { entries: [] };
+    const wiki = ProjectWiki.fromJSON(snapshot);
+    const entry = wiki.add(input.kind ?? 'note', {
+      title,
+      body: input.body ?? '',
+      tags: normalizeWikiTags(input.tags),
+      source: `manual:tui:${Date.now()}`,
+    });
+    if (store.mergeWiki) await store.mergeWiki([entry]);
+    else await store.saveWiki(wiki.toJSON());
   }
 
   async function wikiCommand(positionals: string[], options: ParsedArgs['options']): Promise<number> {
@@ -393,6 +420,7 @@ export function createCli(deps: CliDeps = {}): Cli {
         startedAt: Date.now(),
         version: CLI_VERSION,
         cwd: config.cwd,
+        sourceKey: currentDaemonSourceKey(),
       });
       // Heartbeat on an INDEPENDENT timer, not after each cycle: a control-paused
       // run blocks drain()/cycle() until resumed, and we must still look alive to
@@ -451,7 +479,7 @@ export function createCli(deps: CliDeps = {}): Cli {
     if (typeof options.agent === 'string') serveArgs.push('--agent', options.agent);
     if (options['max-tokens'] !== undefined) serveArgs.push('--max-tokens', String(options['max-tokens']));
     if (options['max-cost'] !== undefined) serveArgs.push('--max-cost', String(options['max-cost']));
-    const ensure = deps.ensureDaemon ?? ((c: string, sa?: string[]) => ensureDaemon(c, {}, { serveArgs: sa }));
+    const ensure = deps.ensureDaemon ?? ((c: string, sa?: string[]) => ensureDaemon(c, {}, { serveArgs: sa, sourceKey: currentDaemonSourceKey() }));
     await ensure(cwd, serveArgs);
     const stop = deps.stopDaemon ?? ((c: string) => stopDaemon(c));
 
@@ -498,6 +526,7 @@ export function createCli(deps: CliDeps = {}): Cli {
         stopDaemon: () => stop(cwd),
         startDaemon: () => ensure(cwd, serveArgs),
         readOnlyUrl: readOnlyServer.url,
+        addWikiEntry: (entry) => addManualWikiEntry(cwd, entry),
         ...(task.trim() ? { task: task.trim() } : {}),
         ...(token ? { token } : {}),
       });

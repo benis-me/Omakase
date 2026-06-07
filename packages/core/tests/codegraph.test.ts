@@ -106,6 +106,25 @@ describe('CodeGraph', () => {
     expect(summary.publicApis.map((item) => item.path)).toEqual(
       expect.arrayContaining(['src/app.ts', 'src/cli.ts', 'src/ui/button.ts']),
     );
+    expect(summary.symbolReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: 'src/app.ts',
+          to: 'src/core/service.ts',
+          imported: 'service',
+          local: 'service',
+          count: 1,
+        }),
+        expect.objectContaining({
+          from: 'src/cli.ts',
+          to: 'src/core/service.ts',
+          imported: 'service',
+          local: 'service',
+          count: 1,
+        }),
+      ]),
+    );
+    expect(summary.symbolReferences.find((item) => item.from === 'src/app.ts')?.lines).toEqual([4]);
     expect(summary.externalDependencies).toEqual([
       { specifier: 'react', count: 2 },
       { specifier: 'node:fs', count: 1 },

@@ -108,6 +108,65 @@ describe('orchestrator long-running acceptance loop', () => {
     expect(result.events.some((event) => event.type === 'replanned' && event.reason === 'user-input')).toBe(true);
   });
 
+  it('drains multiple mid-run user requirements into separate criteria and worker tasks', async () => {
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => (started = resolve));
+    let release!: () => void;
+    const releaseP = new Promise<void>((resolve) => (release = resolve));
+    let workerCalls = 0;
+
+    const exec: AgentExecutor = (ctx) => {
+      const role = String(ctx.input.metadata?.role ?? 'worker');
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        if (role === 'reviewer') {
+          yield {
+            type: 'text_delta',
+            delta: JSON.stringify([
+              { met: true, note: 'Original request completed.' },
+              { met: true, note: 'Manual wiki edits are persisted.' },
+              { met: true, note: 'Web governance shows wiki provenance.' },
+            ]),
+          };
+          return;
+        }
+
+        workerCalls += 1;
+        if (workerCalls === 1) {
+          started();
+          await releaseP;
+        }
+        yield { type: 'text_delta', delta: `worker ${workerCalls} done` };
+      }
+      return gen();
+    };
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: { route: () => ({ kind: 'simple', reason: 'test', confidence: 1, signals: [], suggestedRole: 'worker' }) },
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      maxIterations: 5,
+    });
+
+    const handle = orch.start({ prompt: 'make knowledge product-grade' });
+    await startedP;
+    handle.appendUserInput('Manual wiki edits are persisted.');
+    handle.appendUserInput('Web governance shows wiki provenance.');
+    release();
+    const result = await handle.result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.acceptance.criteria).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Manual wiki edits are persisted.', source: 'user', status: 'pass' }),
+        expect.objectContaining({ title: 'Web governance shows wiki provenance.', source: 'user', status: 'pass' }),
+      ]),
+    );
+    expect(result.plan.tasks.filter((task) => task.tags.includes('user-input'))).toHaveLength(2);
+    expect(result.events.filter((event) => event.type === 'user-input')).toHaveLength(2);
+  });
+
   it('normal mode visibly distributes parallel worker tasks across authenticated agents', async () => {
     const detected = (id: string): DetectedAgent =>
       ({

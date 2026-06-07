@@ -41,6 +41,15 @@ export interface ImportEdge {
   line: number;
 }
 
+export interface CodeSymbolReference {
+  from: string;
+  to: string;
+  imported: string;
+  local: string;
+  count: number;
+  lines: number[];
+}
+
 export interface CodeNode {
   path: string;
   language: CodeLanguage;
@@ -48,6 +57,7 @@ export interface CodeNode {
   imports: ImportEdge[];
   exports: string[];
   symbols: CodeSymbol[];
+  references?: CodeSymbolReference[];
 }
 
 export interface CodeGraphSnapshot {
@@ -89,6 +99,7 @@ export interface CodeGraphSummary {
   dependencyHubs: CodeGraphHotspot[];
   entrypoints: CodeGraphHotspot[];
   publicApis: CodeGraphPublicApi[];
+  symbolReferences: CodeSymbolReference[];
   externalDependencies: CodeGraphExternalDependency[];
   cycles: string[][];
 }
@@ -134,6 +145,10 @@ function lineAt(content: string, index: number): number {
     if (content[i] === '\n') line += 1;
   }
   return line;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseImportSpecifiers(clause: string): string[] {
@@ -228,6 +243,7 @@ function toPosixRelative(root: string, file: string): string {
 export class CodeGraph {
   readonly root: string;
   private readonly nodes = new Map<string, CodeNode>();
+  private readonly contents = new Map<string, string>();
   private readonly options: Required<Omit<ScanOptions, 'root'>>;
 
   constructor(root: string, options: Omit<ScanOptions, 'root'> = {}) {
@@ -249,6 +265,7 @@ export class CodeGraph {
 
   private async rescanAll(): Promise<void> {
     this.nodes.clear();
+    this.contents.clear();
     const files = await this.collectFiles();
     for (const file of files) {
       const node = await this.parseFile(file);
@@ -287,8 +304,10 @@ export class CodeGraph {
       const stats = await stat(absPath);
       if (!stats.isFile() || stats.size > this.options.maxFileBytes) return null;
       const content = await readFile(absPath, 'utf8');
+      const rel = toPosixRelative(this.root, absPath);
+      this.contents.set(rel, content);
       return {
-        path: toPosixRelative(this.root, absPath),
+        path: rel,
         language: detectLanguage(absPath),
         loc: content.split('\n').length,
         imports: parseImports(content),
@@ -347,6 +366,46 @@ export class CodeGraph {
         edge.external = resolved ? false : !edge.specifier.startsWith('.');
       }
     }
+    this.resolveSymbolReferences();
+  }
+
+  private resolveSymbolReferences(): void {
+    for (const node of this.nodes.values()) {
+      const content = this.contents.get(node.path);
+      if (!content) {
+        node.references = Array.isArray(node.references) ? node.references : [];
+        continue;
+      }
+      const refs: CodeSymbolReference[] = [];
+      const lines = content.split(/\r?\n/);
+      for (const edge of node.imports) {
+        if (!edge.to || edge.specifiers.length === 0) continue;
+        for (const local of edge.specifiers) {
+          const re = new RegExp(`\\b${escapeRegExp(local)}\\b`, 'g');
+          let count = 0;
+          const hitLines: number[] = [];
+          lines.forEach((line, idx) => {
+            const trimmed = line.trim();
+            if (/^import\b/.test(trimmed) || /^export\s+\{.*\}\s+from\b/.test(trimmed)) return;
+            const matches = line.match(re);
+            if (!matches) return;
+            count += matches.length;
+            hitLines.push(idx + 1);
+          });
+          if (count > 0) {
+            refs.push({
+              from: node.path,
+              to: edge.to,
+              imported: local,
+              local,
+              count,
+              lines: [...new Set(hitLines)],
+            });
+          }
+        }
+      }
+      node.references = refs.sort((a, b) => b.count - a.count || a.to.localeCompare(b.to) || a.local.localeCompare(b.local));
+    }
   }
 
   /** Incrementally re-scan changed files (relative or absolute paths). Removes vanished files. */
@@ -357,13 +416,17 @@ export class CodeGraph {
       if (!this.options.include.test(abs)) continue;
       const node = await this.parseFile(abs);
       if (node) this.nodes.set(rel, node);
-      else this.nodes.delete(rel);
+      else {
+        this.nodes.delete(rel);
+        this.contents.delete(rel);
+      }
     }
     this.resolveEdges();
   }
 
   removeFile(relPath: string): boolean {
     const deleted = this.nodes.delete(relPath);
+    this.contents.delete(relPath);
     if (deleted) this.resolveEdges();
     return deleted;
   }
@@ -534,6 +597,16 @@ export class CodeGraph {
             b.dependents - a.dependents ||
             b.exports.length - a.exports.length ||
             a.path.localeCompare(b.path),
+        )
+        .slice(0, limit),
+      symbolReferences: this.nodesList()
+        .flatMap((node) => (Array.isArray(node.references) ? node.references : []))
+        .sort(
+          (a, b) =>
+            b.count - a.count ||
+            a.to.localeCompare(b.to) ||
+            a.from.localeCompare(b.from) ||
+            a.local.localeCompare(b.local),
         )
         .slice(0, limit),
       externalDependencies: [...externalCounts.entries()]

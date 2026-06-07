@@ -14,7 +14,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import type { DetectedAgent } from '@omakase/daemon';
-import type { RunStatus, WorkMode } from '@omakase/core';
+import type { RunStatus, WikiEntryKind, WorkMode } from '@omakase/core';
 import type { DaemonStatus } from '../daemon-control.js';
 import type { RunControllerClient, RunSummary } from '../run-client.js';
 import { initialRunView, type PhaseView, type RunView, type RunViewStatus, type TaskView } from '../view-model.js';
@@ -55,6 +55,15 @@ export interface AppProps {
   startDaemon?: () => Promise<unknown>;
   /** Read-only local report/wiki server URL. */
   readOnlyUrl?: string;
+  /** Add a manual/editable project-wiki entry from the Knowledge workspace. */
+  addWikiEntry?: (entry: TuiWikiEntryInput) => Promise<void>;
+}
+
+export interface TuiWikiEntryInput {
+  title: string;
+  body: string;
+  kind: WikiEntryKind;
+  tags: string[];
 }
 
 /** A task's phase/stage — must match view-model's computePhases grouping. */
@@ -112,7 +121,7 @@ type Screen = 'list' | 'run';
 type FocusPane = 'plan' | 'detail';
 type Workspace = 'Plan' | 'Agents' | 'Acceptance' | 'Knowledge' | 'Reports' | 'Gate';
 const WORKSPACES: readonly Workspace[] = ['Plan', 'Agents', 'Acceptance', 'Knowledge', 'Reports', 'Gate'];
-type ComposeKind = 'new' | 'note' | 'criteria' | 'gate';
+type ComposeKind = 'new' | 'note' | 'criteria' | 'gate' | 'wiki';
 const SUBMITTED_NOTICE = 'submitted — waiting for the daemon to start it';
 
 function isSubmittedNotice(notice: string | null): boolean {
@@ -158,6 +167,21 @@ function parseCriteriaInput(text: string): string[] {
     .filter(Boolean);
 }
 
+function parseWikiInput(text: string): TuiWikiEntryInput | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const divider = trimmed.indexOf('::');
+  if (divider !== -1) {
+    const title = trimmed.slice(0, divider).replace(/\s+/g, ' ').trim();
+    const body = trimmed.slice(divider + 2).trim();
+    return title ? { title, body, kind: 'note', tags: ['knowledge', 'manual', 'tui'] } : null;
+  }
+  const lines = trimmed.split(/\r?\n/);
+  const title = (lines.shift() ?? '').replace(/\s+/g, ' ').trim();
+  const body = lines.join('\n').trim();
+  return title ? { title, body, kind: 'note', tags: ['knowledge', 'manual', 'tui'] } : null;
+}
+
 function latestOpenGate(view: RunView | null): string | null {
   return [...(view?.riskGates ?? [])].reverse().find((gate) => gate.status === 'open')?.id ?? null;
 }
@@ -182,6 +206,7 @@ export function App({
   stopDaemon,
   startDaemon,
   readOnlyUrl,
+  addWikiEntry,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
@@ -398,6 +423,18 @@ export function App({
           } else if (kind === 'gate' && attachedId) {
             const gateId = latestOpenGate(view);
             if (gateId) void client.answerGate(attachedId, gateId, text);
+          } else if (kind === 'wiki') {
+            const entry = parseWikiInput(text);
+            if (!entry) {
+              setNotice('wiki title is required');
+            } else if (!addWikiEntry) {
+              setNotice('wiki editing unavailable');
+            } else {
+              void addWikiEntry(entry).then(
+                () => active.current && setNotice(`wiki saved: ${entry.title}`),
+                () => active.current && setNotice('wiki save failed'),
+              );
+            }
           }
         } else if (key.escape) {
           setCompose((c) => ({ ...c, active: false, buffer: '' }));
@@ -491,6 +528,8 @@ export function App({
         setCompose({ active: true, kind: 'criteria', buffer: '' });
       } else if (input === 'g' && attachedId && workspace === 'Gate') {
         setCompose({ active: true, kind: 'gate', buffer: '' });
+      } else if (input === 'w' && workspace === 'Knowledge') {
+        setCompose({ active: true, kind: 'wiki', buffer: '' });
       } else if (input === 's') {
         save();
       }
@@ -564,13 +603,14 @@ export function App({
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
   if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
-  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [e] criteria · [g] gate · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
+  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [e] criteria · [g] gate · [w] wiki · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
 }
 
 function composeLabel(kind: ComposeKind): string {
   if (kind === 'new') return 'new task';
   if (kind === 'criteria') return 'criteria';
   if (kind === 'gate') return 'gate answer';
+  if (kind === 'wiki') return 'wiki title :: body';
   return 'note';
 }
 

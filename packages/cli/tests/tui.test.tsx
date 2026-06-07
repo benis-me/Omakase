@@ -318,6 +318,33 @@ describe('TUI App (persistent client)', () => {
     unmount();
   });
 
+  it('adds editable wiki entries from the Knowledge workspace without treating them as run input', async () => {
+    const addWikiEntry = vi.fn(async () => {});
+    const client = fakeClient();
+    const { stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" addWikiEntry={addWikiEntry} />,
+    );
+    await tick();
+
+    stdin.write('4'); // Knowledge workspace
+    await tick(20);
+    stdin.write('w');
+    await tick(20);
+    stdin.write('Manual architecture decision :: Keep wiki entries editable from TUI and web-visible.');
+    await tick(20);
+    stdin.write('\r');
+    await tick(20);
+
+    expect(addWikiEntry).toHaveBeenCalledWith({
+      title: 'Manual architecture decision',
+      body: 'Keep wiki entries editable from TUI and web-visible.',
+      kind: 'note',
+      tags: ['knowledge', 'manual', 'tui'],
+    });
+    expect(client.sendInput).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it('[x] stops the attached run', async () => {
     const client = fakeClient();
     const { stdin, unmount } = render(

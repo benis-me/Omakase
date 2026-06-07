@@ -117,7 +117,8 @@ describe('read-only report/wiki server', () => {
           kind: 'fact',
           title: 'Uses TypeScript',
           body: '',
-          tags: [],
+          tags: ['manual'],
+          source: 'manual:test',
           createdAt: 0,
           updatedAt: 0,
         },
@@ -141,9 +142,35 @@ describe('read-only report/wiki server', () => {
           path: 'src/parser.ts',
           language: 'typescript',
           loc: 42,
-          imports: [],
+          imports: [
+            {
+              specifier: './runtime.js',
+              to: 'src/runtime.ts',
+              external: false,
+              specifiers: ['runParser'],
+              line: 1,
+            },
+          ],
           exports: ['parse'],
-          symbols: [{ name: 'parse', kind: 'function', exported: true, line: 1 }],
+          symbols: [{ name: 'parse', kind: 'function', exported: true, line: 2 }],
+          references: [
+            {
+              from: 'src/parser.ts',
+              to: 'src/runtime.ts',
+              imported: 'runParser',
+              local: 'runParser',
+              count: 2,
+              lines: [4, 5],
+            },
+          ],
+        },
+        {
+          path: 'src/runtime.ts',
+          language: 'typescript',
+          loc: 8,
+          imports: [],
+          exports: ['runParser'],
+          symbols: [{ name: 'runParser', kind: 'function', exported: true, line: 1 }],
         },
       ],
     });
@@ -160,11 +187,38 @@ describe('read-only report/wiki server', () => {
       expect(wikiPages[0]?.id).toBe('overview');
       expect(wikiPages[0]?.body).toContain('Agent-authored knowledge pages');
       expect(wikiPages.find((page) => page.id === 'codegraph')?.sourceKind).toBe('codegraph');
+      const governance = await fetch(`${server.url}/api/wiki/governance`).then(
+        (res) =>
+          res.json() as Promise<{
+            pages: number;
+            wikiEntries: number;
+            editableEntries: number;
+            agentPages: number;
+            codegraphPages: number;
+            sources: Array<{ kind: string; count: number }>;
+          }>,
+      );
+      expect(governance).toMatchObject({
+        pages: 2,
+        wikiEntries: 1,
+        editableEntries: 1,
+        agentPages: 1,
+        codegraphPages: 1,
+      });
+      expect(governance.sources).toEqual(
+        expect.arrayContaining([
+          { kind: 'agent', count: 1 },
+          { kind: 'codegraph', count: 1 },
+          { kind: 'manual', count: 1 },
+        ]),
+      );
       const home = await fetch(server.url).then((res) => res.text());
       expect(home).toContain('Planning report');
       expect(home).toContain('Project Knowledge');
+      expect(home).toContain('Wiki Governance');
       expect(home).toContain('Live project knowledge');
       expect(home).toContain('source: codegraph');
+      expect(home).toContain('data-region="wiki-governance"');
       expect(home).toContain('Omakase Mission Control');
       expect(home).toContain('data-region="reports"');
       expect(home).toContain('data-region="support-activity"');
@@ -178,6 +232,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('jsonOr("/api/reports")');
       expect(home).toContain('jsonOr("/api/support-activity")');
       expect(home).toContain('jsonOr("/api/wiki/pages")');
+      expect(home).toContain('jsonOr("/api/wiki/governance")');
       expect(home).toContain('textOr("/api/wiki")');
       expect(home).toContain('Read-only · reconnecting');
       expect(home).not.toContain('fetch("/api/reports").then');
@@ -196,8 +251,11 @@ describe('read-only report/wiki server', () => {
       expect(iterations).toHaveLength(1);
       const agents = await fetch(`${server.url}/api/agents`).then((res) => res.json() as Promise<Array<{ agentId: string | null }>>);
       expect(agents[0]?.agentId).toBe('codex');
-      const codegraph = await fetch(`${server.url}/api/codegraph`).then((res) => res.json() as Promise<{ files: number }>);
-      expect(codegraph.files).toBe(1);
+      const codegraph = await fetch(`${server.url}/api/codegraph`).then(
+        (res) => res.json() as Promise<{ files: number; symbolReferences: Array<{ local: string; to: string }> }>,
+      );
+      expect(codegraph.files).toBe(2);
+      expect(codegraph.symbolReferences[0]).toMatchObject({ local: 'runParser', to: 'src/runtime.ts' });
       const events = await fetch(`${server.url}/api/events`).then((res) => res.json() as Promise<unknown[]>);
       expect(events).toHaveLength(1);
       const post = await fetch(`${server.url}/api/run/run-1`, { method: 'POST' });

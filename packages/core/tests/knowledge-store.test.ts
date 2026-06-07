@@ -151,6 +151,8 @@ describe('FileKnowledgeStore', () => {
     expect(page?.body).toContain('src/app.ts');
     expect(page?.body).toContain('Public APIs');
     expect(page?.body).toContain('src/core/service.ts: service');
+    expect(page?.body).toContain('Symbol references');
+    expect(page?.body).toContain('src/app.ts uses service from src/core/service.ts');
     expect(page?.body).toContain('External dependencies');
     expect(page?.body).toContain('react (1)');
     expect(readFileSync(path.join(project, '.omakase', 'wiki-pages.md'), 'utf8')).toContain('Project Structure');

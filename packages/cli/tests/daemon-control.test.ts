@@ -47,12 +47,49 @@ describe('ensureDaemon', () => {
 
   it('reuses a live daemon (does not spawn a second)', async () => {
     const cwd = tmp();
-    await writeDaemonInfo(cwd, { pid: 999, startedAt: 1, version: '0.1.0', cwd });
+    await writeDaemonInfo(cwd, {
+      pid: 999,
+      startedAt: 1,
+      version: '0.1.0',
+      cwd,
+      sourceKey: '/usr/bin/node|/opt/omakase/bin/omakase.mjs',
+    });
     const spawn = (): SpawnedDaemon => {
       throw new Error('must not spawn when a live daemon exists');
     };
     const info = await ensureDaemon(cwd, { ...base, spawn, isAlive: (pid) => pid === 999 });
     expect(info.pid).toBe(999);
+  });
+
+  it('terminates and replaces a fresh live daemon whose source key no longer matches', async () => {
+    const cwd = tmp();
+    await writeDaemonInfo(cwd, {
+      pid: 999,
+      startedAt: 999,
+      version: '0.1.0',
+      cwd,
+      sourceKey: 'old-source',
+    });
+    const killed: Array<[number, string]> = [];
+    let spawned = 0;
+    const spawn = (): SpawnedDaemon => {
+      spawned += 1;
+      return { pid: 222, unref: () => {} };
+    };
+    const info = await ensureDaemon(
+      cwd,
+      {
+        ...base,
+        spawn,
+        isAlive: (pid) => pid === 999 || pid === 222,
+        kill: (pid, signal) => killed.push([pid, signal]),
+      },
+      { sourceKey: 'new-source' },
+    );
+
+    expect(killed).toEqual([[999, 'SIGTERM']]);
+    expect(spawned).toBe(1);
+    expect(info).toMatchObject({ pid: 222, sourceKey: 'new-source' });
   });
 
   it('respawns when the recorded pid is dead', async () => {

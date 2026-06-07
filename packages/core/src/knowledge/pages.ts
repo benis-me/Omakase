@@ -173,6 +173,13 @@ function renderCodegraphPage(snapshot: CodeGraphSnapshot): string {
       lines.push(`- ${api.path}: ${api.exports.join(', ')}`);
     }
   }
+  lines.push('', '## Symbol references');
+  if (summary.symbolReferences.length === 0) lines.push('- None detected');
+  else {
+    for (const ref of summary.symbolReferences) {
+      lines.push(`- ${ref.from} uses ${ref.local} from ${ref.to} (${ref.count} refs: lines ${ref.lines.join(', ')})`);
+    }
+  }
   lines.push('', '## External dependencies');
   if (summary.externalDependencies.length === 0) lines.push('- None detected');
   else {
