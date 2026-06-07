@@ -71,7 +71,10 @@ describe('orchestrator long-running acceptance loop', () => {
       detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
     });
 
-    const result = await orch.start({ prompt: '- build feature', acceptanceCriteria: ['ok'] }).result;
+    const result = await orch.start({
+      prompt: '- build feature',
+      acceptanceCriteria: ['ok'],
+    }).result;
     const record = await store.load(result.id);
 
     expect(record?.acceptance?.criteria[0]?.title).toBe('ok');
@@ -81,12 +84,60 @@ describe('orchestrator long-running acceptance loop', () => {
 
   it('creates planning and review reports without mutating the task graph', async () => {
     const orch = orchForReview([[{ met: true, note: 'ok' }]]);
-    const result = await orch.start({ prompt: '- build feature', acceptanceCriteria: ['ok'] }).result;
+    const result = await orch.start({
+      prompt: '- build feature',
+      acceptanceCriteria: ['ok'],
+      metadata: { supportAgents: true },
+    }).result;
 
     expect(result.reports.map((report) => report.kind)).toEqual(expect.arrayContaining(['planning', 'review']));
     expect(result.events.some((event) => event.type === 'report-created')).toBe(true);
     expect(result.events.some((event) => event.type === 'knowledge-event-created')).toBe(true);
     expect(result.plan.tasks.every((task) => task.role !== ('reporter' as any))).toBe(true);
     expect(result.acceptance.progress.complete).toBe(true);
+  });
+
+  it('uses out-of-band reporter and wiki-curator agents without adding them to the plan', async () => {
+    const roleCalls: string[] = [];
+    const exec = createScriptedAgent((input) => {
+      const role = String(input.metadata?.role ?? 'worker');
+      roleCalls.push(role);
+      if (role === 'reviewer') return [{ type: 'text_delta', delta: JSON.stringify([{ met: true, note: 'ok' }]) }];
+      if (role === 'reporter') {
+        return [{ type: 'text_delta', delta: '# Agent Report\n\nReporter-authored milestone with risks and next actions.' }];
+      }
+      if (role === 'wiki-curator') {
+        return [{ type: 'text_delta', delta: 'Agent-authored project wiki: stable facts, decisions, risks, and next useful checks.' }];
+      }
+      return [{ type: 'text_delta', delta: 'worker done' }];
+    });
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const result = await orch.start({
+      prompt: '- build feature',
+      acceptanceCriteria: ['ok'],
+      metadata: { supportAgents: true },
+    }).result;
+    const eventRoles = result.events
+      .filter((event) => event.type === 'agent-event')
+      .map((event) => (event as any).role);
+
+    expect(roleCalls).toEqual(expect.arrayContaining(['reporter', 'wiki-curator']));
+    expect(eventRoles).toEqual(expect.arrayContaining(['reporter', 'wiki-curator']));
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('reporter' as any);
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('wiki-curator' as any);
+    expect(result.reports[0]).toMatchObject({
+      authorAgentId: 'scripted',
+      markdown: expect.stringContaining('Reporter-authored milestone'),
+    });
+    expect(result.knowledgeEvents.some((event) => event.kind === 'synthesis')).toBe(true);
+    expect(result.knowledgeEvents.some((event) => event.body.includes('Agent-authored project wiki'))).toBe(true);
   });
 });

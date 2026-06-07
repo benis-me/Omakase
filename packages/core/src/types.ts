@@ -2,10 +2,10 @@
  * Shared domain vocabulary for the orchestration core.
  */
 
-/** The roles in the Ralph loop. Each is executed by an agent chosen by policy. */
-export type AgentRole = 'router' | 'planner' | 'worker' | 'reviewer';
+/** The roles in the Ralph loop and out-of-band support agents. */
+export type AgentRole = 'router' | 'planner' | 'worker' | 'reviewer' | 'reporter' | 'wiki-curator';
 
-export const AGENT_ROLES: readonly AgentRole[] = ['router', 'planner', 'worker', 'reviewer'];
+export const AGENT_ROLES: readonly AgentRole[] = ['router', 'planner', 'worker', 'reviewer', 'reporter', 'wiki-curator'];
 
 /**
  * Work modes govern how aggressively the system spends model capability:

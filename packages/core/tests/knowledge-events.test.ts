@@ -52,4 +52,26 @@ describe('structured knowledge events', () => {
     await store.saveKnowledgeEvents([event]);
     expect(await store.loadKnowledgeEvents()).toEqual([event]);
   });
+
+  it('represents agent-authored synthesis distinctly from run logs', () => {
+    const event = createKnowledgeEvent({
+      runId: 'run-1',
+      kind: 'synthesis',
+      title: 'Project architecture',
+      body: 'Agent-authored project wiki: the daemon owns execution and the TUI replays persisted run events.',
+      authorAgentId: 'codex',
+      clock: () => 12,
+      nextId: (prefix) => `${prefix}-1`,
+    });
+
+    expect(event).toMatchObject({
+      kind: 'synthesis',
+      authorAgentId: 'codex',
+    });
+    expect(knowledgeEventToWikiEntry(event)).toMatchObject({
+      kind: 'fact',
+      title: 'Project architecture',
+      source: 'knowledge:run-1:knowledge-1',
+    });
+  });
 });

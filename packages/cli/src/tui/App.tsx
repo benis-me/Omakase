@@ -676,9 +676,10 @@ function WorkspacePane({
       <>
         <Text>{knowledgeLabel(view) ?? 'No project knowledge yet'}</Text>
         {view.knowledgeEvents.slice(-6).map((event) => (
-          <Text key={event.id}>
-            ◇ {event.title.slice(0, 28)}
-          </Text>
+          <React.Fragment key={event.id}>
+            <Text>◇ {event.title.slice(0, 28)}</Text>
+            {event.authorAgentId ? <Text dimColor>  wiki-curator/{event.authorAgentId}</Text> : null}
+          </React.Fragment>
         ))}
       </>
     );
@@ -688,9 +689,10 @@ function WorkspacePane({
       <>
         {view.reports.length === 0 ? <Text dimColor>no reports yet</Text> : null}
         {view.reports.slice(-8).map((report) => (
-          <Text key={report.id}>
-            ▣ {report.title.slice(0, 28)}
-          </Text>
+          <React.Fragment key={report.id}>
+            <Text>▣ {report.title.slice(0, 28)}</Text>
+            <Text dimColor>  {report.authorAgentId ? `${report.authorRole}/${report.authorAgentId}` : report.source}</Text>
+          </React.Fragment>
         ))}
       </>
     );

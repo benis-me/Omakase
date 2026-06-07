@@ -25,12 +25,33 @@ function record(id: string): RunRecord {
         summary: 'planned',
         markdown: '# Planning report',
         taskId: null,
+        authorAgentId: 'codex',
+        authorRole: 'reporter',
+        source: 'agent',
         createdAt: 0,
       },
     ],
     knowledgeEvents: [],
     inbox: [],
-    events: [],
+    events: [
+      {
+        type: 'report-created',
+        report: {
+          id: 'report-1',
+          runId: id,
+          kind: 'planning',
+          title: 'Planning report',
+          summary: 'planned',
+          markdown: '# Planning report',
+          taskId: null,
+          authorAgentId: 'codex',
+          authorRole: 'reporter',
+          source: 'agent',
+          createdAt: 0,
+        },
+        reports: [],
+      },
+    ],
     summary: 'done',
     createdAt: 0,
     updatedAt: 0,
@@ -71,7 +92,15 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('Planning report');
       expect(home).toContain('Project Wiki');
       expect(home).toContain('Uses TypeScript');
-      expect(home).toContain('refreshes every 5s');
+      expect(home).toContain('Omakase Mission Control');
+      expect(home).toContain('data-region="reports"');
+      expect(home).toContain('fetch("/api/reports"');
+      expect(home).toContain('setInterval(refreshDashboard');
+      expect(home).not.toContain('http-equiv="refresh"');
+      const runs = await fetch(`${server.url}/api/runs`).then((res) => res.json() as Promise<unknown[]>);
+      expect(runs).toHaveLength(1);
+      const activity = await fetch(`${server.url}/api/activity`).then((res) => res.json() as Promise<unknown[]>);
+      expect(activity).toHaveLength(1);
       const post = await fetch(`${server.url}/api/run/run-1`, { method: 'POST' });
       expect(post.status).toBe(405);
     } finally {

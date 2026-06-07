@@ -173,6 +173,21 @@ describe('TUI App (persistent client)', () => {
           summary: 'planned one task',
           markdown: '# Planning report',
           taskId: null,
+          authorAgentId: 'codex',
+          authorRole: 'reporter',
+          source: 'agent',
+          createdAt: 0,
+        },
+      ],
+      knowledgeEvents: [
+        {
+          id: 'knowledge-1',
+          runId: 'r1',
+          kind: 'synthesis',
+          title: 'Wiki synthesis: Planning report',
+          body: 'Agent-authored project wiki: durable project facts.',
+          authorAgentId: 'codex',
+          reportId: 'report-1',
           createdAt: 0,
         },
       ],
@@ -208,6 +223,12 @@ describe('TUI App (persistent client)', () => {
     await tick(20);
     expect(lastFrame() ?? '').toContain('Reports');
     expect(lastFrame() ?? '').toContain('Planning report');
+    expect(lastFrame() ?? '').toContain('reporter/codex');
+    stdin.write('4');
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('Knowledge');
+    expect(lastFrame() ?? '').toContain('wiki-curator/codex');
+    expect(lastFrame() ?? '').toContain('Wiki synthesis');
     stdin.write('6');
     await tick(20);
     expect(lastFrame() ?? '').toContain('Gate');

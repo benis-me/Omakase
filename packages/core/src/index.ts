@@ -116,7 +116,7 @@ export { createIteration, finishIteration } from './iterations.js';
 export type { IterationSnapshot, IterationStatus } from './iterations.js';
 export { answerRiskGate, createRiskGate } from './risk-gates.js';
 export type { RiskGateReason, RiskGateSnapshot, RiskGateStatus } from './risk-gates.js';
-export { createReportArtifact } from './reports.js';
+export { cleanAgentArtifactText, createReportArtifact } from './reports.js';
 export type { ReportArtifact, ReportKind } from './reports.js';
 export {
   createKnowledgeEvent,

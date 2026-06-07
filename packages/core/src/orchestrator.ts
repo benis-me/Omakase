@@ -35,7 +35,7 @@ import {
 } from './acceptance.js';
 import { createIteration, finishIteration, type IterationSnapshot } from './iterations.js';
 import { answerRiskGate, createRiskGate, type RiskGateSnapshot } from './risk-gates.js';
-import { createReportArtifact, type ReportArtifact, type ReportKind } from './reports.js';
+import { cleanAgentArtifactText, createReportArtifact, type ReportArtifact, type ReportKind } from './reports.js';
 import {
   createKnowledgeEvent,
   knowledgeEventToWikiEntry,
@@ -197,6 +197,14 @@ function deferred(): Deferred {
 function usageTokens(usage: AgentRunResult['usage']): number {
   if (!usage) return 0;
   return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+}
+
+function summarizeMarkdown(markdown: string, fallback: string): string {
+  const line = markdown
+    .split('\n')
+    .map((item) => item.trim())
+    .find((item) => item.length > 0 && !item.startsWith('#'));
+  return (line ?? fallback).slice(0, 300);
 }
 
 class RunController implements RunHandle {
@@ -451,14 +459,151 @@ class RunController implements RunHandle {
     return this.acceptance.criteria.map((criterion) => criterion.title);
   }
 
-  private createReport(kind: ReportKind, title: string, summary: string, markdown: string, taskId?: string): void {
+  private async runSupportAgent(
+    role: Extract<AgentRole, 'reporter' | 'wiki-curator'>,
+    prompt: string,
+  ): Promise<{ result: AgentRunResult; assignment: ReturnType<ModelPolicy['select']> }> {
+    const assignment = this.policy.select(role, {
+      available: this.available,
+      taskType: role,
+      taskTitle: role,
+    });
+    const forced = this.request.metadata?.supportAgents === true;
+    const disabled = this.request.metadata?.supportAgents === false;
+    if (disabled || (!forced && (assignment.agentId === BUILTIN_AGENT_ID || assignment.agentId === 'scripted'))) {
+      return {
+        assignment,
+        result: {
+          text: '',
+          thinking: '',
+          toolCalls: [],
+          usage: null,
+          costUsd: null,
+          status: 'cancelled',
+          error: null,
+          model: null,
+        },
+      };
+    }
+    const input: AgentRunInput = {
+      agentId: assignment.agentId,
+      prompt,
+      ...(this.request.cwd ? { cwd: this.request.cwd } : {}),
+      model: assignment.model,
+      reasoning: assignment.reasoning,
+      metadata: { role, runId: this.id },
+    };
+    const abort = new AbortController();
+    this.activeAborts.add(abort);
+    input.signal = abort.signal;
+    const acc = createResultAccumulator();
+    try {
+      for await (const event of this.runtime.streamAgentEvents(input)) {
+        acc.push(event);
+        this.emit({ type: 'agent-event', role, taskId: null, assignment, event });
+        await this.checkpointProgress();
+      }
+    } catch (err) {
+      const message = errorMessage(err);
+      this.emit({ type: 'error', phase: role, message });
+      return {
+        assignment,
+        result: {
+          text: '',
+          thinking: '',
+          toolCalls: [],
+          usage: null,
+          costUsd: null,
+          status: 'error',
+          error: message,
+          model: null,
+        },
+      };
+    } finally {
+      this.activeAborts.delete(abort);
+    }
+    const result = acc.result();
+    // Support agents are explicitly outside the main task loop. Their artifacts
+    // carry author metadata, but their usage must not trip the user's task
+    // completion/budget gates.
+    return { result, assignment };
+  }
+
+  private supportContext(): string {
+    const tasks = this.graph.tasks().map((task) => ({
+      id: task.id,
+      title: task.title,
+      role: task.role,
+      status: task.status,
+      attempts: task.attempts,
+      tags: task.tags,
+      result: task.result?.summary,
+    }));
+    return JSON.stringify(
+      {
+        runId: this.id,
+        prompt: this.request.prompt,
+        route: this.routeDecision,
+        summary: this.computeSummary(this.status === 'pending' ? 'running' : this.status),
+        acceptance: this.acceptance,
+        iterations: this.iterations.slice(-5),
+        tasks,
+        reports: this.reports.map((report) => ({
+          id: report.id,
+          kind: report.kind,
+          title: report.title,
+          summary: report.summary,
+        })),
+        codegraph: this.codegraph?.stats() ?? null,
+      },
+      null,
+      2,
+    ).slice(0, 12000);
+  }
+
+  private reporterPrompt(kind: ReportKind, title: string, fallbackSummary: string, taskId?: string): string {
+    return [
+      'You are Omakase Reporter, an out-of-band reporting agent.',
+      'You do not participate in the main plan. Write a concise stage report for the user in markdown.',
+      'Do not paste raw logs. Synthesize progress, current state, risks, evidence, and next useful action.',
+      `Report kind: ${kind}`,
+      `Title: ${title}`,
+      taskId ? `Related task: ${taskId}` : 'Related task: none',
+      `Fallback summary: ${fallbackSummary}`,
+      '',
+      'Current run state JSON:',
+      this.supportContext(),
+    ].join('\n');
+  }
+
+  private wikiCuratorPrompt(reason: string, report: ReportArtifact | null): string {
+    return [
+      'You are Omakase Wiki Curator, an out-of-band project knowledge agent.',
+      'Write durable project wiki content, not a chronological run log.',
+      'Capture stable facts, architecture decisions, risks, open questions, and verification handles that will still help a future agent.',
+      'Keep it concise and specific. Avoid generic status phrases.',
+      `Reason: ${reason}`,
+      report ? `Related report: ${report.title} (${report.id})` : 'Related report: none',
+      '',
+      'Current run state JSON:',
+      this.supportContext(),
+    ].join('\n');
+  }
+
+  private async createReport(kind: ReportKind, title: string, fallbackSummary: string, fallbackMarkdown: string, taskId?: string): Promise<void> {
+    const { result, assignment } = await this.runSupportAgent('reporter', this.reporterPrompt(kind, title, fallbackSummary, taskId));
+    const agentMarkdown = result.status === 'completed' && result.text.trim().length > 0 ? cleanAgentArtifactText(result.text) : '';
+    const markdown = agentMarkdown || fallbackMarkdown;
+    const source = agentMarkdown ? 'agent' : 'fallback';
     const report = createReportArtifact({
       runId: this.id,
       kind,
       title,
-      summary,
+      summary: summarizeMarkdown(markdown, fallbackSummary),
       markdown,
       ...(taskId ? { taskId } : {}),
+      authorAgentId: source === 'agent' ? assignment.agentId : null,
+      source,
       clock: this.clock,
       nextId: (prefix) => this.ids.next(prefix),
     });
@@ -469,9 +614,38 @@ class RunController implements RunHandle {
       runId: this.id,
       kind: 'report',
       title,
-      body: summary,
+      body: report.summary,
       ...(taskId ? { taskId } : {}),
       reportId: report.id,
+      ...(report.authorAgentId ? { authorAgentId: report.authorAgentId } : {}),
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.knowledgeEvents = [...this.knowledgeEvents, knowledge];
+    const wikiEntry = knowledgeEventToWikiEntry(knowledge);
+    this.wiki.add(wikiEntry.kind, {
+      title: wikiEntry.title,
+      body: wikiEntry.body,
+      tags: wikiEntry.tags,
+      source: wikiEntry.source,
+    });
+    this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
+    this.emitKnowledge();
+    await this.createWikiSynthesis(`report:${kind}`, report);
+  }
+
+  private async createWikiSynthesis(reason: string, report: ReportArtifact | null = null): Promise<void> {
+    const { result, assignment } = await this.runSupportAgent('wiki-curator', this.wikiCuratorPrompt(reason, report));
+    const body = result.status === 'completed' && result.text.trim().length > 0 ? cleanAgentArtifactText(result.text) : '';
+    if (!body) return;
+    const knowledge = createKnowledgeEvent({
+      runId: this.id,
+      kind: 'synthesis',
+      title: report ? `Wiki synthesis: ${report.title}` : 'Wiki synthesis',
+      body,
+      ...(report?.taskId ? { taskId: report.taskId } : {}),
+      ...(report ? { reportId: report.id } : {}),
+      authorAgentId: assignment.agentId,
       clock: this.clock,
       nextId: (prefix) => this.ids.next(prefix),
     });
@@ -487,7 +661,7 @@ class RunController implements RunHandle {
     this.emitKnowledge();
   }
 
-  private createPlanningReport(): void {
+  private async createPlanningReport(): Promise<void> {
     const tasks = this.graph.tasks();
     const summary = `Planned ${tasks.length} task(s).`;
     const markdown = [
@@ -497,10 +671,10 @@ class RunController implements RunHandle {
       '',
       ...tasks.map((task) => `- ${task.id}: ${task.title} [${task.role}]`),
     ].join('\n');
-    this.createReport('planning', 'Planning report', summary, markdown);
+    await this.createReport('planning', 'Planning report', summary, markdown);
   }
 
-  private createReviewReport(taskId: string, approved: boolean, notes: string): void {
+  private async createReviewReport(taskId: string, approved: boolean, notes: string): Promise<void> {
     const summary = `Review ${approved ? 'approved' : 'rejected'}: ${notes || '(no notes)'}`;
     const markdown = [
       '# Review report',
@@ -509,7 +683,7 @@ class RunController implements RunHandle {
       '',
       `Acceptance: ${this.acceptance.progress.passed}/${this.acceptance.progress.total}`,
     ].join('\n');
-    this.createReport('review', 'Review report', summary, markdown, taskId);
+    await this.createReport('review', 'Review report', summary, markdown, taskId);
   }
 
   private replaceAcceptanceCriteria(rawCriteria: readonly string[]): void {
@@ -921,7 +1095,7 @@ class RunController implements RunHandle {
           this.attachGraphListener();
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         }
-        this.createPlanningReport();
+        await this.createPlanningReport();
       }
 
       await this.checkpoint();
@@ -939,6 +1113,9 @@ class RunController implements RunHandle {
         tags: ['run', status],
         source: `run:${this.id}`,
       });
+      if (!this.cancelled) {
+        await this.createWikiSynthesis(`run:${status}`);
+      }
       this.finished = true;
       this.emit({ type: 'run-finished', status, summary });
       // Terminal persistence is best-effort: a disk error (ENOSPC, EACCES, a
@@ -1164,7 +1341,7 @@ class RunController implements RunHandle {
           }),
         );
       }
-      this.createReviewReport(task.id, review.approved, review.notes.slice(0, 300));
+      await this.createReviewReport(task.id, review.approved, review.notes.slice(0, 300));
       if (review.approved) this.graph.setStatus(task.id, 'succeeded');
       else if (uncertain && this.uncertainReviewCount >= 2) {
         const gate = await this.openRiskGate({
