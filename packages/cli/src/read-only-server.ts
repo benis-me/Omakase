@@ -725,6 +725,22 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const wikiPageSourceLabel = (page) => page.sourceKind === 'codegraph' ? 'source: codegraph' : page.sourceKind === 'wiki' ? 'source: wiki entries' : page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: derived';
     const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(wikiPageSourceLabel(page)) + '</p></article>';
     let activeRunId = ${JSON.stringify(runList[0]?.id ?? '')};
+    const jsonOr = async (url) => {
+      try {
+        const response = await fetch(url);
+        return response.ok ? response.json() : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const textOr = async (url) => {
+      try {
+        const response = await fetch(url);
+        return response.ok ? response.text() : undefined;
+      } catch {
+        return undefined;
+      }
+    };
     const runDetailHtml = (detail) => {
       if (!detail || !detail.run) return '<p class="empty">Select a run to inspect tasks, agents, reports, and events.</p>';
       const tasks = (detail.tasks || []).map((task) => '<article class="compact-row"><strong>' + escapeHtml(task.id) + '</strong><span>' + escapeHtml(task.status) + ' · ' + escapeHtml(task.agentLabel || task.agentId || 'unassigned') + '</span><p>' + escapeHtml(task.title) + ' · ' + task.tokens + ' tok · ' + task.tools + ' tools</p></article>').join('');
@@ -743,7 +759,8 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
         region.innerHTML = runDetailHtml(null);
         return;
       }
-      const detail = await fetch("/api/run/" + encodeURIComponent(activeRunId) + "/detail").then((res) => res.json());
+      const detail = await jsonOr("/api/run/" + encodeURIComponent(activeRunId) + "/detail");
+      if (!detail) return;
       region.innerHTML = runDetailHtml(detail);
     }
     document.addEventListener('click', (event) => {
@@ -754,34 +771,39 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     });
     async function refreshDashboard() {
       const [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
-        fetch("/api/reports").then((res) => res.json()),
-        fetch("/api/runs").then((res) => res.json()),
-        fetch("/api/wiki").then((res) => res.text()),
-        fetch("/api/wiki/pages").then((res) => res.json()),
-        fetch("/api/activity").then((res) => res.json()),
-        fetch("/api/acceptance").then((res) => res.json()),
-        fetch("/api/iterations").then((res) => res.json()),
-        fetch("/api/agents").then((res) => res.json()),
-        fetch("/api/codegraph").then((res) => res.json()),
-        fetch("/api/events").then((res) => res.json()),
+        jsonOr("/api/reports"),
+        jsonOr("/api/runs"),
+        textOr("/api/wiki"),
+        jsonOr("/api/wiki/pages"),
+        jsonOr("/api/activity"),
+        jsonOr("/api/acceptance"),
+        jsonOr("/api/iterations"),
+        jsonOr("/api/agents"),
+        jsonOr("/api/codegraph"),
+        jsonOr("/api/events"),
       ]);
-      document.querySelector('[data-region="reports"]').innerHTML = reports.length ? reports.map(reportHtml).join('') : '<p class="empty">No reports yet.</p>';
-      document.querySelector('[data-region="runs"]').innerHTML = runs.length ? runs.map(runHtml).join('') : '<p class="empty">No runs yet.</p>';
-      if (!activeRunId && runs[0]) activeRunId = runs[0].id;
+      if (reports !== undefined) document.querySelector('[data-region="reports"]').innerHTML = reports.length ? reports.map(reportHtml).join('') : '<p class="empty">No reports yet.</p>';
+      if (runs !== undefined) {
+        document.querySelector('[data-region="runs"]').innerHTML = runs.length ? runs.map(runHtml).join('') : '<p class="empty">No runs yet.</p>';
+        if (!activeRunId && runs[0]) activeRunId = runs[0].id;
+      }
       await refreshRunDetail();
-      document.querySelector('[data-region="wiki"]').textContent = wiki;
-      document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
-      document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
-      document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
-      document.querySelector('[data-region="iterations"]').innerHTML = iterations.length ? iterations.slice(0, 12).map(iterationHtml).join('') : '<p class="empty">No iterations yet.</p>';
-      document.querySelector('[data-region="agents"]').innerHTML = agents.length ? agents.slice(0, 16).map(agentHtml).join('') : '<p class="empty">No agents yet.</p>';
-      document.querySelector('[data-region="codegraph"]').innerHTML = codegraphHtml(codegraph);
-      document.querySelector('[data-region="events"]').innerHTML = events.length ? events.slice(0, 20).map(activityHtml).join('') : '<p class="empty">No raw events yet.</p>';
-      document.querySelector('[data-metric="runs"]').textContent = runs.length;
-      document.querySelector('[data-metric="reports"]').textContent = reports.length;
-      document.querySelector('[data-metric="active"]').textContent = runs.filter((run) => run.status === 'running' || run.status === 'waiting-for-user').length;
-      document.querySelector('[data-metric="wiki"]').textContent = wikiPages.length;
-      document.querySelector('#last-updated').textContent = 'Read-only · updated ' + new Date().toLocaleTimeString();
+      if (wiki !== undefined) document.querySelector('[data-region="wiki"]').textContent = wiki;
+      if (wikiPages !== undefined) document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
+      if (activity !== undefined) document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
+      if (acceptance !== undefined) document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
+      if (iterations !== undefined) document.querySelector('[data-region="iterations"]').innerHTML = iterations.length ? iterations.slice(0, 12).map(iterationHtml).join('') : '<p class="empty">No iterations yet.</p>';
+      if (agents !== undefined) document.querySelector('[data-region="agents"]').innerHTML = agents.length ? agents.slice(0, 16).map(agentHtml).join('') : '<p class="empty">No agents yet.</p>';
+      if (codegraph !== undefined) document.querySelector('[data-region="codegraph"]').innerHTML = codegraphHtml(codegraph);
+      if (events !== undefined) document.querySelector('[data-region="events"]').innerHTML = events.length ? events.slice(0, 20).map(activityHtml).join('') : '<p class="empty">No raw events yet.</p>';
+      if (runs !== undefined) {
+        document.querySelector('[data-metric="runs"]').textContent = runs.length;
+        document.querySelector('[data-metric="active"]').textContent = runs.filter((run) => run.status === 'running' || run.status === 'waiting-for-user').length;
+      }
+      if (reports !== undefined) document.querySelector('[data-metric="reports"]').textContent = reports.length;
+      if (wikiPages !== undefined) document.querySelector('[data-metric="wiki"]').textContent = wikiPages.length;
+      const failed = [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events].some((value) => value === undefined);
+      document.querySelector('#last-updated').textContent = failed ? 'Read-only · reconnecting' : 'Read-only · updated ' + new Date().toLocaleTimeString();
     }
     setInterval(refreshDashboard, 2000);
     void refreshDashboard();

@@ -173,8 +173,13 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('data-region="agents"');
       expect(home).toContain('data-region="codegraph"');
       expect(home).toContain('data-region="events"');
-      expect(home).toContain('fetch("/api/reports"');
-      expect(home).toContain('fetch("/api/wiki/pages"');
+      expect(home).toContain('const jsonOr = async (url)');
+      expect(home).toContain('jsonOr("/api/reports")');
+      expect(home).toContain('jsonOr("/api/wiki/pages")');
+      expect(home).toContain('textOr("/api/wiki")');
+      expect(home).toContain('Read-only · reconnecting');
+      expect(home).not.toContain('fetch("/api/reports").then');
+      expect(home).not.toContain('fetch("/api/wiki/pages").then');
       expect(home).toContain('setInterval(refreshDashboard');
       expect(home).not.toContain('http-equiv="refresh"');
       const runs = await fetch(`${server.url}/api/runs`).then((res) => res.json() as Promise<unknown[]>);
@@ -367,7 +372,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('Run detail knowledge');
       expect(home).toContain('<h3>Iterations</h3>');
       expect(home).toContain('initial-plan');
-      expect(home).toContain('fetch("/api/run/" + encodeURIComponent(activeRunId) + "/detail"');
+      expect(home).toContain('jsonOr("/api/run/" + encodeURIComponent(activeRunId) + "/detail"');
     } finally {
       await server.close();
     }
