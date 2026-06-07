@@ -139,4 +139,47 @@ describe('structured knowledge events', () => {
     expect(markdown).toContain('source events: knowledge-1');
     expect(markdown).toContain('agents: codex');
   });
+
+  it('keeps wiki pages durable by excluding reports and collapsing repeated synthesis updates', () => {
+    const older = createKnowledgeEvent({
+      runId: 'run-1',
+      kind: 'synthesis',
+      title: 'Wiki synthesis: Planner boundary',
+      body: 'Old run-local description that should be replaced.',
+      authorAgentId: 'codex',
+      clock: () => 10,
+      nextId: (prefix) => `${prefix}-1`,
+    });
+    const newer = createKnowledgeEvent({
+      runId: 'run-2',
+      kind: 'synthesis',
+      title: 'Wiki synthesis: Planner boundary',
+      body: 'I’ll inspect recent run state first.**Planner boundary**\n\nPlanner creates worker tasks only; Omakase injects reviewer/support roles out of band.',
+      authorAgentId: 'codex',
+      clock: () => 20,
+      nextId: (prefix) => `${prefix}-2`,
+    });
+    const report = createKnowledgeEvent({
+      runId: 'run-2',
+      kind: 'report',
+      title: 'Planning report',
+      body: 'running: 0/4 tasks succeeded',
+      authorAgentId: 'codex',
+      clock: () => 21,
+      nextId: (prefix) => `${prefix}-3`,
+    });
+
+    const pages = buildWikiPages([older, newer, report]);
+    const overview = pages.find((page) => page.id === 'overview');
+
+    expect(overview?.sourceEventIds).toEqual(['knowledge-2']);
+    expect(overview?.sourceRunIds).toEqual(['run-2']);
+    expect(overview?.body).toContain('## Planner boundary');
+    expect(overview?.body).toContain('Omakase injects reviewer/support roles out of band');
+    expect(overview?.body).not.toContain('Old run-local description');
+    expect(overview?.body).not.toContain('Wiki synthesis:');
+    expect(overview?.body).not.toContain('Planning report');
+    expect(overview?.body).not.toContain('I’ll inspect recent run state first');
+    expect(pages.map((page) => page.body).join('\n')).not.toContain('running: 0/4 tasks succeeded');
+  });
 });

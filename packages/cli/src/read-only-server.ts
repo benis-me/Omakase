@@ -2,6 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   CodeGraph,
   ProjectWiki,
+  buildWikiPages,
   renderWikiPagesMarkdown,
   type KnowledgeStore,
   type RunRecord,
@@ -252,9 +253,13 @@ async function rawEvents(store: RunStore): Promise<Array<{ runId: string; label:
 
 async function wikiPages(knowledgeStore: KnowledgeStore | undefined): Promise<WikiPage[]> {
   if (!knowledgeStore) return [];
+  const events = await knowledgeStore.loadKnowledgeEvents();
+  const wiki = await knowledgeStore.loadWiki();
+  const codegraph = await knowledgeStore.loadCodegraph();
+  const derived = buildWikiPages(events, wiki, codegraph);
+  if (derived.length > 0) return derived;
   const pages = await knowledgeStore.loadWikiPages();
   if (pages.length > 0) return pages;
-  const wiki = await knowledgeStore?.loadWiki();
   if (!wiki) return [];
   const body = ProjectWiki.fromJSON(wiki).toMarkdown();
   if (!body.trim()) return [];

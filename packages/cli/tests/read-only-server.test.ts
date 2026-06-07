@@ -214,4 +214,62 @@ describe('read-only report/wiki server', () => {
       await server.close();
     }
   });
+
+  it('derives wiki pages from current knowledge instead of stale page artifacts', async () => {
+    const store = new MemoryRunStore();
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-readonly-stale-wiki-'));
+    const knowledgeStore = new FileKnowledgeStore(dir);
+    await knowledgeStore.saveKnowledgeEvents([
+      createKnowledgeEvent({
+        runId: 'run-1',
+        kind: 'synthesis',
+        title: 'Wiki synthesis: Planner boundary',
+        body: 'Outdated planner note.',
+        authorAgentId: 'codex',
+        clock: () => 1,
+        nextId: (prefix) => `${prefix}-1`,
+      }),
+      createKnowledgeEvent({
+        runId: 'run-2',
+        kind: 'synthesis',
+        title: 'Wiki synthesis: Planner boundary',
+        body: '## Planner boundary\n\nPlanner creates worker tasks only; reports stay out of the wiki pages.',
+        authorAgentId: 'codex',
+        clock: () => 2,
+        nextId: (prefix) => `${prefix}-2`,
+      }),
+      createKnowledgeEvent({
+        runId: 'run-2',
+        kind: 'report',
+        title: 'Planning report',
+        body: 'running: 0/4 tasks succeeded',
+        authorAgentId: 'codex',
+        clock: () => 3,
+        nextId: (prefix) => `${prefix}-3`,
+      }),
+    ]);
+    await knowledgeStore.saveWikiPages([
+      {
+        id: 'overview',
+        title: 'Project Overview',
+        body: 'stale report log that should not be served',
+        sourceKind: 'agent',
+        sourceEventIds: ['stale'],
+        sourceRunIds: ['stale-run'],
+        authorAgentIds: ['codex'],
+        updatedAt: 0,
+      },
+    ]);
+
+    const server = await startReadOnlyServer({ store, knowledgeStore });
+    try {
+      const pages = await fetch(`${server.url}/api/wiki/pages`).then((res) => res.json() as Promise<WikiPage[]>);
+      expect(pages[0]?.sourceEventIds).toEqual(['knowledge-2']);
+      expect(pages[0]?.body).toContain('Planner creates worker tasks only');
+      expect(pages[0]?.body).not.toContain('stale report log');
+      expect(pages[0]?.body).not.toContain('running: 0/4 tasks succeeded');
+    } finally {
+      await server.close();
+    }
+  });
 });
