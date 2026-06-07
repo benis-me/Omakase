@@ -1370,6 +1370,7 @@ class RunController implements RunHandle {
               tags: ['Review'],
             });
           }
+          this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         } else {
           this.graph = this.defaultPlanner
             ? await this.planWithDefaultPlanner()

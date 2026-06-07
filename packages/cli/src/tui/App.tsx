@@ -77,6 +77,18 @@ function tasksForPhase(view: RunView | null, selectedPhase: number): {
   };
 }
 
+function tasksForDetail(view: RunView | null, selectedPhase: number, workspace: Workspace): {
+  phaseIdx: number;
+  stage: string | undefined;
+  tasks: TaskView[];
+} {
+  const phase = tasksForPhase(view, selectedPhase);
+  if (workspace === 'Agents' && view) {
+    return { phaseIdx: phase.phaseIdx, stage: 'all agents', tasks: view.tasks };
+  }
+  return phase;
+}
+
 function isRunnableAgent(agent: DetectedAgent): boolean {
   return agent.available && agent.authStatus !== 'missing';
 }
@@ -438,6 +450,8 @@ export function App({
       if (Number.isInteger(workspaceIndex) && workspaceIndex >= 1 && workspaceIndex <= WORKSPACES.length) {
         setWorkspace(WORKSPACES[workspaceIndex - 1]!);
         setFocusPane('plan');
+        setSelectedTask(0);
+        setExpandedTaskId(null);
         return;
       }
       if (key.leftArrow) setFocusPane('plan');
@@ -451,7 +465,7 @@ export function App({
         }
       } else if (key.downArrow) {
         if (focusPane === 'detail') {
-          const taskCount = tasksForPhase(view, selectedPhase).tasks.length;
+          const taskCount = tasksForDetail(view, selectedPhase, workspace).tasks.length;
           setSelectedTask((i) => Math.min(Math.max(0, taskCount - 1), i + 1));
         } else {
           setSelectedPhase((i) => Math.min(Math.max(0, (view?.phases.length ?? 1) - 1), i + 1));
@@ -459,7 +473,7 @@ export function App({
           setExpandedTaskId(null);
         }
       } else if (key.return && focusPane === 'detail') {
-        const task = tasksForPhase(view, selectedPhase).tasks[selectedTask];
+        const task = tasksForDetail(view, selectedPhase, workspace).tasks[selectedTask];
         if (task) setExpandedTaskId((id) => (id === task.id ? null : task.id));
       } else if (key.escape) back();
       else if (input === 'x' && attachedId) {
@@ -491,10 +505,10 @@ export function App({
 
   useEffect(() => {
     if (!view) return;
-    const tasks = tasksForPhase(view, selectedPhase).tasks;
+    const tasks = tasksForDetail(view, selectedPhase, workspace).tasks;
     setSelectedTask((i) => Math.min(Math.max(0, tasks.length - 1), i));
     if (expandedTaskId && !tasks.some((t) => t.id === expandedTaskId)) setExpandedTaskId(null);
-  }, [expandedTaskId, selectedPhase, view]);
+  }, [expandedTaskId, selectedPhase, view, workspace]);
 
   const visibleAgents = agents.filter(isVisibleDetectedAgent);
   const availableCount = visibleAgents.filter(isRunnableAgent).length;
@@ -661,6 +675,31 @@ function knowledgeLabel(view: RunView): string | null {
   return `Knowledge · ${view.wikiEntries} wiki${view.codegraphFiles != null ? ` · ${view.codegraphFiles} files` : ''}`;
 }
 
+function supportActivityForWorkspace(view: RunView, workspace: Workspace): string[] {
+  if (workspace === 'Reports') {
+    const reportLines = view.supportActivity.filter((line) => line.startsWith('reporter/') || line.startsWith('▣ report:'));
+    return reportLines.length > 0 ? reportLines : view.supportActivity;
+  }
+  if (workspace === 'Knowledge') {
+    const knowledgeLines = view.supportActivity.filter((line) => line.startsWith('wiki-curator/') || line.startsWith('◇ knowledge event:'));
+    return knowledgeLines.length > 0 ? knowledgeLines : view.supportActivity;
+  }
+  return [];
+}
+
+function activityForWorkspace(view: RunView, workspace: Workspace): { title: string; lines: string[] } {
+  if (workspace === 'Reports') {
+    return { title: 'Report Activity', lines: supportActivityForWorkspace(view, workspace).slice(-10) };
+  }
+  if (workspace === 'Knowledge') {
+    return { title: 'Knowledge Activity', lines: supportActivityForWorkspace(view, workspace).slice(-10) };
+  }
+  const lines = (
+    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
+  ).slice(-10);
+  return { title: 'Activity', lines };
+}
+
 function WorkspacePane({
   view,
   workspace,
@@ -773,10 +812,8 @@ function RunDetail({
   expandedTaskId: string | null;
 }): React.ReactElement {
   if (!view) return <Text dimColor>attaching…</Text>;
-  const { phaseIdx, stage, tasks } = tasksForPhase(view, selectedPhase);
-  const activity = (
-    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
-  ).slice(-10);
+  const { phaseIdx, stage, tasks } = tasksForDetail(view, selectedPhase, workspace);
+  const activity = activityForWorkspace(view, workspace);
   const knowledge = knowledgeLabel(view);
   return (
     <Box flexGrow={1}>
@@ -789,10 +826,10 @@ function RunDetail({
         <WorkspacePane view={view} workspace={workspace} phaseIdx={phaseIdx} />
       </Box>
       <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
-        <Text bold>Activity</Text>
+        <Text bold>{activity.title}</Text>
         {knowledge ? <Text dimColor>{knowledge.slice(0, 82)}</Text> : null}
-        {activity.length === 0 ? <Text dimColor>waiting for planner…</Text> : null}
-        {activity.map((p, i) => (
+        {activity.lines.length === 0 ? <Text dimColor>{workspace === 'Reports' || workspace === 'Knowledge' ? 'waiting for support agent…' : 'waiting for planner…'}</Text> : null}
+        {activity.lines.map((p, i) => (
           <Text key={`${i}-${p.slice(0, 12)}`} dimColor>
             {p.slice(0, 82)}
           </Text>

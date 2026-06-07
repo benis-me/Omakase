@@ -299,6 +299,73 @@ describe('view-model', () => {
     ]);
   });
 
+  it('keeps out-of-band reporter and wiki-curator streams out of main activity', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'planner',
+      taskId: null,
+      assignment: { role: 'planner', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'text_delta', delta: 'Planner is decomposing the work' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'reporter',
+      taskId: null,
+      assignment: { role: 'reporter', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'text_delta', delta: 'Reporter sidecar report text' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'agent-event',
+      role: 'wiki-curator',
+      taskId: null,
+      assignment: { role: 'wiki-curator', agentId: 'codex', model: null, reasoning: null, rationale: 'test' },
+      event: { type: 'text_delta', delta: 'Wiki sidecar synthesis' },
+    } as any);
+    view = reduceRunView(view, {
+      type: 'report-created',
+      report: {
+        id: 'report-1',
+        runId: 'run-1',
+        kind: 'planning',
+        title: 'Planning report',
+        summary: 'planned',
+        markdown: '# Planning report',
+        taskId: null,
+        authorAgentId: 'codex',
+        authorRole: 'reporter',
+        source: 'agent',
+        createdAt: 0,
+      },
+      reports: [],
+    } as any);
+    view = reduceRunView(view, {
+      type: 'knowledge-event-created',
+      event: {
+        id: 'knowledge-1',
+        runId: 'run-1',
+        kind: 'synthesis',
+        title: 'Wiki synthesis',
+        body: 'Stable project knowledge.',
+        authorAgentId: 'codex',
+        createdAt: 0,
+      },
+      events: [],
+    } as any);
+
+    expect(view.phrases).toEqual(['planner/codex: Planner is decomposing the work']);
+    expect(view.activity.join('\n')).toContain('Planner is decomposing the work');
+    expect(view.activity.join('\n')).not.toContain('Reporter sidecar report text');
+    expect(view.activity.join('\n')).not.toContain('Wiki sidecar synthesis');
+    expect(view.activity.join('\n')).not.toContain('report: Planning report');
+    expect(view.supportActivity).toEqual([
+      'reporter/codex: Reporter sidecar report text',
+      'wiki-curator/codex: Wiki sidecar synthesis',
+      '▣ report: Planning report',
+      '◇ knowledge event: Wiki synthesis',
+    ]);
+  });
+
   it('keeps rich knowledge/codegraph state in the view-model', () => {
     let view = initialRunView('normal');
     view = reduceRunView(view, {

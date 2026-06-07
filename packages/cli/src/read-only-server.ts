@@ -318,11 +318,30 @@ function eventActivityLabel(event: RunRecord['events'][number]): string {
   }
 }
 
+function isSupportEvent(event: RunRecord['events'][number]): boolean {
+  if (event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
+  if (event.type !== 'agent-event' && event.type !== 'agent-assigned') return false;
+  return event.taskId == null && (event.role === 'reporter' || event.role === 'wiki-curator');
+}
+
 async function activity(store: RunStore): Promise<Array<{ runId: string; label: string; type: string }>> {
   const out: Array<{ runId: string; label: string; type: string }> = [];
   for (const record of await records(store)) {
     for (const event of record.events.slice(-40)) {
       if (event.type === 'heartbeat') continue;
+      if (isSupportEvent(event)) continue;
+      out.push({ runId: record.id, label: eventActivityLabel(event), type: event.type });
+    }
+  }
+  return out.slice(-120).reverse();
+}
+
+async function supportActivity(store: RunStore): Promise<Array<{ runId: string; label: string; type: string }>> {
+  const out: Array<{ runId: string; label: string; type: string }> = [];
+  for (const record of await records(store)) {
+    for (const event of record.events.slice(-80)) {
+      if (event.type === 'heartbeat') continue;
+      if (!isSupportEvent(event)) continue;
       out.push({ runId: record.id, label: eventActivityLabel(event), type: event.type });
     }
   }
@@ -465,6 +484,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   const runList = await runSummaries(store);
   const latestRecord = (await records(store))[0] ?? null;
   const activityList = await activity(store);
+  const supportActivityList = await supportActivity(store);
   const acceptanceList = await acceptanceSummaries(store);
   const iterationList = await iterationSummaries(store);
   const agentList = await agentSummaries(store);
@@ -505,6 +525,13 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     activityList.length === 0
       ? '<p class="empty">No activity yet.</p>'
       : activityList
+          .slice(0, 16)
+          .map((item) => `<li><span>${escapeHtml(item.type)}</span>${escapeHtml(item.label)}<small>${escapeHtml(item.runId)}</small></li>`)
+          .join('\n');
+  const supportActivityHtml =
+    supportActivityList.length === 0
+      ? '<p class="empty">No support activity yet.</p>'
+      : supportActivityList
           .slice(0, 16)
           .map((item) => `<li><span>${escapeHtml(item.type)}</span>${escapeHtml(item.label)}<small>${escapeHtml(item.runId)}</small></li>`)
           .join('\n');
@@ -691,6 +718,10 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           <ul class="activity" data-region="activity">${activityHtml}</ul>
         </section>
         <section>
+          <h2>Support Activity</h2>
+          <ul class="activity" data-region="support-activity">${supportActivityHtml}</ul>
+        </section>
+        <section>
           <h2>Iterations</h2>
           <div data-region="iterations">${iterationsHtml}</div>
         </section>
@@ -770,12 +801,13 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       void refreshRunDetail();
     });
     async function refreshDashboard() {
-      const [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
+      const [reports, runs, wiki, wikiPages, activity, supportActivity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         jsonOr("/api/reports"),
         jsonOr("/api/runs"),
         textOr("/api/wiki"),
         jsonOr("/api/wiki/pages"),
         jsonOr("/api/activity"),
+        jsonOr("/api/support-activity"),
         jsonOr("/api/acceptance"),
         jsonOr("/api/iterations"),
         jsonOr("/api/agents"),
@@ -791,6 +823,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       if (wiki !== undefined) document.querySelector('[data-region="wiki"]').textContent = wiki;
       if (wikiPages !== undefined) document.querySelector('[data-region="wiki-pages"]').innerHTML = wikiPages.length ? wikiPages.map(wikiPageHtml).join('') : '<p class="empty">No wiki pages yet.</p>';
       if (activity !== undefined) document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
+      if (supportActivity !== undefined) document.querySelector('[data-region="support-activity"]').innerHTML = supportActivity.length ? supportActivity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No support activity yet.</p>';
       if (acceptance !== undefined) document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
       if (iterations !== undefined) document.querySelector('[data-region="iterations"]').innerHTML = iterations.length ? iterations.slice(0, 12).map(iterationHtml).join('') : '<p class="empty">No iterations yet.</p>';
       if (agents !== undefined) document.querySelector('[data-region="agents"]').innerHTML = agents.length ? agents.slice(0, 16).map(agentHtml).join('') : '<p class="empty">No agents yet.</p>';
@@ -802,7 +835,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       }
       if (reports !== undefined) document.querySelector('[data-metric="reports"]').textContent = reports.length;
       if (wikiPages !== undefined) document.querySelector('[data-metric="wiki"]').textContent = wikiPages.length;
-      const failed = [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events].some((value) => value === undefined);
+      const failed = [reports, runs, wiki, wikiPages, activity, supportActivity, acceptance, iterations, agents, codegraph, events].some((value) => value === undefined);
       document.querySelector('#last-updated').textContent = failed ? 'Read-only · reconnecting' : 'Read-only · updated ' + new Date().toLocaleTimeString();
     }
     setInterval(refreshDashboard, 2000);
@@ -849,6 +882,10 @@ export async function startReadOnlyServer(options: ReadOnlyServerOptions): Promi
       }
       if (url.pathname === '/api/activity') {
         sendJson(res, 200, await activity(options.store));
+        return;
+      }
+      if (url.pathname === '/api/support-activity') {
+        sendJson(res, 200, await supportActivity(options.store));
         return;
       }
       if (url.pathname === '/api/acceptance') {

@@ -13,10 +13,13 @@ import {
   FileRunStore,
   MemoryRunStore,
   Orchestrator,
+  ProjectWiki,
   createModelPolicy,
   projectKnowledgeStore,
+  renderWikiPagesMarkdown,
   type OrchestrationRequest,
   type WorkMode,
+  type WikiEntryKind,
 } from '@omakase/core';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
@@ -55,6 +58,9 @@ const VALUE_FLAGS = new Set([
   'concurrency',
   'runs-dir',
   'queue-dir',
+  'body',
+  'kind',
+  'tags',
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -178,6 +184,8 @@ Usage:
   omakase serve ["<task>"...] [opts]   Supervise a queue of runs (24/7), resuming
                                        anything left unfinished. Reads task files
                                        from .omakase/queue. --watch to keep polling.
+  omakase wiki [--cwd]                 Print the generated/editable project wiki
+  omakase wiki add <title> [opts]      Add a manual wiki entry and refresh pages
   omakase tui ["<task>"] [options]     Open the interactive TUI (attaches to the
                                        detached daemon; quitting never stops a run)
   omakase daemon status|stop [--cwd]   Inspect or stop the project's run daemon
@@ -191,6 +199,9 @@ Options:
   --max-cost <usd>                     Stop the run after ~usd is spent
   --watch [--interval <ms>]            (serve) keep polling the queue
   --concurrency <n>                    (serve) runs to drive in parallel
+  --kind <note|fact|decision|risk>     (wiki add) entry kind (default: note)
+  --body <text>                        (wiki add) entry body
+  --tags <a,b>                         (wiki add) additional tags
   --cwd <path>                         Working directory (default: cwd)
   --json                               Machine-readable output (agents/run)
 `;
@@ -224,6 +235,60 @@ export function createCli(deps: CliDeps = {}): Cli {
     } else {
       write(formatAgentsTable(agents));
     }
+    return 0;
+  }
+
+  function parseWikiKind(value: string | boolean | undefined): WikiEntryKind | null {
+    if (value === undefined || value === false || value === true) return 'note';
+    if (value === 'note' || value === 'fact' || value === 'decision' || value === 'risk') return value;
+    return null;
+  }
+
+  function parseWikiTags(value: string | boolean | undefined): string[] {
+    const userTags = typeof value === 'string' ? value.split(',') : [];
+    return [...new Set(['knowledge', 'manual', ...userTags.map((tag) => tag.trim()).filter(Boolean)])];
+  }
+
+  async function wikiCommand(positionals: string[], options: ParsedArgs['options']): Promise<number> {
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+    const store = projectKnowledgeStore(cwd);
+    const sub = positionals[1];
+    if (sub === 'add') {
+      const title = positionals.slice(2).join(' ').replace(/\s+/g, ' ').trim();
+      if (!title) {
+        error('omakase wiki add: a title is required');
+        return 1;
+      }
+      const kind = parseWikiKind(options.kind);
+      if (!kind) {
+        error('omakase wiki add: --kind must be note, fact, decision, or risk');
+        return 1;
+      }
+      const snapshot = (await store.loadWiki()) ?? { entries: [] };
+      const wiki = ProjectWiki.fromJSON(snapshot);
+      const entry = wiki.add(kind, {
+        title,
+        body: typeof options.body === 'string' ? options.body : '',
+        tags: parseWikiTags(options.tags),
+        source: `manual:${Date.now()}`,
+      });
+      if (store.mergeWiki) await store.mergeWiki([entry]);
+      else await store.saveWiki(wiki.toJSON());
+      write(`wiki: added ${kind} "${entry.title}"`);
+      return 0;
+    }
+
+    if (sub && sub !== 'show') {
+      error(`omakase wiki: unknown subcommand "${sub}"`);
+      return 1;
+    }
+    const pages = await store.loadWikiPages();
+    if (pages.length > 0) {
+      write(renderWikiPagesMarkdown(pages));
+      return 0;
+    }
+    const wiki = await store.loadWiki();
+    write(wiki ? ProjectWiki.fromJSON(wiki).toMarkdown() : '# Project Knowledge Base');
     return 0;
   }
 
@@ -480,6 +545,8 @@ export function createCli(deps: CliDeps = {}): Cli {
             return 0;
           case 'agents':
             return await agentsCommand(options);
+          case 'wiki':
+            return await wikiCommand(positionals, options);
           case 'run':
             return await runCommand(positionals.slice(1).join(' '), options);
           case 'serve':

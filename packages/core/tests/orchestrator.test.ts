@@ -183,7 +183,7 @@ describe('Orchestrator (Ralph loop)', () => {
     expect(reviewerCalls).toBe(2);
   });
 
-  it('routes a simple request straight to a single worker (no planner)', async () => {
+  it('routes a simple request to a single worker and still emits a planned snapshot for live clients', async () => {
     const runtime = scriptedRuntime(() => 'done');
     const simpleRouter: Router = {
       route: () => ({ kind: 'simple', reason: 't', confidence: 1, signals: [], suggestedRole: 'worker' }),
@@ -193,7 +193,13 @@ describe('Orchestrator (Ralph loop)', () => {
       router: simpleRouter,
     });
     const events = await collect(orch.start({ prompt: 'summarize' }));
-    expect(events.some((e) => e.type === 'planned')).toBe(false);
+    const planned = events.find((e) => e.type === 'planned');
+    expect(planned).toMatchObject({
+      type: 'planned',
+      snapshot: {
+        tasks: [expect.objectContaining({ title: 'Handle request', role: 'worker', tags: ['simple'] })],
+      },
+    });
     expect(events.filter((e) => e.type === 'task-finished')).toHaveLength(1);
     expect(events.at(-1)).toMatchObject({ type: 'run-finished', status: 'succeeded' });
   });
@@ -456,7 +462,7 @@ describe('Orchestrator (Ralph loop)', () => {
     const routed = events.find((e) => e.type === 'routed');
     // Unparseable → rule fallback decided (its reason cites the complexity score).
     expect((routed as Extract<OrchestratorEvent, { type: 'routed' }>).decision.reason).toMatch(/score/i);
-    expect(events.some((e) => e.type === 'planned')).toBe(false); // rules → simple
+    expect(events.some((e) => e.type === 'planned')).toBe(true); // simple still emits a replayable plan snapshot
   });
 
   it('checkpoints streaming agent events while a task is still running', async () => {

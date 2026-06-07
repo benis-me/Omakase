@@ -71,6 +71,8 @@ export interface RunView {
   phrases: string[];
   /** Chronological user-facing activity, mixing structural run events and agent stream updates. */
   activity: string[];
+  /** Out-of-band reporter/wiki-curator activity, kept out of the main run flow. */
+  supportActivity: string[];
   wikiEntries: number;
   codegraphFiles: number | null;
   codegraphStats: CodeGraphStats | null;
@@ -104,6 +106,7 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
     events: [],
     phrases: [],
     activity: [],
+    supportActivity: [],
     wikiEntries: 0,
     codegraphFiles: null,
     codegraphStats: null,
@@ -297,16 +300,28 @@ function shortenToolCommand(command: string): string {
   return `${compact.slice(0, 69).trimEnd()}...`;
 }
 
+function isSupportActivityEvent(event: OrchestratorEvent): boolean {
+  if (event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
+  if (event.type !== 'agent-event' && event.type !== 'agent-assigned') return false;
+  return event.taskId == null && (event.role === 'reporter' || event.role === 'wiki-curator');
+}
+
 export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView {
   const line = formatEventLine(event);
   const events = line ? [...view.events, line].slice(-MAX_EVENT_LINES) : view.events;
-  const phrase = phraseLine(event);
+  const support = isSupportActivityEvent(event);
+  const rawPhrase = phraseLine(event);
+  const phrase = !support ? rawPhrase : '';
   const phrases = phrase ? [...view.phrases, phrase].slice(-MAX_PHRASES) : view.phrases;
   const activityLine = phrase || line;
-  const activity = activityLine
+  const activity = activityLine && !support
     ? [...view.activity, activityLine].slice(-MAX_ACTIVITY_LINES)
     : view.activity;
-  const next: RunView = { ...view, events, phrases, activity };
+  const supportLine = support ? rawPhrase || line : '';
+  const supportActivity = supportLine
+    ? [...view.supportActivity, supportLine].slice(-MAX_ACTIVITY_LINES)
+    : view.supportActivity;
+  const next: RunView = { ...view, events, phrases, activity, supportActivity };
 
   switch (event.type) {
     case 'run-started':

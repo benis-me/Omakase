@@ -218,6 +218,8 @@ describe('TUI App (persistent client)', () => {
         },
       ],
     };
+    rich.activity = ['worker/codex: main worker output'];
+    rich.supportActivity = ['reporter/codex: streaming report sidecar', 'wiki-curator/codex: streaming wiki sidecar'];
     const client = fakeClient({
       tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
         onView(rich);
@@ -229,6 +231,8 @@ describe('TUI App (persistent client)', () => {
     );
     await tick();
     expect(lastFrame() ?? '').toContain('web: http://127.0.0.1:4555');
+    expect(lastFrame() ?? '').toContain('main worker output');
+    expect(lastFrame() ?? '').not.toContain('streaming report sidecar');
     stdin.write('3');
     await tick(20);
     expect(lastFrame() ?? '').toContain('Acceptance');
@@ -238,11 +242,13 @@ describe('TUI App (persistent client)', () => {
     expect(lastFrame() ?? '').toContain('Reports');
     expect(lastFrame() ?? '').toContain('Planning report');
     expect(lastFrame() ?? '').toContain('reporter/codex');
+    expect(lastFrame() ?? '').toContain('streaming report sidecar');
     stdin.write('4');
     await tick(20);
     expect(lastFrame() ?? '').toContain('Knowledge');
     expect(lastFrame() ?? '').toContain('wiki-curator/codex');
     expect(lastFrame() ?? '').toContain('Wiki synthesis');
+    expect(lastFrame() ?? '').toContain('streaming wiki sidecar');
     stdin.write('6');
     await tick(20);
     expect(lastFrame() ?? '').toContain('Gate');
@@ -675,6 +681,49 @@ describe('TUI App (persistent client)', () => {
     expect(frame).toContain('instance: claude#t2');
     expect(frame).toContain('tokens: 5');
     expect(frame).toContain('tools: 0');
+    unmount();
+  });
+
+  it('Agents workspace detail focuses every agent instead of the selected phase only', async () => {
+    const crossPhase: RunView = {
+      ...sampleView(),
+      tasks: [
+        { id: 't1', title: 'logic worker', role: 'worker', status: 'succeeded', tags: ['logic'], tokens: 10, toolCount: 1, startedAt: 0, finishedAt: 0, agentId: 'codex', agentRunId: 'agent-run-1', agentLabel: 'codex#t1' },
+        { id: 't2', title: 'review agent', role: 'reviewer', status: 'running', tags: ['review'], tokens: 5, toolCount: 0, startedAt: 0, finishedAt: null, agentId: 'claude', agentRunId: 'agent-run-2', agentLabel: 'claude#t2' },
+      ],
+      phases: [
+        { stage: 'logic', done: 1, total: 1 },
+        { stage: 'review', done: 0, total: 1 },
+      ],
+      totalAgents: 2,
+    };
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(crossPhase);
+        return () => {};
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} cwd="/p" mode="normal" token="tok" />,
+    );
+    await tick();
+    expect(lastFrame() ?? '').toContain('Detail · logic');
+    expect(lastFrame() ?? '').not.toContain('review agent');
+    stdin.write('2'); // Agents workspace
+    await tick(20);
+    expect(lastFrame() ?? '').toContain('Detail · all agents');
+    expect(lastFrame() ?? '').toContain('logic worker');
+    expect(lastFrame() ?? '').toContain('review agent');
+    stdin.write('[C'); // focus Detail
+    await tick(20);
+    stdin.write('[B'); // select review agent
+    await tick(20);
+    stdin.write('\r');
+    await tick(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('id: t2');
+    expect(frame).toContain('agent: claude');
+    expect(frame).toContain('instance: claude#t2');
     unmount();
   });
 });

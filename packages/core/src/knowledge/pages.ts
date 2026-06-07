@@ -166,6 +166,13 @@ function renderCodegraphPage(snapshot: CodeGraphSnapshot): string {
       lines.push(`- ${entrypoint.path}: ${entrypoint.dependencies} dependencies, ${entrypoint.symbols} symbols, ${entrypoint.loc} loc`);
     }
   }
+  lines.push('', '## Public APIs');
+  if (summary.publicApis.length === 0) lines.push('- None detected');
+  else {
+    for (const api of summary.publicApis) {
+      lines.push(`- ${api.path}: ${api.exports.join(', ')}`);
+    }
+  }
   lines.push('', '## External dependencies');
   if (summary.externalDependencies.length === 0) lines.push('- None detected');
   else {

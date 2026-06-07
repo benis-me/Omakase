@@ -77,10 +77,18 @@ export interface CodeGraphExternalDependency {
   count: number;
 }
 
+export interface CodeGraphPublicApi {
+  path: string;
+  exports: string[];
+  symbols: CodeSymbol[];
+  dependents: number;
+}
+
 export interface CodeGraphSummary {
   stats: CodeGraphStats;
   dependencyHubs: CodeGraphHotspot[];
   entrypoints: CodeGraphHotspot[];
+  publicApis: CodeGraphPublicApi[];
   externalDependencies: CodeGraphExternalDependency[];
   cycles: string[][];
 }
@@ -510,6 +518,23 @@ export class CodeGraph {
       entrypoints: hotspots
         .filter((item) => item.dependents === 0)
         .sort(byEntryRank)
+        .slice(0, limit),
+      publicApis: this.nodesList()
+        .filter((node) => node.exports.length > 0)
+        .map((node) => ({
+          path: node.path,
+          exports: [...node.exports].sort(),
+          symbols: node.symbols
+            .filter((symbol) => symbol.exported || node.exports.includes(symbol.name))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+          dependents: this.dependents(node.path).length,
+        }))
+        .sort(
+          (a, b) =>
+            b.dependents - a.dependents ||
+            b.exports.length - a.exports.length ||
+            a.path.localeCompare(b.path),
+        )
         .slice(0, limit),
       externalDependencies: [...externalCounts.entries()]
         .map(([specifier, count]) => ({ specifier, count }))

@@ -83,7 +83,7 @@ describe('CodeGraph', () => {
     write('src/cycle/b.ts', `import { a } from './a.js';\nexport const b = a;\n`);
 
     const graph = await CodeGraph.scan({ root });
-    const summary = graph.summary(5);
+    const summary = graph.summary(8);
 
     expect(summary.stats).toMatchObject({
       files: 8,
@@ -98,6 +98,13 @@ describe('CodeGraph', () => {
     });
     expect(summary.entrypoints.map((item) => item.path)).toEqual(
       expect.arrayContaining(['src/app.ts', 'src/cli.ts']),
+    );
+    expect(summary.publicApis[0]).toMatchObject({
+      path: 'src/core/service.ts',
+      exports: ['service'],
+    });
+    expect(summary.publicApis.map((item) => item.path)).toEqual(
+      expect.arrayContaining(['src/app.ts', 'src/cli.ts', 'src/ui/button.ts']),
     );
     expect(summary.externalDependencies).toEqual([
       { specifier: 'react', count: 2 },

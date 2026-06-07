@@ -167,6 +167,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('source: codegraph');
       expect(home).toContain('Omakase Mission Control');
       expect(home).toContain('data-region="reports"');
+      expect(home).toContain('data-region="support-activity"');
       expect(home).toContain('data-region="wiki-pages"');
       expect(home).toContain('data-region="acceptance"');
       expect(home).toContain('data-region="iterations"');
@@ -175,6 +176,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('data-region="events"');
       expect(home).toContain('const jsonOr = async (url)');
       expect(home).toContain('jsonOr("/api/reports")');
+      expect(home).toContain('jsonOr("/api/support-activity")');
       expect(home).toContain('jsonOr("/api/wiki/pages")');
       expect(home).toContain('textOr("/api/wiki")');
       expect(home).toContain('Read-only · reconnecting');
@@ -185,7 +187,9 @@ describe('read-only report/wiki server', () => {
       const runs = await fetch(`${server.url}/api/runs`).then((res) => res.json() as Promise<unknown[]>);
       expect(runs).toHaveLength(1);
       const activity = await fetch(`${server.url}/api/activity`).then((res) => res.json() as Promise<unknown[]>);
-      expect(activity).toHaveLength(1);
+      expect(activity).toHaveLength(0);
+      const supportActivity = await fetch(`${server.url}/api/support-activity`).then((res) => res.json() as Promise<unknown[]>);
+      expect(supportActivity).toHaveLength(1);
       const acceptance = await fetch(`${server.url}/api/acceptance`).then((res) => res.json() as Promise<Array<{ criteria: unknown[] }>>);
       expect(acceptance[0]?.criteria).toHaveLength(1);
       const iterations = await fetch(`${server.url}/api/iterations`).then((res) => res.json() as Promise<unknown[]>);

@@ -150,6 +150,45 @@ describe('omakase run', () => {
   });
 });
 
+describe('omakase wiki', () => {
+  it('adds a manual editable wiki entry and renders refreshed project knowledge', async () => {
+    const { cli, out } = harness();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-wiki-'));
+
+    const addCode = await cli.main([
+      'wiki',
+      'add',
+      'Deployment decision',
+      '--kind',
+      'decision',
+      '--body',
+      'Use blue-green deploys for risky releases.',
+      '--tags',
+      'release,manual',
+      '--cwd',
+      cwd,
+    ]);
+    expect(addCode).toBe(0);
+    expect(out()).toContain('wiki: added decision "Deployment decision"');
+    expect(readFileSync(path.join(cwd, '.omakase', 'wiki.json'), 'utf8')).toContain('Deployment decision');
+    expect(readFileSync(path.join(cwd, '.omakase', 'wiki-pages.md'), 'utf8')).toContain('Architecture Decisions');
+
+    const show = harness();
+    const showCode = await show.cli.main(['wiki', '--cwd', cwd]);
+    expect(showCode).toBe(0);
+    expect(show.out()).toContain('Project Knowledge Base');
+    expect(show.out()).toContain('Deployment decision');
+    expect(show.out()).toContain('Use blue-green deploys');
+  });
+
+  it('rejects wiki add without a title', async () => {
+    const { cli, err } = harness();
+    const code = await cli.main(['wiki', 'add', '--body', 'missing title']);
+    expect(code).toBe(1);
+    expect(err()).toContain('wiki add: a title is required');
+  });
+});
+
 describe('omakase serve', () => {
   it('processes queued tasks one-shot and exits 0', async () => {
     const { cli, out } = harness();
