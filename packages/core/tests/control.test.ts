@@ -149,6 +149,21 @@ describe('cross-process run control', () => {
     expect(resumedCount).toBe(1); // the same-seq resume did not double-apply
     expect(result.status).toBe('succeeded');
   });
+
+  it('criteria edits replace acceptance criteria and emit a replan signal', async () => {
+    const control = new FakeControlSource();
+    const { orch, pump, startedP, release } = harness(control);
+    const handle = orch.start({ prompt: 'do work', acceptanceCriteria: ['old criterion'] });
+    await startedP;
+
+    control.set(handle.id, { seq: 1, command: 'edit-criteria', criteria: ['new criterion', 'has evidence'] });
+    await pump();
+    release();
+
+    const result = await handle.result;
+    expect(result.acceptance.criteria.map((criterion) => criterion.title)).toEqual(['new criterion', 'has evidence']);
+    expect(result.events.some((event) => event.type === 'replanned' && event.reason === 'criteria-edited')).toBe(true);
+  });
 });
 
 const complexRouter: Router = {

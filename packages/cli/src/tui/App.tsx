@@ -92,6 +92,7 @@ type Screen = 'list' | 'run';
 type FocusPane = 'plan' | 'detail';
 type Workspace = 'Plan' | 'Agents' | 'Acceptance' | 'Knowledge' | 'Reports' | 'Gate';
 const WORKSPACES: readonly Workspace[] = ['Plan', 'Agents', 'Acceptance', 'Knowledge', 'Reports', 'Gate'];
+type ComposeKind = 'new' | 'note' | 'criteria' | 'gate';
 
 function taskIcon(status: TaskView['status']): string {
   switch (status) {
@@ -123,6 +124,17 @@ function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+function parseCriteriaInput(text: string): string[] {
+  return text
+    .split(/\n|;/)
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function latestOpenGate(view: RunView | null): string | null {
+  return [...(view?.riskGates ?? [])].reverse().find((gate) => gate.status === 'open')?.id ?? null;
 }
 
 function elapsedOf(view: RunView, nowMs: number): number {
@@ -168,7 +180,7 @@ export function App({
   const attachedIdRef = useRef<string | null>(null);
   const pendingTokenRef = useRef<string | null>(null);
   const [view, setView] = useState<RunView | null>(null);
-  const [compose, setCompose] = useState<{ active: boolean; kind: 'new' | 'note'; buffer: string }>({
+  const [compose, setCompose] = useState<{ active: boolean; kind: ComposeKind; buffer: string }>({
     active: false,
     kind: 'new',
     buffer: '',
@@ -352,7 +364,14 @@ export function App({
           setCompose({ active: false, kind, buffer: '' });
           if (!text) return;
           if (kind === 'new') void submitNew(text);
-          else if (attachedId) void client.sendInput(attachedId, text);
+          else if (kind === 'note' && attachedId) void client.sendInput(attachedId, text);
+          else if (kind === 'criteria' && attachedId) {
+            const criteria = parseCriteriaInput(text);
+            if (criteria.length > 0) void client.editCriteria(attachedId, criteria);
+          } else if (kind === 'gate' && attachedId) {
+            const gateId = latestOpenGate(view);
+            if (gateId) void client.answerGate(attachedId, gateId, text);
+          }
         } else if (key.escape) {
           setCompose((c) => ({ ...c, active: false, buffer: '' }));
         } else if (key.backspace || key.delete) {
@@ -439,6 +458,10 @@ export function App({
         }
       } else if (input === 'u' && attachedId) {
         setCompose({ active: true, kind: 'note', buffer: '' });
+      } else if (input === 'e' && attachedId && workspace === 'Acceptance') {
+        setCompose({ active: true, kind: 'criteria', buffer: '' });
+      } else if (input === 'g' && attachedId && workspace === 'Gate') {
+        setCompose({ active: true, kind: 'gate', buffer: '' });
       } else if (input === 's') {
         save();
       }
@@ -489,7 +512,7 @@ export function App({
       {compose.active ? (
         <Box>
           <Text>
-            {compose.kind === 'new' ? 'new task' : 'note'} › <Text color="cyan">{compose.buffer}</Text>
+            {composeLabel(compose.kind)} › <Text color="cyan">{compose.buffer}</Text>
             <Text inverse> </Text>
           </Text>
         </Box>
@@ -511,7 +534,14 @@ export function App({
 function hints(composing: boolean, screen: Screen): string {
   if (composing) return '[enter] submit  [esc] cancel';
   if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
-  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
+  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [e] criteria · [g] gate · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
+}
+
+function composeLabel(kind: ComposeKind): string {
+  if (kind === 'new') return 'new task';
+  if (kind === 'criteria') return 'criteria';
+  if (kind === 'gate') return 'gate answer';
+  return 'note';
 }
 
 function daemonLabel(d: DaemonStatus | null): { text: string; color: string } {

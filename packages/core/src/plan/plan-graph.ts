@@ -27,6 +27,7 @@ export type ReplanReason =
   | 'task-failed'
   | 'review-rejected'
   | 'user-input'
+  | 'criteria-edited'
   | 'new-requirement'
   | 'dependency-blocked'
   | 'manual';

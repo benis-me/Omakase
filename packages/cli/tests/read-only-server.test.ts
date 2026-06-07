@@ -11,10 +11,54 @@ function record(id: string): RunRecord {
     request: { prompt: 'build a parser' },
     mode: 'normal',
     status: 'succeeded',
-    plan: { tasks: [], seq: 0 },
+    plan: {
+      tasks: [
+        {
+          id: 'task-1',
+          title: 'Implement parser',
+          description: 'Implement parser',
+          role: 'worker',
+          status: 'succeeded',
+          dependsOn: [],
+          attempts: 1,
+          result: { success: true, summary: 'ok', output: 'ok', agentId: 'codex' },
+          tags: ['Core'],
+          createdAt: 0,
+          metadata: {},
+        },
+      ],
+      seq: 1,
+    },
     wiki: { entries: [] },
-    acceptance: { criteria: [], progress: { passed: 0, total: 0, complete: false } },
-    iterations: [],
+    acceptance: {
+      criteria: [
+        {
+          id: 'criterion-1',
+          title: 'parser accepts valid input',
+          description: 'parser accepts valid input',
+          status: 'pass',
+          evidence: [{ text: 'verified by reviewer', taskId: 'task-1', createdAt: 0 }],
+          source: 'planner',
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+      progress: { passed: 1, total: 1, complete: true },
+    },
+    iterations: [
+      {
+        id: 'iteration-1',
+        index: 1,
+        status: 'complete',
+        reason: 'initial-plan',
+        taskIds: ['task-1'],
+        reviewSummary: 'passed',
+        failedCriteria: [],
+        nextStrategy: 'finish',
+        startedAt: 0,
+        finishedAt: 0,
+      },
+    ],
     riskGates: [],
     reports: [
       {
@@ -79,6 +123,19 @@ describe('read-only report/wiki server', () => {
         },
       ],
     });
+    await knowledgeStore.saveCodegraph({
+      root: dir,
+      nodes: [
+        {
+          path: 'src/parser.ts',
+          language: 'typescript',
+          loc: 42,
+          imports: [],
+          exports: ['parse'],
+          symbols: [{ name: 'parse', kind: 'function', exported: true, line: 1 }],
+        },
+      ],
+    });
 
     const server = await startReadOnlyServer({ store, knowledgeStore });
     try {
@@ -94,6 +151,11 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('Uses TypeScript');
       expect(home).toContain('Omakase Mission Control');
       expect(home).toContain('data-region="reports"');
+      expect(home).toContain('data-region="acceptance"');
+      expect(home).toContain('data-region="iterations"');
+      expect(home).toContain('data-region="agents"');
+      expect(home).toContain('data-region="codegraph"');
+      expect(home).toContain('data-region="events"');
       expect(home).toContain('fetch("/api/reports"');
       expect(home).toContain('setInterval(refreshDashboard');
       expect(home).not.toContain('http-equiv="refresh"');
@@ -101,8 +163,35 @@ describe('read-only report/wiki server', () => {
       expect(runs).toHaveLength(1);
       const activity = await fetch(`${server.url}/api/activity`).then((res) => res.json() as Promise<unknown[]>);
       expect(activity).toHaveLength(1);
+      const acceptance = await fetch(`${server.url}/api/acceptance`).then((res) => res.json() as Promise<Array<{ criteria: unknown[] }>>);
+      expect(acceptance[0]?.criteria).toHaveLength(1);
+      const iterations = await fetch(`${server.url}/api/iterations`).then((res) => res.json() as Promise<unknown[]>);
+      expect(iterations).toHaveLength(1);
+      const agents = await fetch(`${server.url}/api/agents`).then((res) => res.json() as Promise<Array<{ agentId: string | null }>>);
+      expect(agents[0]?.agentId).toBe('codex');
+      const codegraph = await fetch(`${server.url}/api/codegraph`).then((res) => res.json() as Promise<{ files: number }>);
+      expect(codegraph.files).toBe(1);
+      const events = await fetch(`${server.url}/api/events`).then((res) => res.json() as Promise<unknown[]>);
+      expect(events).toHaveLength(1);
       const post = await fetch(`${server.url}/api/run/run-1`, { method: 'POST' });
       expect(post.status).toBe(405);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('skips legacy records without acceptance snapshots', async () => {
+    const store = new MemoryRunStore();
+    const legacy = record('legacy-run') as RunRecord & { acceptance?: RunRecord['acceptance'] };
+    delete legacy.acceptance;
+    await store.save(legacy);
+
+    const server = await startReadOnlyServer({ store });
+    try {
+      const home = await fetch(server.url).then((res) => res.text());
+      expect(home).toContain('Omakase Mission Control');
+      const acceptance = await fetch(`${server.url}/api/acceptance`).then((res) => res.json() as Promise<unknown[]>);
+      expect(acceptance).toEqual([]);
     } finally {
       await server.close();
     }

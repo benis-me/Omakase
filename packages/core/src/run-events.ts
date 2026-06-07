@@ -41,6 +41,18 @@ export interface InboxItemSnapshot {
   consumed: boolean;
 }
 
+export type StrategyUpdateReason =
+  | 'criteria-failed'
+  | 'criteria-unknown'
+  | 'gate-open'
+  | 'continue'
+  | 'finish'
+  | 'budget'
+  | 'cancelled'
+  | 'manual';
+
+export type StrategyNextAction = 'continue' | 'replan' | 'wait-for-user' | 'finish' | 'stop';
+
 export interface AcceptanceSnapshot {
   criteria: AcceptanceCriterion[];
   progress: AcceptanceProgress;
@@ -52,6 +64,15 @@ export type OrchestratorEvent =
   | { type: 'planned'; snapshot: PlanGraphSnapshot }
   | { type: 'acceptance-updated'; acceptance: AcceptanceSnapshot }
   | { type: 'iteration-updated'; iteration: IterationSnapshot; iterations: IterationSnapshot[] }
+  | {
+      type: 'strategy-updated';
+      iterationId: string | null;
+      reason: StrategyUpdateReason;
+      failedCriteria: string[];
+      openGates: string[];
+      nextAction: StrategyNextAction;
+      summary: string;
+    }
   | { type: 'risk-gate-opened'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
   | { type: 'risk-gate-answered'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
   | { type: 'report-created'; report: ReportArtifact; reports: ReportArtifact[] }

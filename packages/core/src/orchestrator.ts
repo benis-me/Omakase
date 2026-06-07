@@ -53,7 +53,14 @@ import { RuleRouter, createAgentRouter, type RouteDecision, type Router } from '
 import { MemoryRunStore } from './supervisor/run-store.js';
 import type { RunRecord, RunStore } from './supervisor/run-store.js';
 import type { ControlPoll, ControlSource } from './supervisor/control.js';
-import type { AcceptanceSnapshot, OrchestratorEvent, ReviewCriterion, RunStatus } from './run-events.js';
+import type {
+  AcceptanceSnapshot,
+  OrchestratorEvent,
+  ReviewCriterion,
+  RunStatus,
+  StrategyNextAction,
+  StrategyUpdateReason,
+} from './run-events.js';
 import type { AgentRole, OrchestrationRequest, WorkMode } from './types.js';
 
 export interface RunBudget {
@@ -442,8 +449,12 @@ class RunController implements RunHandle {
     const failedCriteria = this.acceptance.criteria
       .filter((criterion) => criterion.status === 'fail')
       .map((criterion) => criterion.title);
-    const nextStrategy =
-      this.cancelled ? 'cancel' : failedCriteria.length > 0 ? 'replan' : this.graph.isComplete() ? 'finish' : 'continue';
+    const openGates = this.riskGates.filter((gate) => gate.status === 'open').map((gate) => gate.id);
+    const unknownCriteria = this.acceptance.criteria
+      .filter((criterion) => criterion.status === 'unknown' || criterion.status === 'needs-user')
+      .map((criterion) => criterion.title);
+    const nextAction = this.nextStrategyAction({ failedCriteria, unknownCriteria, openGates });
+    const nextStrategy = nextAction === 'stop' ? 'cancel' : nextAction;
     const updated = finishIteration(iteration, {
       status: 'complete',
       reviewSummary: this.computeSummary('running'),
@@ -453,6 +464,61 @@ class RunController implements RunHandle {
     });
     this.iterations = this.iterations.map((item) => (item.id === updated.id ? updated : item));
     this.emit({ type: 'iteration-updated', iteration: updated, iterations: this.iterations });
+    this.emitStrategyUpdate(updated, { failedCriteria, unknownCriteria, openGates, nextAction });
+  }
+
+  private nextStrategyAction(input: {
+    failedCriteria: readonly string[];
+    unknownCriteria: readonly string[];
+    openGates: readonly string[];
+  }): StrategyNextAction {
+    if (this.cancelled || this.budgetExhausted) return 'stop';
+    if (input.openGates.length > 0) return 'wait-for-user';
+    if (input.failedCriteria.length > 0 || input.unknownCriteria.length > 0) return 'replan';
+    return this.graph.isComplete() ? 'finish' : 'continue';
+  }
+
+  private strategyReason(input: {
+    failedCriteria: readonly string[];
+    unknownCriteria: readonly string[];
+    openGates: readonly string[];
+    nextAction: StrategyNextAction;
+  }): StrategyUpdateReason {
+    if (this.budgetExhausted) return 'budget';
+    if (this.cancelled) return 'cancelled';
+    if (input.openGates.length > 0) return 'gate-open';
+    if (input.failedCriteria.length > 0) return 'criteria-failed';
+    if (input.unknownCriteria.length > 0) return 'criteria-unknown';
+    if (input.nextAction === 'finish') return 'finish';
+    return 'continue';
+  }
+
+  private emitStrategyUpdate(
+    iteration: IterationSnapshot,
+    input: {
+      failedCriteria: readonly string[];
+      unknownCriteria: readonly string[];
+      openGates: readonly string[];
+      nextAction: StrategyNextAction;
+    },
+  ): void {
+    const reason = this.strategyReason(input);
+    const pendingCriteria = [...input.failedCriteria, ...input.unknownCriteria];
+    const summary =
+      pendingCriteria.length > 0
+        ? `Loop will ${input.nextAction}; pending criteria: ${pendingCriteria.join(', ')}.`
+        : input.openGates.length > 0
+          ? `Loop is waiting for ${input.openGates.length} open gate(s).`
+          : `Loop will ${input.nextAction}.`;
+    this.emit({
+      type: 'strategy-updated',
+      iterationId: iteration.id,
+      reason,
+      failedCriteria: [...input.failedCriteria],
+      openGates: [...input.openGates],
+      nextAction: input.nextAction,
+      summary,
+    });
   }
 
   private acceptanceCriteriaText(): string[] {
@@ -686,6 +752,16 @@ class RunController implements RunHandle {
     await this.createReport('review', 'Review report', summary, markdown, taskId);
   }
 
+  private setPlannerAcceptanceCriteria(rawCriteria: readonly string[]): void {
+    const criteria = createAcceptanceCriteria({
+      prompt: this.request.prompt,
+      rawCriteria,
+      clock: this.clock,
+      nextId: (prefix) => this.ids.next(prefix),
+    });
+    this.setAcceptance(criteria);
+  }
+
   private replaceAcceptanceCriteria(rawCriteria: readonly string[]): void {
     const criteria = createAcceptanceCriteria({
       prompt: this.request.prompt,
@@ -827,7 +903,10 @@ class RunController implements RunHandle {
         if (command.gateId && command.answer) this.answerGate(command.gateId, command.answer, command.criteria);
         break;
       case 'edit-criteria':
-        if (command.criteria) this.replaceAcceptanceCriteria(command.criteria);
+        if (command.criteria) {
+          this.replaceAcceptanceCriteria(command.criteria);
+          await this.replan('criteria-edited');
+        }
         break;
     }
   }
@@ -861,11 +940,14 @@ class RunController implements RunHandle {
         : [];
     return [
       'Break the following request into an ordered implementation plan.',
-      'Respond with ONLY a JSON array of objects.',
-      'Each object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
+      'Respond with ONLY a JSON object: {"acceptanceCriteria": string[], "tasks": object[]}.',
+      'Each task object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
       'phase is the user-visible stage name shown in the TUI, such as Discovery, Core, TUI, Verification, or Docs.',
+      'acceptanceCriteria must be concrete, testable, product-facing completion checks.',
+      'Do not create acceptance criteria about reviewer approval, report creation, wiki curator execution, strategy events, session logs, or harness internals.',
       'For broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
       'Do not collapse unrelated work into one task.',
+      'Do not include reporter, report-writing, wiki-curator, wiki-synthesis, sidecar, or support-agent tasks in tasks; Omakase runs those outside the main task graph.',
       'dependsOn uses zero-based indices of earlier tasks.',
       '',
       `Request: ${this.request.prompt}`,
@@ -874,12 +956,52 @@ class RunController implements RunHandle {
     ].join('\n');
   }
 
-  private graphFromAgentPlan(text: string): PlanGraph | null {
-    const arr = extractJsonArray(text);
+  private extractAgentPlanObject(text: string): { tasks?: unknown; acceptanceCriteria?: unknown } | null {
+    const start = text.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(text.slice(start, i + 1));
+            return parsed && typeof parsed === 'object' ? parsed : null;
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  private graphFromAgentPlan(text: string): { graph: PlanGraph; acceptanceCriteria: string[] } | null {
+    const obj = this.extractAgentPlanObject(text);
+    const arr = Array.isArray(obj?.tasks) ? obj.tasks : extractJsonArray(text);
     if (!arr || arr.length === 0) return null;
+    const acceptanceCriteria = Array.isArray(obj?.acceptanceCriteria)
+      ? obj.acceptanceCriteria
+          .map((criterion) => (typeof criterion === 'string' ? criterion.replace(/\s+/g, ' ').trim() : ''))
+          .filter(Boolean)
+          .filter((criterion) => !this.isProcessAcceptanceCriterion(criterion))
+          .slice(0, 12)
+      : [];
     const graph = new PlanGraph({ idGenerator: this.ids, clock: this.clock });
-    const ids: string[] = [];
-    for (const raw of arr) {
+    const idsByInputIndex: Array<string | undefined> = [];
+    const mainTaskIds: string[] = [];
+    for (const [index, raw] of arr.entries()) {
       const item = raw as { title?: unknown; description?: unknown; dependsOn?: unknown };
       const title =
         typeof item.title === 'string' && item.title.trim()
@@ -889,9 +1011,13 @@ class RunController implements RunHandle {
         typeof item.description === 'string' && item.description.trim()
           ? item.description
           : title;
+      if (this.isOutOfBandPlanTask(raw, title, description)) {
+        idsByInputIndex[index] = undefined;
+        continue;
+      }
       const dependsOn = Array.isArray(item.dependsOn)
         ? item.dependsOn
-            .map((idx) => (typeof idx === 'number' ? ids[idx] : undefined))
+            .map((idx) => (typeof idx === 'number' ? idsByInputIndex[idx] : undefined))
             .filter((id): id is string => Boolean(id))
         : [];
       const task = graph.addTask({
@@ -901,17 +1027,55 @@ class RunController implements RunHandle {
         dependsOn,
         tags: tagsFromAgentPlanTask(raw, title),
       });
-      ids.push(task.id);
+      idsByInputIndex[index] = task.id;
+      mainTaskIds.push(task.id);
     }
+    if (mainTaskIds.length === 0) return null;
     graph.addTask({
       title: 'Review and verify the work',
       description: 'Review the completed work against the original request.',
       role: 'reviewer',
-      dependsOn: ids,
+      dependsOn: mainTaskIds,
       tags: ['Review'],
     });
     graph.refreshReadiness();
-    return graph;
+    return { graph, acceptanceCriteria };
+  }
+
+  private isOutOfBandPlanTask(raw: unknown, title: string, description: string): boolean {
+    const item = raw as { role?: unknown; phase?: unknown; kind?: unknown };
+    const role = typeof item.role === 'string' ? item.role.trim().toLowerCase() : '';
+    if (role === 'reporter' || role === 'wiki-curator' || role === 'wiki_curator') return true;
+    const phase = typeof item.phase === 'string' ? item.phase : '';
+    const kind = typeof item.kind === 'string' ? item.kind : '';
+    const text = [title, description, phase, kind].join(' ').toLowerCase();
+    const outOfBand =
+      text.includes('sidecar') ||
+      text.includes('support agent') ||
+      text.includes('support-agent') ||
+      text.includes('out-of-main-graph') ||
+      text.includes('out of main graph') ||
+      text.includes('outside the main graph') ||
+      text.includes('outside main graph');
+    const supportRole =
+      text.includes('reporter') ||
+      text.includes('report-writing') ||
+      text.includes('wiki curator') ||
+      text.includes('wiki-curator') ||
+      text.includes('wiki synthesis') ||
+      text.includes('wiki-synthesis');
+    return outOfBand && supportRole;
+  }
+
+  private isProcessAcceptanceCriterion(criterion: string): boolean {
+    const text = criterion.toLowerCase();
+    if (text.includes('reviewer approval') || text.includes('reviewer approves')) return true;
+    if (text.includes('report creation') || text.includes('reporter execution')) return true;
+    if (text.includes('wiki curator') || text.includes('wiki-curator')) return true;
+    if (text.includes('strategy event') || text.includes('strategy-update') || text.includes('strategy-updated')) return true;
+    if (text.includes('session log') || text.includes('session-log')) return true;
+    if (text.includes('harness internal') || text.includes('harness-level')) return true;
+    return false;
   }
 
   private async planWithDefaultPlanner(): Promise<PlanGraph> {
@@ -954,8 +1118,11 @@ class RunController implements RunHandle {
     }
     const result = acc.result();
     this.accountUsage(result);
-    const graph = result.status === 'completed' ? this.graphFromAgentPlan(result.text) : null;
-    return graph ?? fallback();
+    const parsed = result.status === 'completed' ? this.graphFromAgentPlan(result.text) : null;
+    if (parsed && !this.hasUserAcceptanceCriteria && parsed.acceptanceCriteria.length > 0) {
+      this.setPlannerAcceptanceCriteria(parsed.acceptanceCriteria);
+    }
+    return parsed?.graph ?? fallback();
   }
 
   private knowledgeContext(): string {

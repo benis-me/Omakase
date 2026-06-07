@@ -236,6 +236,68 @@ describe('TUI App (persistent client)', () => {
     unmount();
   });
 
+  it('edits criteria and answers the active gate from the TUI workspaces', async () => {
+    const rich: RunView = {
+      ...sampleView(),
+      acceptance: {
+        criteria: [
+          {
+            id: 'criterion-1',
+            title: 'old criterion',
+            description: 'old criterion',
+            status: 'pending',
+            evidence: [],
+            source: 'planner',
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+        progress: { passed: 0, total: 1, complete: false },
+      },
+      riskGates: [
+        {
+          id: 'gate-1',
+          status: 'open',
+          reason: 'review-uncertain',
+          question: 'Continue with edited scope?',
+          answer: null,
+          criteria: null,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    };
+    const client = fakeClient({
+      tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
+        onView(rich);
+        return () => {};
+      }),
+    });
+    const { stdin, unmount } = render(<App client={client} cwd="/p" mode="normal" token="tok" />);
+    await tick();
+
+    stdin.write('3'); // Acceptance workspace
+    await tick(20);
+    stdin.write('e');
+    await tick(20);
+    stdin.write('new criterion;has evidence');
+    await tick(20);
+    stdin.write('\r');
+    await tick(20);
+    expect(client.editCriteria).toHaveBeenCalledWith('r1', ['new criterion', 'has evidence']);
+
+    stdin.write('6'); // Gate workspace
+    await tick(20);
+    stdin.write('g');
+    await tick(20);
+    stdin.write('continue with current risk');
+    await tick(20);
+    stdin.write('\r');
+    await tick(20);
+    expect(client.answerGate).toHaveBeenCalledWith('r1', 'gate-1', 'continue with current risk');
+    unmount();
+  });
+
   it('[x] stops the attached run', async () => {
     const client = fakeClient();
     const { stdin, unmount } = render(

@@ -267,6 +267,22 @@ describe('view-model', () => {
     ]);
   });
 
+  it('surfaces strategy updates in the activity stream', () => {
+    let view = initialRunView('normal');
+    view = reduceRunView(view, {
+      type: 'strategy-updated',
+      iterationId: 'iteration-1',
+      reason: 'criteria-failed',
+      failedCriteria: ['tests pass'],
+      openGates: [],
+      nextAction: 'replan',
+      summary: 'Tests are still missing, so the next loop should add verification work.',
+    } as any);
+
+    expect(view.activity.at(-1)).toContain('strategy: replan');
+    expect(view.activity.at(-1)).toContain('tests pass');
+  });
+
   it('sanitizes raw command tool names in phrases while keeping tool counts', () => {
     let view = initialRunView('normal');
     view = reduceRunView(view, {

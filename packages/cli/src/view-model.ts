@@ -153,6 +153,12 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `↺ iteration ${event.iteration.index} ${event.iteration.status}: ${event.iteration.reason}${
         event.iteration.nextStrategy ? ` → ${event.iteration.nextStrategy}` : ''
       }`;
+    case 'strategy-updated': {
+      const blockers = [...event.failedCriteria, ...event.openGates];
+      return `↯ strategy: ${event.nextAction} — ${event.reason}${
+        blockers.length > 0 ? ` (${blockers.join(', ')})` : ''
+      }`;
+    }
     case 'risk-gate-opened':
       return `⚠ gate opened: ${event.gate.reason}`;
     case 'risk-gate-answered':

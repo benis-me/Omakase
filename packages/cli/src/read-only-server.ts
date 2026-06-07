@@ -1,5 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
-import { ProjectWiki, type KnowledgeStore, type RunRecord, type RunStore } from '@omakase/core';
+import { CodeGraph, ProjectWiki, type KnowledgeStore, type RunRecord, type RunStore } from '@omakase/core';
 
 export interface ReadOnlyServerOptions {
   store: RunStore;
@@ -73,6 +73,107 @@ async function runSummaries(store: RunStore): Promise<Array<{
   });
 }
 
+async function acceptanceSummaries(store: RunStore): Promise<Array<{
+  runId: string;
+  title: string;
+  progress: NonNullable<RunRecord['acceptance']>['progress'];
+  criteria: NonNullable<RunRecord['acceptance']>['criteria'];
+}>> {
+  return (await records(store)).flatMap((record) =>
+    record.acceptance
+      ? [
+          {
+            runId: record.id,
+            title: record.request.prompt,
+            progress: record.acceptance.progress,
+            criteria: record.acceptance.criteria,
+          },
+        ]
+      : [],
+  );
+}
+
+async function iterationSummaries(store: RunStore): Promise<Array<{
+  runId: string;
+  iteration: NonNullable<RunRecord['iterations']>[number];
+}>> {
+  const out: Array<{ runId: string; iteration: NonNullable<RunRecord['iterations']>[number] }> = [];
+  for (const record of await records(store)) {
+    for (const iteration of record.iterations ?? []) out.push({ runId: record.id, iteration });
+  }
+  return out.reverse();
+}
+
+async function agentSummaries(store: RunStore): Promise<Array<{
+  runId: string;
+  taskId: string | null;
+  title: string;
+  role: string;
+  status: string;
+  agentId: string | null;
+  tokens: number;
+  tools: number;
+}>> {
+  const out: Array<{
+    runId: string;
+    taskId: string | null;
+    title: string;
+    role: string;
+    status: string;
+    agentId: string | null;
+    tokens: number;
+    tools: number;
+  }> = [];
+  for (const record of await records(store)) {
+    const stats = new Map<string, { agentId: string | null; tokens: number; tools: number }>();
+    for (const event of record.events) {
+      if (event.type !== 'agent-event') continue;
+      const key = event.taskId ?? `support:${event.role}:${event.assignment.agentId}`;
+      const prev = stats.get(key) ?? { agentId: event.assignment.agentId, tokens: 0, tools: 0 };
+      if (event.event.type === 'usage') {
+        prev.tokens += event.event.usage.totalTokens ?? (event.event.usage.inputTokens ?? 0) + (event.event.usage.outputTokens ?? 0);
+      }
+      if (event.event.type === 'tool_use') prev.tools += 1;
+      prev.agentId = event.assignment.agentId;
+      stats.set(key, prev);
+    }
+    for (const task of record.plan.tasks ?? []) {
+      const stat = stats.get(task.id);
+      out.push({
+        runId: record.id,
+        taskId: task.id,
+        title: task.title,
+        role: task.role,
+        status: task.status,
+        agentId: stat?.agentId ?? task.result?.agentId ?? null,
+        tokens: stat?.tokens ?? 0,
+        tools: stat?.tools ?? 0,
+      });
+    }
+    for (const [key, stat] of stats) {
+      if (!key.startsWith('support:')) continue;
+      const [, role, agentId] = key.split(':');
+      out.push({
+        runId: record.id,
+        taskId: null,
+        title: role ?? 'support',
+        role: role ?? 'support',
+        status: 'support',
+        agentId: agentId ?? stat.agentId,
+        tokens: stat.tokens,
+        tools: stat.tools,
+      });
+    }
+  }
+  return out.slice(0, 120);
+}
+
+async function codegraphSummary(knowledgeStore: KnowledgeStore | undefined): Promise<(ReturnType<CodeGraph['stats']> & { root: string }) | null> {
+  const snapshot = await knowledgeStore?.loadCodegraph();
+  if (!snapshot) return null;
+  return { root: snapshot.root, ...CodeGraph.fromJSON(snapshot).stats() };
+}
+
 function eventActivityLabel(event: RunRecord['events'][number]): string {
   switch (event.type) {
     case 'report-created':
@@ -103,6 +204,16 @@ async function activity(store: RunStore): Promise<Array<{ runId: string; label: 
   return out.slice(-120).reverse();
 }
 
+async function rawEvents(store: RunStore): Promise<Array<{ runId: string; label: string; type: string }>> {
+  const out: Array<{ runId: string; label: string; type: string }> = [];
+  for (const record of await records(store)) {
+    for (const event of record.events.slice(-80)) {
+      out.push({ runId: record.id, label: eventActivityLabel(event), type: event.type });
+    }
+  }
+  return out.slice(-160).reverse();
+}
+
 async function wikiMarkdown(knowledgeStore: KnowledgeStore | undefined): Promise<string> {
   const wiki = await knowledgeStore?.loadWiki();
   return wiki ? `${ProjectWiki.fromJSON(wiki).toMarkdown()}\n` : '# Project Wiki\n';
@@ -112,6 +223,11 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
   const reportList = await reports(store);
   const runList = await runSummaries(store);
   const activityList = await activity(store);
+  const acceptanceList = await acceptanceSummaries(store);
+  const iterationList = await iterationSummaries(store);
+  const agentList = await agentSummaries(store);
+  const codegraph = await codegraphSummary(knowledgeStore);
+  const eventList = await rawEvents(store);
   const wiki = await wikiMarkdown(knowledgeStore);
   const reportHtml =
     reportList.length === 0
@@ -145,6 +261,58 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       ? '<p class="empty">No activity yet.</p>'
       : activityList
           .slice(0, 16)
+          .map((item) => `<li><span>${escapeHtml(item.type)}</span>${escapeHtml(item.label)}<small>${escapeHtml(item.runId)}</small></li>`)
+          .join('\n');
+  const acceptanceHtml =
+    acceptanceList.length === 0
+      ? '<p class="empty">No acceptance criteria yet.</p>'
+      : acceptanceList
+          .map(
+            (item) => `<article class="compact-row">
+  <strong>${escapeHtml(item.runId)}</strong>
+  <span>${item.progress.passed}/${item.progress.total}</span>
+  <p>${escapeHtml(item.criteria.map((criterion) => `${criterion.status}: ${criterion.title}`).join(' · '))}</p>
+</article>`,
+          )
+          .join('\n');
+  const iterationsHtml =
+    iterationList.length === 0
+      ? '<p class="empty">No iterations yet.</p>'
+      : iterationList
+          .slice(0, 12)
+          .map(
+            (item) => `<article class="compact-row">
+  <strong>${escapeHtml(item.runId)}</strong>
+  <span>#${item.iteration.index} · ${escapeHtml(item.iteration.status)}</span>
+  <p>${escapeHtml(item.iteration.reason)}${item.iteration.nextStrategy ? ` → ${escapeHtml(item.iteration.nextStrategy)}` : ''}</p>
+</article>`,
+          )
+          .join('\n');
+  const agentsHtml =
+    agentList.length === 0
+      ? '<p class="empty">No agents yet.</p>'
+      : agentList
+          .slice(0, 16)
+          .map(
+            (agent) => `<article class="compact-row">
+  <strong>${escapeHtml(agent.agentId ?? 'unassigned')}</strong>
+  <span>${escapeHtml(agent.role)} · ${escapeHtml(agent.status)}</span>
+  <p>${escapeHtml(agent.title)} · ${agent.tokens} tok · ${agent.tools} tools</p>
+</article>`,
+          )
+          .join('\n');
+  const codegraphHtml = codegraph
+    ? `<article class="compact-row">
+  <strong>${codegraph.files} files</strong>
+  <span>${codegraph.internalEdges}/${codegraph.externalEdges} edges</span>
+  <p>${codegraph.symbols} symbols · ${codegraph.cycles} cycles · ${escapeHtml(codegraph.root)}</p>
+</article>`
+    : '<p class="empty">No codegraph yet.</p>';
+  const eventsHtml =
+    eventList.length === 0
+      ? '<p class="empty">No raw events yet.</p>'
+      : eventList
+          .slice(0, 20)
           .map((item) => `<li><span>${escapeHtml(item.type)}</span>${escapeHtml(item.label)}<small>${escapeHtml(item.runId)}</small></li>`)
           .join('\n');
   return `<!doctype html>
@@ -191,9 +359,12 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     .metric:nth-child(4) { border-top-color: #111827; }
     .metric strong { font-size: 28px; line-height: 1; }
     .metric span { color: var(--muted); font-size: 12px; }
-    .report, .run-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); display: grid; gap: 10px; }
-    .report + .report, .run-row + .run-row { margin-top: 10px; }
+    .report, .run-row, .compact-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel); display: grid; gap: 10px; }
+    .report + .report, .run-row + .run-row, .compact-row + .compact-row { margin-top: 10px; }
     .report header, .run-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 12px; }
+    .compact-row { grid-template-columns: minmax(110px, .7fr) minmax(88px, auto) minmax(0, 1.7fr); align-items: baseline; }
+    .compact-row p { color: var(--muted); font-size: 12px; }
+    .compact-row span { color: var(--accent); font-size: 12px; }
     .report span, .empty, .run-row p, .activity small { color: var(--muted); font-size: 12px; }
     .status { border-radius: 999px; padding: 4px 8px; background: #e9f6dc; color: #385f1b; font-size: 12px; }
     pre { margin: 0; overflow: auto; white-space: pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -207,7 +378,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
       .meta { justify-self: start; }
       h1 { max-width: 16ch; font-size: 24px; line-height: 1.08; overflow-wrap: normal; }
       .sub { max-width: 32ch; }
-      .report header, .run-row, .activity li { grid-template-columns: 1fr; }
+      .report header, .run-row, .compact-row, .activity li { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -236,6 +407,14 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           <h2>Runs</h2>
           <div data-region="runs">${runsHtml}</div>
         </section>
+        <section>
+          <h2>Acceptance</h2>
+          <div data-region="acceptance">${acceptanceHtml}</div>
+        </section>
+        <section>
+          <h2>Agents</h2>
+          <div data-region="agents">${agentsHtml}</div>
+        </section>
       </div>
       <div class="stack">
         <section>
@@ -243,8 +422,20 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
           <ul class="activity" data-region="activity">${activityHtml}</ul>
         </section>
         <section>
+          <h2>Iterations</h2>
+          <div data-region="iterations">${iterationsHtml}</div>
+        </section>
+        <section>
+          <h2>Codegraph</h2>
+          <div data-region="codegraph">${codegraphHtml}</div>
+        </section>
+        <section>
           <h2>Project Wiki</h2>
           <pre class="wiki" data-region="wiki">${escapeHtml(wiki)}</pre>
+        </section>
+        <section>
+          <h2>Raw Events</h2>
+          <ul class="activity" data-region="events">${eventsHtml}</ul>
         </section>
       </div>
     </div>
@@ -254,17 +445,31 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const reportHtml = (report) => '<article class="report"><header><h3>' + escapeHtml(report.title) + '</h3><span>' + escapeHtml(report.kind) + ' · ' + escapeHtml(report.runId) + ' · ' + escapeHtml(report.authorAgentId || 'fallback') + '</span></header><p>' + escapeHtml(report.summary) + '</p><pre>' + escapeHtml(report.markdown) + '</pre></article>';
     const runHtml = (run) => '<article class="run-row"><div><strong>' + escapeHtml(run.id) + '</strong><p>' + escapeHtml(run.title) + '</p></div><span class="status">' + escapeHtml(run.status) + '</span><span>' + run.taskDone + '/' + run.taskTotal + '</span></article>';
     const activityHtml = (item) => '<li><span>' + escapeHtml(item.type) + '</span>' + escapeHtml(item.label) + '<small>' + escapeHtml(item.runId) + '</small></li>';
+    const acceptanceHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>' + item.progress.passed + '/' + item.progress.total + '</span><p>' + escapeHtml(item.criteria.map((criterion) => criterion.status + ': ' + criterion.title).join(' · ')) + '</p></article>';
+    const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
+    const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
+    const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
     async function refreshDashboard() {
-      const [reports, runs, wiki, activity] = await Promise.all([
+      const [reports, runs, wiki, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         fetch("/api/reports").then((res) => res.json()),
         fetch("/api/runs").then((res) => res.json()),
         fetch("/api/wiki").then((res) => res.text()),
         fetch("/api/activity").then((res) => res.json()),
+        fetch("/api/acceptance").then((res) => res.json()),
+        fetch("/api/iterations").then((res) => res.json()),
+        fetch("/api/agents").then((res) => res.json()),
+        fetch("/api/codegraph").then((res) => res.json()),
+        fetch("/api/events").then((res) => res.json()),
       ]);
       document.querySelector('[data-region="reports"]').innerHTML = reports.length ? reports.map(reportHtml).join('') : '<p class="empty">No reports yet.</p>';
       document.querySelector('[data-region="runs"]').innerHTML = runs.length ? runs.map(runHtml).join('') : '<p class="empty">No runs yet.</p>';
       document.querySelector('[data-region="wiki"]').textContent = wiki;
       document.querySelector('[data-region="activity"]').innerHTML = activity.length ? activity.slice(0, 16).map(activityHtml).join('') : '<p class="empty">No activity yet.</p>';
+      document.querySelector('[data-region="acceptance"]').innerHTML = acceptance.length ? acceptance.map(acceptanceHtml).join('') : '<p class="empty">No acceptance criteria yet.</p>';
+      document.querySelector('[data-region="iterations"]').innerHTML = iterations.length ? iterations.slice(0, 12).map(iterationHtml).join('') : '<p class="empty">No iterations yet.</p>';
+      document.querySelector('[data-region="agents"]').innerHTML = agents.length ? agents.slice(0, 16).map(agentHtml).join('') : '<p class="empty">No agents yet.</p>';
+      document.querySelector('[data-region="codegraph"]').innerHTML = codegraphHtml(codegraph);
+      document.querySelector('[data-region="events"]').innerHTML = events.length ? events.slice(0, 20).map(activityHtml).join('') : '<p class="empty">No raw events yet.</p>';
       document.querySelector('[data-metric="runs"]').textContent = runs.length;
       document.querySelector('[data-metric="reports"]').textContent = reports.length;
       document.querySelector('[data-metric="active"]').textContent = runs.filter((run) => run.status === 'running' || run.status === 'waiting-for-user').length;
@@ -308,6 +513,26 @@ export async function startReadOnlyServer(options: ReadOnlyServerOptions): Promi
       }
       if (url.pathname === '/api/activity') {
         sendJson(res, 200, await activity(options.store));
+        return;
+      }
+      if (url.pathname === '/api/acceptance') {
+        sendJson(res, 200, await acceptanceSummaries(options.store));
+        return;
+      }
+      if (url.pathname === '/api/iterations') {
+        sendJson(res, 200, await iterationSummaries(options.store));
+        return;
+      }
+      if (url.pathname === '/api/agents') {
+        sendJson(res, 200, await agentSummaries(options.store));
+        return;
+      }
+      if (url.pathname === '/api/codegraph') {
+        sendJson(res, 200, await codegraphSummary(options.knowledgeStore));
+        return;
+      }
+      if (url.pathname === '/api/events') {
+        sendJson(res, 200, await rawEvents(options.store));
         return;
       }
       if (url.pathname === '/api/wiki') {
