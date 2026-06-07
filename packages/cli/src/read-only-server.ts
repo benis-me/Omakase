@@ -238,6 +238,7 @@ async function wikiPages(knowledgeStore: KnowledgeStore | undefined): Promise<Wi
       id: 'overview',
       title: 'Project Wiki',
       body,
+      sourceKind: 'wiki',
       sourceEventIds: [],
       sourceRunIds: [],
       authorAgentIds: [],
@@ -249,6 +250,13 @@ async function wikiPages(knowledgeStore: KnowledgeStore | undefined): Promise<Wi
 async function wikiMarkdown(knowledgeStore: KnowledgeStore | undefined): Promise<string> {
   const pages = await wikiPages(knowledgeStore);
   return pages.length > 0 ? `${renderWikiPagesMarkdown(pages)}\n` : '# Project Knowledge Base\n';
+}
+
+function wikiPageSourceLabel(page: WikiPage): string {
+  if (page.sourceKind === 'codegraph') return 'source: codegraph';
+  if (page.sourceKind === 'wiki') return 'source: wiki entries';
+  if (page.sourceEventIds.length > 0) return `source events: ${page.sourceEventIds.join(', ')}`;
+  return 'source: derived';
 }
 
 async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | undefined): Promise<string> {
@@ -359,7 +367,7 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     <span>${escapeHtml(page.authorAgentIds.length > 0 ? page.authorAgentIds.join(', ') : 'derived')}</span>
   </header>
   <pre>${escapeHtml(page.body)}</pre>
-  <p>${escapeHtml(page.sourceEventIds.length > 0 ? `source events: ${page.sourceEventIds.join(', ')}` : 'source: wiki entries')}</p>
+  <p>${escapeHtml(wikiPageSourceLabel(page))}</p>
 </article>`,
           )
           .join('\n');
@@ -501,7 +509,8 @@ async function renderHome(store: RunStore, knowledgeStore: KnowledgeStore | unde
     const iterationHtml = (item) => '<article class="compact-row"><strong>' + escapeHtml(item.runId) + '</strong><span>#' + item.iteration.index + ' · ' + escapeHtml(item.iteration.status) + '</span><p>' + escapeHtml(item.iteration.reason + (item.iteration.nextStrategy ? ' → ' + item.iteration.nextStrategy : '')) + '</p></article>';
     const agentHtml = (agent) => '<article class="compact-row"><strong>' + escapeHtml(agent.agentId || 'unassigned') + '</strong><span>' + escapeHtml(agent.role) + ' · ' + escapeHtml(agent.status) + '</span><p>' + escapeHtml(agent.title) + ' · ' + agent.tokens + ' tok · ' + agent.tools + ' tools</p></article>';
     const codegraphHtml = (codegraph) => codegraph ? '<article class="compact-row"><strong>' + codegraph.files + ' files</strong><span>' + codegraph.internalEdges + '/' + codegraph.externalEdges + ' edges</span><p>' + codegraph.symbols + ' symbols · ' + codegraph.cycles + ' cycles · ' + escapeHtml(codegraph.root) + '</p></article>' : '<p class="empty">No codegraph yet.</p>';
-    const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: wiki entries') + '</p></article>';
+    const wikiPageSourceLabel = (page) => page.sourceKind === 'codegraph' ? 'source: codegraph' : page.sourceKind === 'wiki' ? 'source: wiki entries' : page.sourceEventIds && page.sourceEventIds.length ? 'source events: ' + page.sourceEventIds.join(', ') : 'source: derived';
+    const wikiPageHtml = (page) => '<article class="wiki-page"><header><h3>' + escapeHtml(page.title) + '</h3><span>' + escapeHtml(page.authorAgentIds && page.authorAgentIds.length ? page.authorAgentIds.join(', ') : 'derived') + '</span></header><pre>' + escapeHtml(page.body) + '</pre><p>' + escapeHtml(wikiPageSourceLabel(page)) + '</p></article>';
     async function refreshDashboard() {
       const [reports, runs, wiki, wikiPages, activity, acceptance, iterations, agents, codegraph, events] = await Promise.all([
         fetch("/api/reports").then((res) => res.json()),

@@ -159,10 +159,12 @@ describe('read-only report/wiki server', () => {
       const wikiPages = await fetch(`${server.url}/api/wiki/pages`).then((res) => res.json() as Promise<WikiPage[]>);
       expect(wikiPages[0]?.id).toBe('overview');
       expect(wikiPages[0]?.body).toContain('Agent-authored knowledge pages');
+      expect(wikiPages.find((page) => page.id === 'codegraph')?.sourceKind).toBe('codegraph');
       const home = await fetch(server.url).then((res) => res.text());
       expect(home).toContain('Planning report');
       expect(home).toContain('Project Knowledge');
       expect(home).toContain('Live project knowledge');
+      expect(home).toContain('source: codegraph');
       expect(home).toContain('Omakase Mission Control');
       expect(home).toContain('data-region="reports"');
       expect(home).toContain('data-region="wiki-pages"');

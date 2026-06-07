@@ -1,12 +1,15 @@
 import type { KnowledgeEvent } from './events.js';
 import type { WikiEntry, WikiSnapshot } from './wiki.js';
+import { CodeGraph, type CodeGraphSnapshot } from './codegraph.js';
 
-export type WikiPageId = 'overview' | 'decisions' | 'risks' | 'verification';
+export type WikiPageId = 'overview' | 'codegraph' | 'decisions' | 'risks' | 'verification';
+export type WikiPageSourceKind = 'agent' | 'wiki' | 'codegraph';
 
 export interface WikiPage {
   id: WikiPageId;
   title: string;
   body: string;
+  sourceKind?: WikiPageSourceKind;
   sourceEventIds: string[];
   sourceRunIds: string[];
   authorAgentIds: string[];
@@ -15,6 +18,7 @@ export interface WikiPage {
 
 const PAGE_ORDER: Array<{ id: WikiPageId; title: string }> = [
   { id: 'overview', title: 'Project Overview' },
+  { id: 'codegraph', title: 'Project Structure' },
   { id: 'decisions', title: 'Architecture Decisions' },
   { id: 'risks', title: 'Risks And Open Questions' },
   { id: 'verification', title: 'Verification Handles' },
@@ -50,7 +54,49 @@ function renderEntryItem(entry: WikiEntry): string {
   return [`## ${entry.title}`, entry.body.trim()].filter(Boolean).join('\n\n');
 }
 
-export function buildWikiPages(events: readonly KnowledgeEvent[], fallbackWiki?: WikiSnapshot | null): WikiPage[] {
+function renderCodegraphPage(snapshot: CodeGraphSnapshot): string {
+  const summary = CodeGraph.fromJSON(snapshot).summary();
+  const lines = [
+    '## Snapshot',
+    `Files: ${summary.stats.files}`,
+    `Internal edges: ${summary.stats.internalEdges}`,
+    `External edges: ${summary.stats.externalEdges}`,
+    `Symbols: ${summary.stats.symbols}`,
+    `Cycles: ${summary.stats.cycles}`,
+    '',
+    '## Dependency hubs',
+  ];
+  if (summary.dependencyHubs.length === 0) lines.push('- None detected');
+  else {
+    for (const hub of summary.dependencyHubs) {
+      lines.push(`- ${hub.path}: ${hub.dependents} dependents, ${hub.dependencies} dependencies, ${hub.symbols} symbols, ${hub.loc} loc`);
+    }
+  }
+  lines.push('', '## Entrypoints');
+  if (summary.entrypoints.length === 0) lines.push('- None detected');
+  else {
+    for (const entrypoint of summary.entrypoints) {
+      lines.push(`- ${entrypoint.path}: ${entrypoint.dependencies} dependencies, ${entrypoint.symbols} symbols, ${entrypoint.loc} loc`);
+    }
+  }
+  lines.push('', '## External dependencies');
+  if (summary.externalDependencies.length === 0) lines.push('- None detected');
+  else {
+    for (const dependency of summary.externalDependencies) lines.push(`- ${dependency.specifier} (${dependency.count})`);
+  }
+  lines.push('', '## Cycles');
+  if (summary.cycles.length === 0) lines.push('- None detected');
+  else {
+    for (const cycle of summary.cycles) lines.push(`- ${cycle.join(' -> ')}`);
+  }
+  return lines.join('\n');
+}
+
+export function buildWikiPages(
+  events: readonly KnowledgeEvent[],
+  fallbackWiki?: WikiSnapshot | null,
+  codegraph?: CodeGraphSnapshot | null,
+): WikiPage[] {
   const buckets = new Map<WikiPageId, Array<{ body: string; event?: KnowledgeEvent; entry?: WikiEntry }>>();
   for (const page of PAGE_ORDER) buckets.set(page.id, []);
 
@@ -70,6 +116,19 @@ export function buildWikiPages(events: readonly KnowledgeEvent[], fallbackWiki?:
 
   const pages: WikiPage[] = [];
   for (const page of PAGE_ORDER) {
+    if (page.id === 'codegraph' && codegraph) {
+      pages.push({
+        id: 'codegraph',
+        title: page.title,
+        body: renderCodegraphPage(codegraph),
+        sourceKind: 'codegraph',
+        sourceEventIds: [],
+        sourceRunIds: [],
+        authorAgentIds: [],
+        updatedAt: 0,
+      });
+      continue;
+    }
     const items = buckets.get(page.id) ?? [];
     if (items.length === 0) continue;
     const sourceEventIds = unique(
@@ -88,6 +147,7 @@ export function buildWikiPages(events: readonly KnowledgeEvent[], fallbackWiki?:
       id: page.id,
       title: page.title,
       body: items.map((item) => item.body).join('\n\n'),
+      sourceKind: items.some((item) => item.event) ? 'agent' : 'wiki',
       sourceEventIds,
       sourceRunIds,
       authorAgentIds,

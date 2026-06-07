@@ -64,6 +64,27 @@ export interface CodeGraphStats {
   byLanguage: Record<string, number>;
 }
 
+export interface CodeGraphHotspot {
+  path: string;
+  dependents: number;
+  dependencies: number;
+  symbols: number;
+  loc: number;
+}
+
+export interface CodeGraphExternalDependency {
+  specifier: string;
+  count: number;
+}
+
+export interface CodeGraphSummary {
+  stats: CodeGraphStats;
+  dependencyHubs: CodeGraphHotspot[];
+  entrypoints: CodeGraphHotspot[];
+  externalDependencies: CodeGraphExternalDependency[];
+  cycles: string[][];
+}
+
 export interface ScanOptions {
   root: string;
   include?: RegExp;
@@ -453,6 +474,48 @@ export class CodeGraph {
       symbols,
       cycles: this.cycles().length,
       byLanguage,
+    };
+  }
+
+  summary(limit = 8): CodeGraphSummary {
+    const hotspots = this.nodesList().map((node) => ({
+      path: node.path,
+      dependents: this.dependents(node.path).length,
+      dependencies: this.dependencies(node.path).length,
+      symbols: node.symbols.length,
+      loc: node.loc,
+    }));
+    const byHubRank = (a: CodeGraphHotspot, b: CodeGraphHotspot): number =>
+      b.dependents - a.dependents ||
+      b.dependencies - a.dependencies ||
+      b.symbols - a.symbols ||
+      a.path.localeCompare(b.path);
+    const byEntryRank = (a: CodeGraphHotspot, b: CodeGraphHotspot): number =>
+      b.dependencies - a.dependencies ||
+      b.symbols - a.symbols ||
+      a.path.localeCompare(b.path);
+    const externalCounts = new Map<string, number>();
+    for (const node of this.nodes.values()) {
+      for (const edge of node.imports) {
+        if (edge.external) externalCounts.set(edge.specifier, (externalCounts.get(edge.specifier) ?? 0) + 1);
+      }
+    }
+
+    return {
+      stats: this.stats(),
+      dependencyHubs: hotspots
+        .filter((item) => item.dependents > 0)
+        .sort(byHubRank)
+        .slice(0, limit),
+      entrypoints: hotspots
+        .filter((item) => item.dependents === 0)
+        .sort(byEntryRank)
+        .slice(0, limit),
+      externalDependencies: [...externalCounts.entries()]
+        .map(([specifier, count]) => ({ specifier, count }))
+        .sort((a, b) => b.count - a.count || a.specifier.localeCompare(b.specifier))
+        .slice(0, limit),
+      cycles: this.cycles().slice(0, limit),
     };
   }
 

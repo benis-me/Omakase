@@ -127,6 +127,32 @@ describe('FileKnowledgeStore', () => {
     expect(pages[0]?.sourceEventIds).toEqual(['knowledge-1']);
     expect(pages[0]?.body).toContain('Use durable run store');
   });
+
+  it('refreshes wiki pages with project structure when codegraph is saved', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'omakase-codegraph-pages-'));
+    const project = path.join(dir, 'project');
+    const src = path.join(project, 'src');
+    await import('node:fs/promises').then((fs) => fs.mkdir(path.join(src, 'core'), { recursive: true }));
+    writeFileSync(path.join(src, 'app.ts'), "import React from 'react';\nimport { service } from './core/service';\nexport const app = service(React);\n");
+    writeFileSync(path.join(src, 'cli.ts'), "import { service } from './core/service';\nexport const cli = service(null);\n");
+    writeFileSync(path.join(src, 'core', 'service.ts'), "import fs from 'node:fs';\nexport const service = (value: unknown) => fs.existsSync(String(value));\n");
+
+    const store = new FileKnowledgeStore(path.join(project, '.omakase'));
+    await store.saveCodegraph((await CodeGraph.scan({ root: project })).toJSON());
+
+    const pages = await store.loadWikiPages();
+    const page = pages.find((item) => item.id === 'codegraph');
+    expect(page?.title).toBe('Project Structure');
+    expect(page?.body).toContain('Files: 3');
+    expect(page?.body).toContain('Internal edges: 2');
+    expect(page?.body).toContain('Dependency hubs');
+    expect(page?.body).toContain('src/core/service.ts');
+    expect(page?.body).toContain('Entrypoints');
+    expect(page?.body).toContain('src/app.ts');
+    expect(page?.body).toContain('External dependencies');
+    expect(page?.body).toContain('react (1)');
+    expect(readFileSync(path.join(project, '.omakase', 'wiki-pages.md'), 'utf8')).toContain('Project Structure');
+  });
 });
 
 describe('orchestrator cross-run knowledge persistence', () => {

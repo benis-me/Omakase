@@ -60,6 +60,52 @@ describe('CodeGraph', () => {
     expect(cycles[0]).toContain('b.ts');
   });
 
+  it('summarizes codegraph into project knowledge handles', async () => {
+    write(
+      'src/app.ts',
+      `import React from 'react';\nimport { service } from './core/service.js';\nimport { Button } from './ui/button.js';\nexport const app = service(Button, React);\n`,
+    );
+    write(
+      'src/cli.ts',
+      `import { service } from './core/service.js';\nexport function main() { return service(null, null); }\n`,
+    );
+    write(
+      'src/ui/button.ts',
+      `import React from 'react';\nimport { service } from '../core/service.js';\nexport function Button() { return service(null, React); }\n`,
+    );
+    write(
+      'src/core/service.ts',
+      `import { repo } from './repo.js';\nimport { log } from '../shared/logger.js';\nexport function service(a: unknown, b: unknown) { log(a); return repo(b); }\n`,
+    );
+    write('src/core/repo.ts', `import fs from 'node:fs';\nexport const repo = (value: unknown) => fs.existsSync(String(value));\n`);
+    write('src/shared/logger.ts', `export const log = (value: unknown) => value;\n`);
+    write('src/cycle/a.ts', `import { b } from './b.js';\nexport const a = b;\n`);
+    write('src/cycle/b.ts', `import { a } from './a.js';\nexport const b = a;\n`);
+
+    const graph = await CodeGraph.scan({ root });
+    const summary = graph.summary(5);
+
+    expect(summary.stats).toMatchObject({
+      files: 8,
+      internalEdges: 8,
+      externalEdges: 3,
+      cycles: 1,
+    });
+    expect(summary.dependencyHubs[0]).toMatchObject({
+      path: 'src/core/service.ts',
+      dependents: 3,
+      dependencies: 2,
+    });
+    expect(summary.entrypoints.map((item) => item.path)).toEqual(
+      expect.arrayContaining(['src/app.ts', 'src/cli.ts']),
+    );
+    expect(summary.externalDependencies).toEqual([
+      { specifier: 'react', count: 2 },
+      { specifier: 'node:fs', count: 1 },
+    ]);
+    expect(summary.cycles[0]).toEqual(expect.arrayContaining(['src/cycle/a.ts', 'src/cycle/b.ts']));
+  });
+
   it('updates incrementally when a file changes', async () => {
     write('a.ts', `import './b.js';\nexport const a = 1;\n`);
     write('b.ts', `import './a.js';\nexport const b = 2;\n`);

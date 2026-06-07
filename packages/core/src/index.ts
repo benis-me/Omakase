@@ -68,6 +68,9 @@ export type {
   SymbolKind,
   CodeGraphSnapshot,
   CodeGraphStats,
+  CodeGraphSummary,
+  CodeGraphHotspot,
+  CodeGraphExternalDependency,
   ScanOptions,
 } from './knowledge/codegraph.js';
 export { createCodeGraphWatcher } from './knowledge/watch.js';
@@ -125,7 +128,7 @@ export {
 } from './knowledge/events.js';
 export type { KnowledgeEvent, KnowledgeEventKind } from './knowledge/events.js';
 export { buildWikiPages, renderWikiPagesMarkdown } from './knowledge/pages.js';
-export type { WikiPage, WikiPageId } from './knowledge/pages.js';
+export type { WikiPage, WikiPageId, WikiPageSourceKind } from './knowledge/pages.js';
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export { Orchestrator, parseReview, parseStructuredReview } from './orchestrator.js';

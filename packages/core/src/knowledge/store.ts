@@ -187,7 +187,8 @@ export class FileKnowledgeStore implements KnowledgeStore {
   private async refreshWikiPages(): Promise<void> {
     const events = await this.loadKnowledgeEvents();
     const wiki = await this.loadWiki();
-    const pages = buildWikiPages(events, wiki);
+    const codegraph = await this.loadCodegraph();
+    const pages = buildWikiPages(events, wiki, codegraph);
     await this.saveWikiPages(pages);
   }
 
@@ -198,6 +199,7 @@ export class FileKnowledgeStore implements KnowledgeStore {
 
   async saveCodegraph(snapshot: CodeGraphSnapshot): Promise<void> {
     await this.writeJson('codegraph.json', snapshot);
+    await this.refreshWikiPages();
   }
 }
 
