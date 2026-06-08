@@ -16,6 +16,7 @@ import type { RiskGateSnapshot } from '../risk-gates.js';
 import type { ReportArtifact } from '../reports.js';
 import type { KnowledgeEvent } from '../knowledge/events.js';
 import type { OrchestrationRequest, WorkMode } from '../types.js';
+import type { DynamicWorkflowSnapshot } from '../workflows/dynamic/types.js';
 
 export interface RunRecord {
   id: string;
@@ -30,6 +31,7 @@ export interface RunRecord {
   riskGates?: RiskGateSnapshot[];
   reports?: ReportArtifact[];
   knowledgeEvents?: KnowledgeEvent[];
+  workflow?: DynamicWorkflowSnapshot;
   inbox: InboxItemSnapshot[];
   events: OrchestratorEvent[];
   summary: string;

@@ -76,6 +76,56 @@ function record(id: string): RunRecord {
       },
     ],
     knowledgeEvents: [],
+    workflow: {
+      id: 'workflow-1',
+      script: {
+        id: 'workflow-script-1',
+        path: '/tmp/workflow.js',
+        source: 'export default async function workflow() {}',
+        runtime: 'bun',
+        createdAt: 0,
+      },
+      request: { prompt: 'build a parser' },
+      status: 'succeeded',
+      phases: [
+        {
+          id: 'workflow-phase-1',
+          name: 'Implementation',
+          status: 'succeeded',
+          startedAt: 0,
+          finishedAt: 0,
+          agentRunIds: ['agent-run-1'],
+          error: null,
+        },
+      ],
+      agents: [
+        {
+          taskId: 'task-1',
+          agentRunId: 'agent-run-1',
+          agentLabel: 'codex#task-1',
+          agentId: 'codex',
+          role: 'worker',
+          title: 'Implement parser',
+          prompt: 'Implement parser',
+          phaseId: 'workflow-phase-1',
+          phaseName: 'Implementation',
+          status: 'succeeded',
+          startedAt: 0,
+          finishedAt: 0,
+          tokens: 10,
+          toolCount: 1,
+          model: null,
+          error: null,
+        },
+      ],
+      checkpoints: [],
+      maxConcurrency: 16,
+      maxAgents: 1000,
+      startedAt: 0,
+      updatedAt: 0,
+      finishedAt: 0,
+      error: null,
+    },
     inbox: [],
     events: [
       {
@@ -234,6 +284,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('data-region="acceptance"');
       expect(home).toContain('data-region="iterations"');
       expect(home).toContain('data-region="agents"');
+      expect(home).toContain('data-region="workflows"');
       expect(home).toContain('data-region="codegraph"');
       expect(home).toContain('data-region="events"');
       expect(home).toContain('const jsonOr = async (url)');
@@ -241,6 +292,7 @@ describe('read-only report/wiki server', () => {
       expect(home).toContain('jsonOr("/api/support-activity")');
       expect(home).toContain('jsonOr("/api/wiki/pages")');
       expect(home).toContain('jsonOr("/api/wiki/governance")');
+      expect(home).toContain('jsonOr("/api/workflows")');
       expect(home).toContain('textOr("/api/wiki")');
       expect(home).toContain('Read-only · reconnecting');
       expect(home).not.toContain('fetch("/api/reports").then');
@@ -258,6 +310,10 @@ describe('read-only report/wiki server', () => {
       );
       const acceptance = await fetch(`${server.url}/api/acceptance`).then((res) => res.json() as Promise<Array<{ criteria: unknown[] }>>);
       expect(acceptance[0]?.criteria).toHaveLength(1);
+      const workflows = await fetch(`${server.url}/api/workflows`).then(
+        (res) => res.json() as Promise<Array<{ runId: string; phases: number; agents: number }>>,
+      );
+      expect(workflows[0]).toMatchObject({ runId: 'run-1', phases: 1, agents: 1 });
       const iterations = await fetch(`${server.url}/api/iterations`).then((res) => res.json() as Promise<unknown[]>);
       expect(iterations).toHaveLength(1);
       const agents = await fetch(`${server.url}/api/agents`).then((res) => res.json() as Promise<Array<{ agentId: string | null }>>);

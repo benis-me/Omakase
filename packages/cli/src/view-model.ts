@@ -19,6 +19,7 @@ import type {
   RunStatus,
   TaskStatus,
   WorkMode,
+  DynamicWorkflowSnapshot,
 } from '@omakase/core';
 
 export type RunViewStatus = RunStatus | 'idle';
@@ -81,6 +82,7 @@ export interface RunView {
   riskGates: RiskGateSnapshot[];
   reports: ReportArtifact[];
   knowledgeEvents: KnowledgeEvent[];
+  workflow: DynamicWorkflowSnapshot | null;
   lastReview: { approved: boolean; notes: string } | null;
   summary: string | null;
 }
@@ -115,6 +117,7 @@ export function initialRunView(mode: WorkMode = 'normal'): RunView {
     riskGates: [],
     reports: [],
     knowledgeEvents: [],
+    workflow: null,
     lastReview: null,
     summary: null,
   };
@@ -160,6 +163,20 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `↪ routed: ${event.decision.kind} — ${event.decision.reason}`;
     case 'planned':
       return `▤ planned ${event.snapshot.tasks.length} task(s)`;
+    case 'workflow-created':
+      return `▥ workflow: ${event.workflow.script.path}`;
+    case 'workflow-phase-started':
+      return `▧ phase started: ${event.phase.name}`;
+    case 'workflow-phase-finished':
+      return `▧ phase ${event.phase.status}: ${event.phase.name}`;
+    case 'workflow-agent-started':
+      return `  ⇄ workflow agent ${event.agent.role}/${event.agent.agentLabel} started`;
+    case 'workflow-agent-finished':
+      return `  ${event.agent.status === 'succeeded' ? '✓' : '✗'} workflow agent ${event.agent.role}/${event.agent.agentLabel}`;
+    case 'workflow-checkpoint':
+      return `  ◇ checkpoint: ${event.checkpoint.label}`;
+    case 'workflow-finished':
+      return `▥ workflow finished: ${event.workflow.status}`;
     case 'acceptance-updated':
       return `□ acceptance: ${event.acceptance.progress.passed}/${event.acceptance.progress.total} complete`;
     case 'iteration-updated':
@@ -332,6 +349,14 @@ export function reduceRunView(view: RunView, event: OrchestratorEvent): RunView 
       return { ...next, route: { kind: event.decision.kind, reason: event.decision.reason } };
     case 'planned':
       return derive({ ...next, tasks: upsertTasks(view.tasks, event.snapshot) });
+    case 'workflow-created':
+    case 'workflow-phase-started':
+    case 'workflow-phase-finished':
+    case 'workflow-agent-started':
+    case 'workflow-agent-finished':
+    case 'workflow-checkpoint':
+    case 'workflow-finished':
+      return { ...next, workflow: event.workflow };
     case 'acceptance-updated':
       return { ...next, acceptance: event.acceptance };
     case 'iteration-updated':

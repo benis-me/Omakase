@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +7,10 @@ import { MemoryRunStore, Orchestrator, projectKnowledgeStore, type WorkMode } fr
 import { createCli, parseArgs } from '../src/cli.js';
 
 const OFFLINE = { env: { PATH: '' }, includeWellKnownPathDirs: false } as const;
+
+function bunAvailable(): boolean {
+  return existsSync('/opt/homebrew/bin/bun') || existsSync('/usr/local/bin/bun') || Boolean(process.env.PATH?.includes('bun'));
+}
 
 function harness() {
   const out: string[] = [];
@@ -186,6 +190,57 @@ describe('omakase wiki', () => {
     const code = await cli.main(['wiki', 'add', '--body', 'missing title']);
     expect(code).toBe(1);
     expect(err()).toContain('wiki add: a title is required');
+  });
+});
+
+describe('omakase workflow', () => {
+  const itWithBun = bunAvailable() ? it : it.skip;
+
+  itWithBun('runs a JavaScript workflow script through Bun and persists the run', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-workflow-'));
+    const scriptPath = path.join(cwd, 'workflow.js');
+    writeFileSync(
+      scriptPath,
+      `
+        export default async function workflow(w) {
+          await w.phase("CLI Workflow", async () => {
+            const result = await w.agent({ title: "CLI worker", prompt: "inspect cli workflow" });
+            await w.updateWiki({ kind: "fact", title: "CLI workflow ran", body: result.text });
+          });
+        }
+      `,
+      'utf8',
+    );
+    const out: string[] = [];
+    const err: string[] = [];
+    const cli = createCli({
+      write: (t) => out.push(t),
+      error: (t) => err.push(t),
+      detectionOptions: OFFLINE,
+      createRuntime: () =>
+        createAgentRuntime({
+          executors: {
+            codex: createScriptedAgent((input) => [{ type: 'text_delta', delta: `done ${input.prompt}` }]),
+          },
+          detection: OFFLINE,
+        }),
+    });
+
+    const code = await cli.main(['workflow', 'run', scriptPath, '--cwd', cwd, '--agent', 'codex', '--json']);
+    const events = out.filter(Boolean).map((line) => JSON.parse(line) as { type: string });
+    const runFile = readdirSync(path.join(cwd, '.omakase', 'runs')).find((file) => file.endsWith('.json'));
+
+    expect(code).toBe(0);
+    expect(err.join('\n')).toBe('');
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['workflow-created', 'workflow-phase-started', 'agent-event', 'workflow-finished']),
+    );
+    expect(runFile).toBeTruthy();
+    const record = JSON.parse(readFileSync(path.join(cwd, '.omakase', 'runs', runFile!), 'utf8'));
+    expect(record.workflow.status).toBe('succeeded');
+    expect(record.workflow.phases[0].name).toBe('CLI Workflow');
+    expect(record.plan.tasks[0].title).toBe('CLI worker');
+    expect(readFileSync(path.join(cwd, '.omakase', 'knowledge-events.json'), 'utf8')).toContain('CLI workflow ran');
   });
 });
 

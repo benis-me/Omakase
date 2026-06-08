@@ -146,6 +146,35 @@ export { SpecWorkflow, SPEC_PHASES } from './workflows/spec.js';
 export type { SpecPhase, SpecState, SpecTransition, SpecWorkflowOptions } from './workflows/spec.js';
 export { TddLoop } from './workflows/tdd.js';
 export type { TddPhase, TddState, TestRun, TddOptions } from './workflows/tdd.js';
+export {
+  BunWorkflowScriptRunner,
+  DynamicWorkflowRun,
+  MemoryWorkflowScriptRunner,
+  WorkflowScriptValidationError,
+  validateWorkflowScriptSource,
+} from './workflows/dynamic/index.js';
+export type {
+  DynamicWorkflowAgentInput,
+  DynamicWorkflowAgentResult,
+  DynamicWorkflowApi,
+  DynamicWorkflowCheckpointInput,
+  DynamicWorkflowHandle,
+  DynamicWorkflowHostApi,
+  DynamicWorkflowReportInput,
+  DynamicWorkflowRunOptions,
+  DynamicWorkflowRunResult,
+  DynamicWorkflowSnapshot,
+  DynamicWorkflowWikiInput,
+  WorkflowAgentSnapshot,
+  WorkflowAgentStatus,
+  WorkflowCheckpoint,
+  WorkflowPhaseSnapshot,
+  WorkflowPhaseStatus,
+  WorkflowScriptArtifact,
+  WorkflowScriptRunner,
+  WorkflowScriptRunnerInput,
+  WorkflowScriptRuntime,
+} from './workflows/dynamic/index.js';
 
 // ── Self-improvement ─────────────────────────────────────────────────────────
 export {

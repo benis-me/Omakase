@@ -14,6 +14,12 @@ import type { IterationSnapshot } from './iterations.js';
 import type { RiskGateSnapshot } from './risk-gates.js';
 import type { ReportArtifact, ReportKind } from './reports.js';
 import type { KnowledgeEvent } from './knowledge/events.js';
+import type {
+  DynamicWorkflowSnapshot,
+  WorkflowAgentSnapshot,
+  WorkflowCheckpoint,
+  WorkflowPhaseSnapshot,
+} from './workflows/dynamic/types.js';
 
 export interface ReviewCriterion {
   criterion: string;
@@ -62,6 +68,13 @@ export type OrchestratorEvent =
   | { type: 'run-started'; runId: string; request: OrchestrationRequest; mode: WorkMode }
   | { type: 'routed'; decision: RouteDecision }
   | { type: 'planned'; snapshot: PlanGraphSnapshot }
+  | { type: 'workflow-created'; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-phase-started'; phase: WorkflowPhaseSnapshot; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-phase-finished'; phase: WorkflowPhaseSnapshot; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-agent-started'; agent: WorkflowAgentSnapshot; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-agent-finished'; agent: WorkflowAgentSnapshot; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-checkpoint'; checkpoint: WorkflowCheckpoint; workflow: DynamicWorkflowSnapshot }
+  | { type: 'workflow-finished'; workflow: DynamicWorkflowSnapshot }
   | { type: 'acceptance-updated'; acceptance: AcceptanceSnapshot }
   | { type: 'iteration-updated'; iteration: IterationSnapshot; iterations: IterationSnapshot[] }
   | {
@@ -81,7 +94,7 @@ export type OrchestratorEvent =
       title: string;
       reason: string;
       taskId: string | null;
-      source: 'planner' | 'reviewer' | 'strategy' | 'system';
+      source: 'planner' | 'reviewer' | 'strategy' | 'system' | 'workflow';
     }
   | { type: 'report-created'; report: ReportArtifact; reports: ReportArtifact[] }
   | { type: 'knowledge-event-created'; event: KnowledgeEvent; events: KnowledgeEvent[] }

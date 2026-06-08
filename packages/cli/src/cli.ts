@@ -12,6 +12,8 @@ import {
 import {
   FileRunStore,
   MemoryRunStore,
+  BunWorkflowScriptRunner,
+  DynamicWorkflowRun,
   Orchestrator,
   ProjectWiki,
   createModelPolicy,
@@ -21,6 +23,7 @@ import {
   type WorkMode,
   type WikiEntryKind,
 } from '@omakase/core';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
 import {
@@ -56,6 +59,7 @@ const VALUE_FLAGS = new Set([
   'max-cost',
   'interval',
   'concurrency',
+  'max-agents',
   'runs-dir',
   'queue-dir',
   'body',
@@ -185,6 +189,7 @@ const HELP = `omakase — agent runtime + multi-agent orchestration
 Usage:
   omakase agents [--json]              List detected agent CLIs
   omakase run "<task>" [options]       Run a task through the orchestrator
+  omakase workflow run <script.js>     Run a JavaScript dynamic workflow script
   omakase serve ["<task>"...] [opts]   Supervise a queue of runs (24/7), resuming
                                        anything left unfinished. Reads task files
                                        from .omakase/queue. --watch to keep polling.
@@ -203,6 +208,7 @@ Options:
   --max-cost <usd>                     Stop the run after ~usd is spent
   --watch [--interval <ms>]            (serve) keep polling the queue
   --concurrency <n>                    (serve) runs to drive in parallel
+  --max-agents <n>                     (workflow) max agent invocations
   --kind <note|fact|decision|risk>     (wiki add) entry kind (default: note)
   --body <text>                        (wiki add) entry body
   --tags <a,b>                         (wiki add) additional tags
@@ -456,6 +462,73 @@ export function createCli(deps: CliDeps = {}): Cli {
     return failed.length > 0 ? 1 : 0;
   }
 
+  async function workflowCommand(positionals: string[], options: ParsedArgs['options']): Promise<number> {
+    const sub = positionals[1];
+    if (sub !== 'run') {
+      error('omakase workflow: expected `workflow run <script.js>`');
+      return 1;
+    }
+    const rawScript = positionals[2];
+    if (!rawScript) {
+      error('omakase workflow run: a JavaScript workflow script path is required');
+      return 1;
+    }
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+    const scriptPath = path.resolve(cwd, rawScript);
+    const source = await readFile(scriptPath, 'utf8');
+    const ab = parseAgentBudget(options);
+    if (ab.error) {
+      error(`omakase workflow run: ${ab.error}`);
+      return 1;
+    }
+    const mode = resolveMode(options.mode);
+    const runtime = createRuntime();
+    const runsDir =
+      typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs');
+    const run = new DynamicWorkflowRun({
+      runtime,
+      store: new FileRunStore(runsDir),
+      knowledgeStore: projectKnowledgeStore(cwd),
+      policy: ab.agentOverride
+        ? createModelPolicy('custom', { custom: { default: { agentId: ab.agentOverride } } })
+        : createModelPolicy(mode),
+      scriptRunner: new BunWorkflowScriptRunner({ cwd }),
+      script: {
+        id: `workflow-script-${Date.now()}`,
+        path: scriptPath,
+        source,
+        runtime: 'bun',
+        createdAt: Date.now(),
+      },
+      request: {
+        prompt: `Run workflow script ${path.basename(scriptPath)}`,
+        cwd,
+        mode: ab.agentOverride ? 'custom' : mode,
+      },
+      ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+      maxConcurrency: Number(options.concurrency) || 16,
+      maxAgents: Number(options['max-agents']) || 1000,
+    });
+    const handle = run.start();
+    for await (const event of handle.events) {
+      if (options.json) {
+        write(JSON.stringify(event));
+      } else {
+        const line = formatEventLine(event);
+        if (line) write(line);
+      }
+    }
+    const result = await handle.result;
+    if (!options.json) {
+      write('');
+      write(formatRunSummary(buildRunView(result.events, mode)));
+      if (result.spentTokens > 0 || result.spentCostUsd > 0) {
+        write(`Spent: ${result.spentTokens} tokens, $${result.spentCostUsd.toFixed(4)}`);
+      }
+    }
+    return result.status === 'succeeded' ? 0 : 1;
+  }
+
   async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
     const baseMode = resolveMode(options.mode);
     const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
@@ -578,6 +651,8 @@ export function createCli(deps: CliDeps = {}): Cli {
             return await wikiCommand(positionals, options);
           case 'run':
             return await runCommand(positionals.slice(1).join(' '), options);
+          case 'workflow':
+            return await workflowCommand(positionals, options);
           case 'serve':
             return await serveCommand(positionals.slice(1), options);
           case 'tui':
