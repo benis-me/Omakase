@@ -13,10 +13,12 @@ Constraints:
 - Treat this as a complex task that should use normal-mode multi-agent worker distribution.
 - If only one authenticated real CLI is available, use multiple independent real worker instances on that CLI; do not fall back to offline/builtin/scripted agents.
 - Planner should create exactly two independent worker tasks. Omakase automatically adds the reviewer task; the planner must not add review, approval, or verification tasks.
+- Planner must include exactly one out-of-band `reportRequests` entry in its JSON object: `{"title":"Planner smoke checkpoint","reason":"smoke-planner-checkpoint","summary":"Planner requested a separate smoke checkpoint report."}`. This is not a task.
 - Do not put reporter, wiki curator, strategy-update, event-log, session-log, or .omakase persistence checks into the acceptance criteria or main task graph; the external smoke harness validates those JSON events after the run.
 - Package worker must inspect only `/Users/ben/Projects/Omakase2/package.json` and include this exact marker string anywhere in its worker output: `NORMAL_PACKAGE_EVIDENCE path=/Users/ben/Projects/Omakase2/package.json readOnly=true`.
 - Docs worker must inspect only `/Users/ben/Projects/Omakase2/README.md` and include this exact marker string anywhere in its worker output: `NORMAL_DOC_EVIDENCE path=/Users/ben/Projects/Omakase2/README.md readOnly=true`.
 - Reviewer should approve when both exact marker strings are present anywhere in worker outputs and no file edits are claimed. Do not reject because of skill/process preambles or line-boundary placement.
+- Reviewer must include exactly one out-of-band `reportRequests` entry in its JSON object: `{"title":"Reviewer smoke checkpoint","reason":"smoke-reviewer-checkpoint","summary":"Reviewer requested a separate smoke checkpoint report."}`. This is not a task.
 - Do not run nested omakase commands.
 PROMPT
 )}"
@@ -115,6 +117,12 @@ if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'pl
 }
 if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'review' && event.source === 'reviewer')) {
   fail('missing reviewer report-requested event');
+}
+if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'milestone' && event.source === 'planner' && event.title === 'Planner smoke checkpoint' && event.reason === 'planner:smoke-planner-checkpoint')) {
+  fail('missing explicit planner milestone report request');
+}
+if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'milestone' && event.source === 'reviewer' && event.title === 'Reviewer smoke checkpoint' && event.reason === 'reviewer:smoke-reviewer-checkpoint')) {
+  fail('missing explicit reviewer milestone report request');
 }
 if (!hasEvent((event) => event.type === 'strategy-updated')) fail('missing strategy update event');
 if (!hasEvent((event) => event.type === 'run-finished' && event.status === 'succeeded')) fail('missing successful run finish');

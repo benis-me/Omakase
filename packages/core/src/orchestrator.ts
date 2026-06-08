@@ -157,16 +157,100 @@ export interface StructuredReview {
   approved: boolean;
   criteria: ReviewCriterion[];
   notes: string;
+  reportRequests?: AgentReportRequest[];
+}
+
+export interface AgentReportRequest {
+  title: string;
+  reason: string;
+  summary: string;
+  markdown?: string;
+}
+
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  const arrayStart = text.indexOf('[');
+  if (arrayStart !== -1 && arrayStart < start) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          const parsed = JSON.parse(text.slice(start, i + 1)) as unknown;
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function cleanAgentReportRequestText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const clean = value.replace(/\s+/g, ' ').trim();
+  if (!clean) return null;
+  return clean.slice(0, max);
+}
+
+function agentReportRequestsFromObject(obj: Record<string, unknown> | null): AgentReportRequest[] {
+  if (!obj || !Array.isArray(obj.reportRequests)) return [];
+  const requests: AgentReportRequest[] = [];
+  for (const raw of obj.reportRequests) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const item = raw as Record<string, unknown>;
+    const title = cleanAgentReportRequestText(item.title, 96);
+    const reason = cleanAgentReportRequestText(item.reason, 96);
+    if (!title || !reason) continue;
+    const summary =
+      cleanAgentReportRequestText(item.summary, 500) ??
+      cleanAgentReportRequestText(item.body, 500) ??
+      `${title}: ${reason}`;
+    const markdown = typeof item.markdown === 'string' && item.markdown.trim() ? item.markdown.trim().slice(0, 4000) : null;
+    requests.push({
+      title,
+      reason,
+      summary,
+      ...(markdown ? { markdown } : {}),
+    });
+    if (requests.length >= 5) break;
+  }
+  return requests;
+}
+
+function hasStructuredReviewVerdict(text: string): boolean {
+  const obj = extractJsonObject(text);
+  if (Array.isArray(obj?.criteria)) return true;
+  return !obj && Boolean(extractJsonArray(text));
 }
 
 /**
  * Parse a reviewer's per-criterion verdict. Expects a JSON array (same order as
- * `criteria`) of `{ met: boolean, note?: string }`. Approved iff every criterion
- * is met. Falls back to {@link parseReview} (applying the overall verdict to all
+ * `criteria`) of `{ met: boolean, note?: string }`, or a JSON object wrapper
+ * `{ criteria: [...], reportRequests?: [...] }`. Approved iff every criterion is
+ * met. Falls back to {@link parseReview} (applying the overall verdict to all
  * criteria) when the JSON can't be parsed.
  */
 export function parseStructuredReview(text: string, criteria: string[]): StructuredReview {
-  const arr = extractJsonArray(text);
+  const obj = extractJsonObject(text);
+  const arr = Array.isArray(obj?.criteria) ? obj.criteria : obj ? null : extractJsonArray(text);
+  const reportRequests = agentReportRequestsFromObject(obj);
   if (arr && arr.length > 0) {
     const results: ReviewCriterion[] = criteria.map((criterion, i) => {
       const entry = arr[i] as { met?: unknown; note?: unknown } | undefined;
@@ -181,6 +265,7 @@ export function parseStructuredReview(text: string, criteria: string[]): Structu
       approved: results.length > 0 && results.every((r) => r.met),
       criteria: results,
       notes: text.trim(),
+      ...(reportRequests.length > 0 ? { reportRequests } : {}),
     };
   }
   const fallback = parseReview(text);
@@ -188,6 +273,7 @@ export function parseStructuredReview(text: string, criteria: string[]): Structu
     approved: fallback.approved,
     criteria: criteria.map((criterion) => ({ criterion, met: fallback.approved })),
     notes: fallback.notes,
+    ...(reportRequests.length > 0 ? { reportRequests } : {}),
   };
 }
 
@@ -255,6 +341,7 @@ class RunController implements RunHandle {
   private readonly eventLog: OrchestratorEvent[] = [];
   private readonly supportWork = new Set<Promise<void>>();
   private readonly requestedReportKeys = new Set<string>();
+  private pendingPlannerReportRequests: AgentReportRequest[] = [];
   private readonly inbox: Inbox;
   private wiki: ProjectWiki;
   private acceptance: AcceptanceSnapshot = { criteria: [], progress: { passed: 0, total: 0, complete: false } };
@@ -829,6 +916,49 @@ class RunController implements RunHandle {
     });
   }
 
+  private async createAgentRequestedReport(
+    source: 'planner' | 'reviewer',
+    request: AgentReportRequest,
+    taskId: string | null,
+  ): Promise<void> {
+    const markdown =
+      request.markdown ??
+      [
+        `# ${request.title}`,
+        '',
+        request.summary,
+        '',
+        `Requested by: ${source}`,
+        `Reason: ${request.reason}`,
+      ].join('\n');
+    await this.createReport('milestone', request.title, request.summary, markdown, taskId ?? undefined);
+  }
+
+  private scheduleAgentRequestedReports(
+    source: 'planner' | 'reviewer',
+    requests: readonly AgentReportRequest[],
+    taskId: string | null,
+  ): void {
+    for (const [index, request] of requests.entries()) {
+      const reason = `${source}:${request.reason}`;
+      this.requestReport({
+        kind: 'milestone',
+        title: request.title,
+        reason,
+        taskId,
+        source,
+        dedupeKey: `agent-request:${source}:${taskId ?? 'run'}:${index}:${request.title}:${request.reason}`,
+        work: () => this.createAgentRequestedReport(source, request, taskId),
+      });
+    }
+  }
+
+  private schedulePlannerRequestedReports(): void {
+    const requests = this.pendingPlannerReportRequests;
+    this.pendingPlannerReportRequests = [];
+    this.scheduleAgentRequestedReports('planner', requests, null);
+  }
+
   private async createStrategyReport(input: {
     reason: StrategyUpdateReason;
     failedCriteria: readonly string[];
@@ -1118,11 +1248,13 @@ class RunController implements RunHandle {
         : [];
     return [
       'Break the following request into an ordered implementation plan.',
-      'Respond with ONLY a JSON object: {"acceptanceCriteria": string[], "tasks": object[]}.',
+      'Respond with ONLY a JSON object: {"acceptanceCriteria": string[], "tasks": object[], "reportRequests": object[]}.',
       'Each task object must be: {"title": string, "description": string, "phase": string, "dependsOn": number[]}.',
+      'Each optional report request object must be: {"title": string, "reason": string, "summary": string}.',
       'phase is the user-visible stage name shown in the TUI, such as Discovery, Core, TUI, Verification, or Docs.',
       'The tasks array is WORKER tasks only. Do not include reviewer, review, approval, or final verification tasks; Omakase automatically adds one reviewer task after the workers.',
       'acceptanceCriteria must be concrete, testable, product-facing completion checks.',
+      'Use reportRequests only when the planner decides a separate Reporter should write a stage report outside the main flow.',
       'Do not create acceptance criteria about reviewer approval, report creation, wiki curator execution, strategy events, session logs, or harness internals.',
       'If the request specifies an exact number of worker tasks, obey that count. Otherwise, for broad requests, create 3-7 focused worker tasks and prefer independent tasks that can run in parallel.',
       'Do not collapse unrelated work into one task.',
@@ -1135,41 +1267,15 @@ class RunController implements RunHandle {
     ].join('\n');
   }
 
-  private extractAgentPlanObject(text: string): { tasks?: unknown; acceptanceCriteria?: unknown } | null {
-    const start = text.indexOf('{');
-    if (start === -1) return null;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i += 1) {
-      const ch = text[i];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (ch === '\\') escaped = true;
-        else if (ch === '"') inString = false;
-        continue;
-      }
-      if (ch === '"') inString = true;
-      else if (ch === '{') depth += 1;
-      else if (ch === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(text.slice(start, i + 1));
-            return parsed && typeof parsed === 'object' ? parsed : null;
-          } catch {
-            return null;
-          }
-        }
-      }
-    }
-    return null;
+  private extractAgentPlanObject(text: string): { tasks?: unknown; acceptanceCriteria?: unknown; reportRequests?: unknown } | null {
+    return extractJsonObject(text);
   }
 
-  private graphFromAgentPlan(text: string): { graph: PlanGraph; acceptanceCriteria: string[] } | null {
+  private graphFromAgentPlan(text: string): { graph: PlanGraph; acceptanceCriteria: string[]; reportRequests: AgentReportRequest[] } | null {
     const obj = this.extractAgentPlanObject(text);
     const arr = Array.isArray(obj?.tasks) ? obj.tasks : extractJsonArray(text);
     if (!arr || arr.length === 0) return null;
+    const reportRequests = agentReportRequestsFromObject(obj);
     const acceptanceCriteria = Array.isArray(obj?.acceptanceCriteria)
       ? obj.acceptanceCriteria
           .map((criterion) => (typeof criterion === 'string' ? criterion.replace(/\s+/g, ' ').trim() : ''))
@@ -1222,7 +1328,7 @@ class RunController implements RunHandle {
       tags: ['Review'],
     });
     graph.refreshReadiness();
-    return { graph, acceptanceCriteria };
+    return { graph, acceptanceCriteria, reportRequests };
   }
 
   private isSystemReviewPlanTask(raw: unknown, title: string, description: string): boolean {
@@ -1337,6 +1443,7 @@ class RunController implements RunHandle {
     if (parsed && !this.hasUserAcceptanceCriteria && parsed.acceptanceCriteria.length > 0) {
       this.setPlannerAcceptanceCriteria(parsed.acceptanceCriteria);
     }
+    this.pendingPlannerReportRequests = parsed?.reportRequests ?? [];
     return parsed?.graph ?? fallback();
   }
 
@@ -1385,8 +1492,11 @@ class RunController implements RunHandle {
       if (criteria.length > 0) {
         return [
           'You are reviewing completed work against acceptance criteria.',
-          'For EACH criterion decide whether it is met. Respond with ONLY a JSON',
-          'array in the SAME order: [{"met": true|false, "note": "why"}].',
+          'For EACH criterion decide whether it is met. Respond with ONLY a JSON object.',
+          'The object must be: {"criteria": [{"met": true|false, "note": "why"}], "reportRequests": object[]}.',
+          'criteria must be in the SAME order as the acceptance criteria.',
+          'Each optional report request object must be: {"title": string, "reason": string, "summary": string}.',
+          'Use reportRequests only when the reviewer decides a separate Reporter should write a stage report outside the main flow.',
           '',
           'Acceptance criteria:',
           ...criteria.map((c, i) => `${i + 1}. ${c}`),
@@ -1492,6 +1602,7 @@ class RunController implements RunHandle {
           this.emit({ type: 'planned', snapshot: this.graph.snapshot() });
         }
         this.schedulePlanningReport();
+        this.schedulePlannerRequestedReports();
       }
 
       await this.checkpoint();
@@ -1699,9 +1810,14 @@ class RunController implements RunHandle {
         return;
       }
       const criteria = this.acceptanceCriteriaText();
-      const hasStructuredVerdict = criteria.length > 0 && Boolean(extractJsonArray(result.text));
+      const hasStructuredVerdict = criteria.length > 0 && hasStructuredReviewVerdict(result.text);
       const uncertain = !hasStructuredVerdict && isUncertainReviewText(result.text);
-      const review =
+      const review: {
+        approved: boolean;
+        notes: string;
+        criteria?: ReviewCriterion[];
+        reportRequests?: AgentReportRequest[];
+      } =
         uncertain && criteria.length > 0
           ? {
               approved: false,
@@ -1740,6 +1856,7 @@ class RunController implements RunHandle {
           }),
         );
       }
+      this.scheduleAgentRequestedReports('reviewer', review.reportRequests ?? [], task.id);
       this.scheduleReviewReport(task.id, review.approved, review.notes.slice(0, 300));
       if (review.approved) this.graph.setStatus(task.id, 'succeeded');
       else if (uncertain && this.uncertainReviewCount >= 2) {

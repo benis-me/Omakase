@@ -798,6 +798,106 @@ describe('orchestrator long-running acceptance loop', () => {
     expect(result.plan.tasks.map((task) => task.role)).not.toContain('wiki-curator' as any);
   });
 
+  it('honors explicit planner and reviewer reportRequests as out-of-band milestone reports', async () => {
+    const roleCalls: string[] = [];
+    const exec = createScriptedAgent((input) => {
+      const role = String(input.metadata?.role ?? 'worker');
+      roleCalls.push(role);
+      if (role === 'planner') {
+        return [
+          {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              acceptanceCriteria: ['feature works'],
+              reportRequests: [
+                {
+                  title: 'Planner checkpoint',
+                  reason: 'architecture-snapshot',
+                  summary: 'Planner requests a separate architecture report before worker execution.',
+                },
+              ],
+              tasks: [
+                {
+                  title: 'Implement feature',
+                  description: 'Build the requested feature.',
+                  phase: 'Core',
+                  dependsOn: [],
+                },
+              ],
+            }),
+          },
+        ];
+      }
+      if (role === 'reviewer') {
+        return [
+          {
+            type: 'text_delta',
+            delta: JSON.stringify({
+              criteria: [{ met: true, note: 'feature works' }],
+              reportRequests: [
+                {
+                  title: 'Reviewer checkpoint',
+                  reason: 'post-review-checkpoint',
+                  summary: 'Reviewer requests a separate report after verification.',
+                },
+              ],
+            }),
+          },
+        ];
+      }
+      if (role === 'reporter') {
+        return [{ type: 'text_delta', delta: '# Requested Report\n\nReporter wrote the requested checkpoint.' }];
+      }
+      if (role === 'wiki-curator') return [{ type: 'text_delta', delta: 'Wiki synthesis from requested report.' }];
+      return [{ type: 'text_delta', delta: 'worker done' }];
+    });
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const result = await orch.start({
+      prompt: 'build feature with explicit report requests',
+      metadata: { supportAgents: true },
+    }).result;
+
+    expect(roleCalls).toEqual(expect.arrayContaining(['planner', 'reviewer', 'reporter']));
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'report-requested',
+          kind: 'milestone',
+          source: 'planner',
+          title: 'Planner checkpoint',
+          reason: 'planner:architecture-snapshot',
+          taskId: null,
+        }),
+        expect.objectContaining({
+          type: 'report-requested',
+          kind: 'milestone',
+          source: 'reviewer',
+          title: 'Reviewer checkpoint',
+          reason: 'reviewer:post-review-checkpoint',
+          taskId: expect.any(String),
+        }),
+      ]),
+    );
+    expect(result.reports.map((report) => report.title)).toEqual(
+      expect.arrayContaining(['Planner checkpoint', 'Reviewer checkpoint']),
+    );
+    expect(result.reports.filter((report) => report.kind === 'milestone').length).toBeGreaterThanOrEqual(2);
+    expect(result.plan.tasks.map((task) => task.title)).not.toEqual(
+      expect.arrayContaining(['Planner checkpoint', 'Reviewer checkpoint']),
+    );
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('reporter' as any);
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('wiki-curator' as any);
+    expect(result.status).toBe('succeeded');
+  });
+
   it('uses out-of-band reporter and wiki-curator agents without adding them to the plan', async () => {
     const roleCalls: string[] = [];
     const exec = createScriptedAgent((input) => {

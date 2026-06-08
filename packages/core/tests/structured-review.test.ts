@@ -33,6 +33,32 @@ describe('parseStructuredReview', () => {
     expect(r.approved).toBe(false);
     expect(r.criteria.every((c) => c.met === false)).toBe(true);
   });
+
+  it('accepts a JSON object wrapper with reviewer-requested reports', () => {
+    const review = parseStructuredReview(
+      JSON.stringify({
+        criteria: [{ met: true, note: 'verified' }],
+        reportRequests: [
+          {
+            title: 'Reviewer checkpoint',
+            reason: 'post-review-checkpoint',
+            summary: 'Reviewer wants a separate status report after verification.',
+          },
+        ],
+      }),
+      ['feature works'],
+    );
+
+    expect(review.approved).toBe(true);
+    expect(review.criteria).toEqual([{ criterion: 'feature works', met: true, note: 'verified' }]);
+    expect(review.reportRequests).toEqual([
+      {
+        title: 'Reviewer checkpoint',
+        reason: 'post-review-checkpoint',
+        summary: 'Reviewer wants a separate status report after verification.',
+      },
+    ]);
+  });
 });
 
 describe('orchestrator structured review against SpecWorkflow criteria', () => {
