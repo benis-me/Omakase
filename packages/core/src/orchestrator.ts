@@ -254,6 +254,7 @@ class RunController implements RunHandle {
   private readonly stream = createPushStream<OrchestratorEvent>();
   private readonly eventLog: OrchestratorEvent[] = [];
   private readonly supportWork = new Set<Promise<void>>();
+  private readonly requestedReportKeys = new Set<string>();
   private readonly inbox: Inbox;
   private wiki: ProjectWiki;
   private acceptance: AcceptanceSnapshot = { criteria: [], progress: { passed: 0, total: 0, complete: false } };
@@ -529,6 +530,15 @@ class RunController implements RunHandle {
       nextAction: input.nextAction,
       summary,
     });
+    this.scheduleStrategyReport({
+      iterationId: iteration.id,
+      reason,
+      failedCriteria: input.failedCriteria,
+      unknownCriteria: input.unknownCriteria,
+      openGates: input.openGates,
+      nextAction: input.nextAction,
+      summary,
+    });
   }
 
   private acceptanceCriteriaText(): string[] {
@@ -786,7 +796,14 @@ class RunController implements RunHandle {
   }
 
   private schedulePlanningReport(): void {
-    this.launchSupportWork('planning-report', () => this.createPlanningReport());
+    this.requestReport({
+      kind: 'planning',
+      title: 'Planning report',
+      reason: 'planner:planned',
+      taskId: null,
+      source: 'planner',
+      work: () => this.createPlanningReport(),
+    });
   }
 
   private async createReviewReport(taskId: string, approved: boolean, notes: string): Promise<void> {
@@ -802,7 +819,91 @@ class RunController implements RunHandle {
   }
 
   private scheduleReviewReport(taskId: string, approved: boolean, notes: string): void {
-    this.launchSupportWork('review-report', () => this.createReviewReport(taskId, approved, notes));
+    this.requestReport({
+      kind: 'review',
+      title: 'Review report',
+      reason: `review:${approved ? 'approved' : 'rejected'}`,
+      taskId,
+      source: 'reviewer',
+      work: () => this.createReviewReport(taskId, approved, notes),
+    });
+  }
+
+  private async createStrategyReport(input: {
+    reason: StrategyUpdateReason;
+    failedCriteria: readonly string[];
+    unknownCriteria: readonly string[];
+    openGates: readonly string[];
+    nextAction: StrategyNextAction;
+    summary: string;
+  }): Promise<void> {
+    const markdown = [
+      '# Strategy report',
+      '',
+      input.summary,
+      '',
+      `Next action: ${input.nextAction}`,
+      `Reason: ${input.reason}`,
+      '',
+      input.failedCriteria.length > 0
+        ? ['Failed criteria:', ...input.failedCriteria.map((criterion) => `- ${criterion}`)].join('\n')
+        : 'Failed criteria: none',
+      '',
+      input.unknownCriteria.length > 0
+        ? ['Unknown criteria:', ...input.unknownCriteria.map((criterion) => `- ${criterion}`)].join('\n')
+        : 'Unknown criteria: none',
+      '',
+      input.openGates.length > 0
+        ? ['Open gates:', ...input.openGates.map((gate) => `- ${gate}`)].join('\n')
+        : 'Open gates: none',
+    ].join('\n');
+    await this.createReport('milestone', 'Strategy report', input.summary, markdown);
+  }
+
+  private scheduleStrategyReport(input: {
+    iterationId: string;
+    reason: StrategyUpdateReason;
+    failedCriteria: readonly string[];
+    unknownCriteria: readonly string[];
+    openGates: readonly string[];
+    nextAction: StrategyNextAction;
+    summary: string;
+  }): void {
+    if (input.nextAction !== 'replan' && input.nextAction !== 'wait-for-user') return;
+    const requestReason = `strategy:${input.reason}`;
+    this.requestReport({
+      kind: 'milestone',
+      title: 'Strategy report',
+      reason: requestReason,
+      taskId: null,
+      source: 'strategy',
+      dedupeKey: `${input.iterationId}:${requestReason}`,
+      work: () => this.createStrategyReport(input),
+    });
+  }
+
+  private requestReport(input: {
+    kind: ReportKind;
+    title: string;
+    reason: string;
+    taskId: string | null;
+    source: 'planner' | 'reviewer' | 'strategy' | 'system';
+    work: () => Promise<void>;
+    dedupeKey?: string;
+  }): void {
+    if (input.dedupeKey) {
+      if (this.requestedReportKeys.has(input.dedupeKey)) return;
+      this.requestedReportKeys.add(input.dedupeKey);
+    }
+    this.emit({
+      type: 'report-requested',
+      kind: input.kind,
+      title: input.title,
+      reason: input.reason,
+      taskId: input.taskId,
+      source: input.source,
+    });
+    this.launchSupportWork(`report:${input.reason}`, input.work);
   }
 
   private scheduleWikiSynthesis(reason: string, report: ReportArtifact | null = null): void {

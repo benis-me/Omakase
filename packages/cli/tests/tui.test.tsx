@@ -219,7 +219,11 @@ describe('TUI App (persistent client)', () => {
       ],
     };
     rich.activity = ['worker/codex: main worker output'];
-    rich.supportActivity = ['reporter/codex: streaming report sidecar', 'wiki-curator/codex: streaming wiki sidecar'];
+    rich.supportActivity = [
+      '▣ report requested: Strategy report (strategy:criteria-failed)',
+      'reporter/codex: streaming report sidecar',
+      'wiki-curator/codex: streaming wiki sidecar',
+    ];
     const client = fakeClient({
       tail: vi.fn((_id: string, onView: (v: RunView) => void) => {
         onView(rich);
@@ -241,6 +245,7 @@ describe('TUI App (persistent client)', () => {
     await tick(20);
     expect(lastFrame() ?? '').toContain('Reports');
     expect(lastFrame() ?? '').toContain('Planning report');
+    expect(lastFrame() ?? '').toContain('report requested: Strategy report');
     expect(lastFrame() ?? '').toContain('reporter/codex');
     expect(lastFrame() ?? '').toContain('streaming report sidecar');
     stdin.write('4');

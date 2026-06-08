@@ -110,6 +110,12 @@ if (events.length === 0) fail('no JSON events parsed');
 if (!hasEvent((event) => event.type === 'agent-event' && event.role === 'planner')) fail('missing planner agent events');
 if (!hasEvent((event) => event.type === 'agent-event' && event.role === 'reporter')) fail('missing reporter agent events');
 if (!hasEvent((event) => event.type === 'agent-event' && event.role === 'wiki-curator')) fail('missing wiki-curator agent events');
+if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'planning' && event.source === 'planner')) {
+  fail('missing planner report-requested event');
+}
+if (!hasEvent((event) => event.type === 'report-requested' && event.kind === 'review' && event.source === 'reviewer')) {
+  fail('missing reviewer report-requested event');
+}
 if (!hasEvent((event) => event.type === 'strategy-updated')) fail('missing strategy update event');
 if (!hasEvent((event) => event.type === 'run-finished' && event.status === 'succeeded')) fail('missing successful run finish');
 

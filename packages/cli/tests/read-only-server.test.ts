@@ -79,6 +79,14 @@ function record(id: string): RunRecord {
     inbox: [],
     events: [
       {
+        type: 'report-requested',
+        kind: 'planning',
+        title: 'Planning report',
+        reason: 'planner:planned',
+        taskId: null,
+        source: 'planner',
+      },
+      {
         type: 'report-created',
         report: {
           id: 'report-1',
@@ -244,7 +252,10 @@ describe('read-only report/wiki server', () => {
       const activity = await fetch(`${server.url}/api/activity`).then((res) => res.json() as Promise<unknown[]>);
       expect(activity).toHaveLength(0);
       const supportActivity = await fetch(`${server.url}/api/support-activity`).then((res) => res.json() as Promise<unknown[]>);
-      expect(supportActivity).toHaveLength(1);
+      expect(supportActivity).toHaveLength(2);
+      expect(supportActivity).toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: 'report requested · Planning report · planner:planned' })]),
+      );
       const acceptance = await fetch(`${server.url}/api/acceptance`).then((res) => res.json() as Promise<Array<{ criteria: unknown[] }>>);
       expect(acceptance[0]?.criteria).toHaveLength(1);
       const iterations = await fetch(`${server.url}/api/iterations`).then((res) => res.json() as Promise<unknown[]>);
@@ -257,7 +268,7 @@ describe('read-only report/wiki server', () => {
       expect(codegraph.files).toBe(2);
       expect(codegraph.symbolReferences[0]).toMatchObject({ local: 'runParser', to: 'src/runtime.ts' });
       const events = await fetch(`${server.url}/api/events`).then((res) => res.json() as Promise<unknown[]>);
-      expect(events).toHaveLength(1);
+      expect(events).toHaveLength(2);
       const post = await fetch(`${server.url}/api/run/run-1`, { method: 'POST' });
       expect(post.status).toBe(405);
     } finally {

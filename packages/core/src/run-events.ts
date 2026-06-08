@@ -12,7 +12,7 @@ import type { CodeGraphStats } from './knowledge/codegraph.js';
 import type { AcceptanceCriterion, AcceptanceProgress } from './acceptance.js';
 import type { IterationSnapshot } from './iterations.js';
 import type { RiskGateSnapshot } from './risk-gates.js';
-import type { ReportArtifact } from './reports.js';
+import type { ReportArtifact, ReportKind } from './reports.js';
 import type { KnowledgeEvent } from './knowledge/events.js';
 
 export interface ReviewCriterion {
@@ -75,6 +75,14 @@ export type OrchestratorEvent =
     }
   | { type: 'risk-gate-opened'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
   | { type: 'risk-gate-answered'; gate: RiskGateSnapshot; gates: RiskGateSnapshot[] }
+  | {
+      type: 'report-requested';
+      kind: ReportKind;
+      title: string;
+      reason: string;
+      taskId: string | null;
+      source: 'planner' | 'reviewer' | 'strategy' | 'system';
+    }
   | { type: 'report-created'; report: ReportArtifact; reports: ReportArtifact[] }
   | { type: 'knowledge-event-created'; event: KnowledgeEvent; events: KnowledgeEvent[] }
   | {

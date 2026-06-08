@@ -763,6 +763,41 @@ describe('orchestrator long-running acceptance loop', () => {
     expect(result.acceptance.progress.complete).toBe(true);
   });
 
+  it('lets strategy request an out-of-band milestone report on replan without mutating the task graph', async () => {
+    const orch = orchForReview([
+      [{ met: false, note: 'tests missing' }],
+      [{ met: true, note: 'tests now pass' }],
+    ]);
+    const result = await orch.start({
+      prompt: '- build feature',
+      acceptanceCriteria: ['tests pass'],
+      metadata: { supportAgents: true },
+    }).result;
+
+    const requestIndex = result.events.findIndex(
+      (event) => event.type === 'report-requested' && (event as any).kind === 'milestone',
+    );
+    const reportIndex = result.events.findIndex(
+      (event) => event.type === 'report-created' && (event as any).report.kind === 'milestone',
+    );
+
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'report-requested',
+        kind: 'milestone',
+        source: 'strategy',
+        reason: 'strategy:criteria-failed',
+        taskId: null,
+      }),
+    );
+    expect(result.reports.map((report) => report.kind)).toEqual(expect.arrayContaining(['milestone']));
+    expect(result.reports.some((report) => report.kind === 'milestone' && report.title === 'Strategy report')).toBe(true);
+    expect(requestIndex).toBeGreaterThanOrEqual(0);
+    expect(reportIndex).toBeGreaterThan(requestIndex);
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('reporter' as any);
+    expect(result.plan.tasks.map((task) => task.role)).not.toContain('wiki-curator' as any);
+  });
+
   it('uses out-of-band reporter and wiki-curator agents without adding them to the plan', async () => {
     const roleCalls: string[] = [];
     const exec = createScriptedAgent((input) => {

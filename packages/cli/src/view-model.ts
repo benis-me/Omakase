@@ -176,6 +176,8 @@ export function formatEventLine(event: OrchestratorEvent): string {
       return `⚠ gate opened: ${event.gate.reason}`;
     case 'risk-gate-answered':
       return `✓ gate answered: ${event.gate.id}`;
+    case 'report-requested':
+      return `▣ report requested: ${event.title} (${event.reason})`;
     case 'report-created':
       return `▣ report: ${event.report.title}`;
     case 'knowledge-event-created':
@@ -301,7 +303,7 @@ function shortenToolCommand(command: string): string {
 }
 
 function isSupportActivityEvent(event: OrchestratorEvent): boolean {
-  if (event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
+  if (event.type === 'report-requested' || event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
   if (event.type !== 'agent-event' && event.type !== 'agent-assigned') return false;
   return event.taskId == null && (event.role === 'reporter' || event.role === 'wiki-curator');
 }

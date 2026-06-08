@@ -323,6 +323,14 @@ describe('view-model', () => {
       event: { type: 'text_delta', delta: 'Wiki sidecar synthesis' },
     } as any);
     view = reduceRunView(view, {
+      type: 'report-requested',
+      kind: 'milestone',
+      title: 'Strategy report',
+      reason: 'strategy:criteria-failed',
+      taskId: null,
+      source: 'strategy',
+    } as any);
+    view = reduceRunView(view, {
       type: 'report-created',
       report: {
         id: 'report-1',
@@ -357,10 +365,12 @@ describe('view-model', () => {
     expect(view.activity.join('\n')).toContain('Planner is decomposing the work');
     expect(view.activity.join('\n')).not.toContain('Reporter sidecar report text');
     expect(view.activity.join('\n')).not.toContain('Wiki sidecar synthesis');
+    expect(view.activity.join('\n')).not.toContain('report requested: Strategy report');
     expect(view.activity.join('\n')).not.toContain('report: Planning report');
     expect(view.supportActivity).toEqual([
       'reporter/codex: Reporter sidecar report text',
       'wiki-curator/codex: Wiki sidecar synthesis',
+      '▣ report requested: Strategy report (strategy:criteria-failed)',
       '▣ report: Planning report',
       '◇ knowledge event: Wiki synthesis',
     ]);

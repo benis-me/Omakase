@@ -717,7 +717,7 @@ function knowledgeLabel(view: RunView): string | null {
 
 function supportActivityForWorkspace(view: RunView, workspace: Workspace): string[] {
   if (workspace === 'Reports') {
-    const reportLines = view.supportActivity.filter((line) => line.startsWith('reporter/') || line.startsWith('▣ report:'));
+    const reportLines = view.supportActivity.filter((line) => line.startsWith('reporter/') || line.startsWith('▣ report'));
     return reportLines.length > 0 ? reportLines : view.supportActivity;
   }
   if (workspace === 'Knowledge') {

@@ -310,6 +310,8 @@ async function codegraphSummary(
 
 function eventActivityLabel(event: RunRecord['events'][number]): string {
   switch (event.type) {
+    case 'report-requested':
+      return `report requested · ${event.title} · ${event.reason}`;
     case 'report-created':
       return `report · ${event.report.title}`;
     case 'knowledge-event-created':
@@ -330,7 +332,7 @@ function eventActivityLabel(event: RunRecord['events'][number]): string {
 }
 
 function isSupportEvent(event: RunRecord['events'][number]): boolean {
-  if (event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
+  if (event.type === 'report-requested' || event.type === 'report-created' || event.type === 'knowledge-event-created') return true;
   if (event.type !== 'agent-event' && event.type !== 'agent-assigned') return false;
   return event.taskId == null && (event.role === 'reporter' || event.role === 'wiki-curator');
 }
