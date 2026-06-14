@@ -11,6 +11,7 @@ import {
 } from '@omakase/daemon';
 import {
   FileRunStore,
+  FileSessionStore,
   MemoryRunStore,
   BunWorkflowScriptRunner,
   DynamicWorkflowRun,
@@ -261,25 +262,6 @@ export function createCli(deps: CliDeps = {}): Cli {
   function parseWikiTags(value: string | boolean | undefined): string[] {
     const userTags = typeof value === 'string' ? value.split(',') : [];
     return normalizeWikiTags(userTags);
-  }
-
-  async function addManualWikiEntry(
-    cwd: string,
-    input: { title: string; body?: string; kind?: WikiEntryKind; tags?: string[] },
-  ): Promise<void> {
-    const title = input.title.replace(/\s+/g, ' ').trim();
-    if (!title) throw new Error('wiki title is required');
-    const store = projectKnowledgeStore(cwd);
-    const snapshot = (await store.loadWiki()) ?? { entries: [] };
-    const wiki = ProjectWiki.fromJSON(snapshot);
-    const entry = wiki.add(input.kind ?? 'note', {
-      title,
-      body: input.body ?? '',
-      tags: normalizeWikiTags(input.tags),
-      source: `manual:tui:${Date.now()}`,
-    });
-    if (store.mergeWiki) await store.mergeWiki([entry]);
-    else await store.saveWiki(wiki.toJSON());
   }
 
   async function wikiCommand(positionals: string[], options: ParsedArgs['options']): Promise<number> {
@@ -558,6 +540,7 @@ export function createCli(deps: CliDeps = {}): Cli {
 
     const runStore = new FileRunStore(runsDir);
     const knowledgeStore = projectKnowledgeStore(cwd);
+    const sessions = new FileSessionStore(path.join(cwd, '.omakase', 'sessions'));
     const client = new RunControllerClient({
       store: runStore,
       controlDir: runsDir,
@@ -594,12 +577,12 @@ export function createCli(deps: CliDeps = {}): Cli {
         client,
         cwd,
         mode: baseMode,
+        sessions,
         detect,
         daemonStatus: () => daemonStatus(cwd),
         stopDaemon: () => stop(cwd),
         startDaemon: () => ensure(cwd, serveArgs),
         readOnlyUrl: readOnlyServer.url,
-        addWikiEntry: (entry) => addManualWikiEntry(cwd, entry),
         ...(task.trim() ? { task: task.trim() } : {}),
         ...(token ? { token } : {}),
       });
