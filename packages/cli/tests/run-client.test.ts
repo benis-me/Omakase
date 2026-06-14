@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
-import { FileControlSource } from '@omakase/core';
+import { readdirSync } from 'node:fs';
+import { FileControlSource, MemoryRunStore } from '@omakase/core';
 import type { RunStore } from '@omakase/core';
 import { createServer, type ServeConfig } from '../src/serve.js';
 import { RunControllerClient } from '../src/run-client.js';
-import type { RunView } from '../src/view-model.js';
+import { reduceTranscript, type RunView } from '../src/view-model.js';
 
 const OFFLINE = { env: { PATH: '' }, includeWellKnownPathDirs: false } as const;
 
@@ -170,6 +171,58 @@ describe('RunControllerClient', () => {
       command: 'edit-criteria',
       criteria: ['works', 'has tests'],
     });
+  });
+
+  it('transcript() folds the record events into transcript items', async () => {
+    const store = new MemoryRunStore();
+    const events = [
+      { type: 'run-started', runId: 'r1', mode: 'normal', request: { prompt: 'do X' } },
+      { type: 'run-finished', status: 'succeeded', summary: 'ok' },
+    ];
+    await store.save({
+      id: 'r1', request: { prompt: 'do X' }, mode: 'normal', status: 'succeeded',
+      plan: { tasks: [] }, wiki: { entries: [] }, inbox: [], events,
+      summary: 'ok', createdAt: 1, updatedAt: 2, heartbeatAt: 2, checkpointSeq: 1,
+    } as never);
+    const client = new RunControllerClient({ store, controlDir: '/tmp/x', queueDir: '/tmp/x', pollMs: 5 });
+    const items = await client.transcript('r1');
+    expect(items).toEqual(reduceTranscript(events as never));
+  });
+
+  it('tailRun emits both the view and transcript and stops on dispose', async () => {
+    const store = new MemoryRunStore();
+    await store.save({
+      id: 'r1', request: { prompt: 'do X' }, mode: 'normal', status: 'running',
+      plan: { tasks: [] }, wiki: { entries: [] }, inbox: [],
+      events: [{ type: 'run-started', runId: 'r1', mode: 'normal', request: { prompt: 'do X' } }],
+      summary: '', createdAt: 1, updatedAt: 2, heartbeatAt: 2, checkpointSeq: 1,
+    } as never);
+    const client = new RunControllerClient({ store, controlDir: '/tmp/x', queueDir: '/tmp/x', pollMs: 5 });
+    const seen: Array<{ viewRunId: string | null; itemKinds: string[] }> = [];
+    const dispose = client.tailRun('r1', (u) => seen.push({ viewRunId: u.view.runId, itemKinds: u.transcript.map((i) => i.kind) }));
+    await new Promise((r) => setTimeout(r, 30));
+    dispose();
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen[0]).toEqual({ viewRunId: 'r1', itemKinds: ['user-message'] });
+  });
+
+  it('submitToSession writes a queue file with @agent header and injected context', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-client-ses-'));
+    const queueDir = path.join(cwd, '.omakase', 'queue');
+    const store = new MemoryRunStore();
+    const client = new RunControllerClient({ store, controlDir: queueDir, queueDir, pollMs: 5 });
+    const token = await client.submitToSession(
+      { rollingSummary: 'we built Y' },
+      { prompt: 'now do X', agentOverride: 'codex', files: ['a.ts'] },
+    );
+    expect(token).toMatch(/\.prompt$/);
+    const files = readdirSync(queueDir);
+    const body = readFileSync(path.join(queueDir, files.find((f) => f.endsWith('.prompt'))!), 'utf8');
+    expect(body.startsWith('@agent codex\n')).toBe(true);
+    expect(body).toContain('Session context so far:');
+    expect(body).toContain('we built Y');
+    expect(body).toContain('now do X');
+    expect(body).toContain('- a.ts');
   });
 
   it('tail does not deliver a view after it is disposed mid-load', async () => {
