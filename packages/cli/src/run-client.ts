@@ -19,7 +19,8 @@ import {
   type RunStatus,
   type RunStore,
 } from '@omakase/core';
-import { applyPlanSnapshot, buildRunView, type RunView } from './view-model.js';
+import { applyPlanSnapshot, buildRunView, reduceTranscript, type RunView, type TranscriptItem } from './view-model.js';
+import { composeSessionPrompt } from './composer-parse.js';
 
 export interface RunSummary {
   id: string;
@@ -75,6 +76,20 @@ export class RunControllerClient {
     await writeFile(tmp, body, 'utf8');
     await rename(tmp, target); // atomic: the daemon never sees a partial file
     return token;
+  }
+
+  /**
+   * Submit a task inside a session: the rolling summary + #file references are
+   * folded into the prompt (see {@link composeSessionPrompt}) and an optional
+   * agent override is pinned via the `@agent` header. Returns the queue token;
+   * the caller resolves the run id and records it on the session.
+   */
+  async submitToSession(
+    session: { rollingSummary: string },
+    intent: { prompt: string; agentOverride?: string; files: string[] },
+  ): Promise<string> {
+    const prompt = composeSessionPrompt({ prompt: intent.prompt, files: intent.files }, session.rollingSummary);
+    return this.submit(prompt, intent.agentOverride);
   }
 
   /** Poll the store for the run the daemon created from a submitted token. */
@@ -138,6 +153,42 @@ export class RunControllerClient {
         lastStatus = rec.status;
         lastSeq = rec.checkpointSeq;
         onView({ ...applyPlanSnapshot(buildRunView(rec.events, rec.mode), rec.plan), runId });
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), this.pollMs);
+    timer.unref?.();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }
+
+  /** One-shot transcript (structural chat timeline) for a run. */
+  async transcript(runId: string): Promise<TranscriptItem[]> {
+    const rec = await this.store.load(runId);
+    return rec ? reduceTranscript(rec.events) : [];
+  }
+
+  /**
+   * Live-tail a run, emitting both the folded sidebar view and the chat
+   * transcript on every advance. One poller drives both projections.
+   */
+  tailRun(runId: string, onUpdate: (u: { view: RunView; transcript: TranscriptItem[] }) => void): () => void {
+    let stopped = false;
+    let lastLen = -1;
+    let lastStatus = '';
+    let lastSeq = -1;
+    const poll = async (): Promise<void> => {
+      if (stopped) return;
+      const rec = await this.store.load(runId);
+      if (stopped || !rec) return;
+      if (rec.events.length !== lastLen || rec.status !== lastStatus || rec.checkpointSeq !== lastSeq) {
+        lastLen = rec.events.length;
+        lastStatus = rec.status;
+        lastSeq = rec.checkpointSeq;
+        const view = { ...applyPlanSnapshot(buildRunView(rec.events, rec.mode), rec.plan), runId };
+        onUpdate({ view, transcript: reduceTranscript(rec.events) });
       }
     };
     void poll();

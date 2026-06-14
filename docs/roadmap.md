@@ -40,9 +40,16 @@ where the edges are and what would deepen each layer.
 - `omakase run` uses real installed agents by default (it will spend real model
   calls). Pass `--offline` (or `--agent builtin`) to force the built-in agent
   and run with no model calls.
-- The TUI auto-runs a task passed on the command line, exposes
-  pause/resume/cancel/replan, and has an in-TUI composer (`[i]` to start a new
-  task when idle, `[u]` to type a custom note during a run).
+- The TUI is a conversational console (opencode-style). A **session** groups
+  multiple **serial** runs into one continuous conversation, with a
+  rolling-summary context bridge carried into each new run. The Composer accepts
+  natural-language tasks (routed by the router-agent), `/slash` commands
+  (`/stop` `/pause` `/resume` `/new` `/web` `/agent` `/model` `/workflow` …),
+  inline `@agent` overrides and `#file` references. The left pane renders the run
+  event stream as a chat transcript; the right sidebar (expanded by default,
+  `[o]` to collapse, `Tab` to switch focus) shows the focused run's plan +
+  agents. Quitting never cancels a run — the daemon owns it; relaunching
+  re-attaches, and only `/stop` cancels.
 
 ## Planned enhancements
 

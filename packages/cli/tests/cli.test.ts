@@ -258,7 +258,15 @@ describe('omakase tui', () => {
   it('ensures a daemon, submits the task, and launches the client TUI', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
     let ensured: string | undefined;
-    let captured: { hasClient: boolean; task?: string; token?: string; cwd?: string; mode?: string; readOnlyUrl?: string } = {
+    let captured: {
+      hasClient: boolean;
+      hasSessions?: boolean;
+      task?: string;
+      token?: string;
+      cwd?: string;
+      mode?: string;
+      readOnlyUrl?: string;
+    } = {
       hasClient: false,
     };
     const cli = createCli({
@@ -272,6 +280,7 @@ describe('omakase tui', () => {
       launchTui: async (opts) => {
         captured = {
           hasClient: Boolean(opts.client),
+          hasSessions: Boolean(opts.sessions),
           task: opts.task,
           token: opts.token,
           cwd: opts.cwd,
@@ -283,7 +292,7 @@ describe('omakase tui', () => {
     const code = await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power']);
     expect(code).toBe(0);
     expect(ensured).toBe(cwd); // a detached daemon was ensured
-    expect(captured).toMatchObject({ hasClient: true, task: 'do a thing', cwd, mode: 'max-power' });
+    expect(captured).toMatchObject({ hasClient: true, hasSessions: true, task: 'do a thing', cwd, mode: 'max-power' });
     expect(captured.readOnlyUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
     expect(captured.token).toBeTruthy(); // initial task submitted → correlation token
     // a queue file was dropped for the daemon (no in-process Orchestrator)
@@ -291,26 +300,24 @@ describe('omakase tui', () => {
     expect(readdirSync(queue).some((f) => f.endsWith('.prompt'))).toBe(true);
   });
 
-  it('wires the TUI wiki editor to the project knowledge store', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-wiki-'));
+  it('persists a manual wiki entry via the `wiki add` CLI', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-wiki-add-'));
     const cli = createCli({
       write: () => {},
       detectionOptions: OFFLINE,
       createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
-      launchTui: async (opts) => {
-        await opts.addWikiEntry?.({
-          title: 'TUI editable knowledge',
-          body: 'Manual wiki edits from the TUI persist beside agent-authored knowledge.',
-          kind: 'note',
-          tags: ['knowledge', 'manual', 'tui'],
-        });
-      },
     });
-    const code = await cli.main(['tui', '--cwd', cwd]);
+    const code = await cli.main([
+      'wiki',
+      'add',
+      'CLI editable knowledge',
+      '--body',
+      'Manual wiki edits persist beside agent-authored knowledge.',
+      '--cwd',
+      cwd,
+    ]);
     expect(code).toBe(0);
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki.json'), 'utf8')).toContain('TUI editable knowledge');
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki-pages.md'), 'utf8')).toContain('TUI editable knowledge');
+    expect(readFileSync(path.join(cwd, '.omakase', 'wiki.json'), 'utf8')).toContain('CLI editable knowledge');
   });
 
   it('forwards the resolved dirs + flags to the spawned daemon (serveArgs)', async () => {

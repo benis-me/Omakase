@@ -20,6 +20,7 @@ import type {
   TaskStatus,
   WorkMode,
   DynamicWorkflowSnapshot,
+  WorkflowPhaseStatus,
 } from '@omakase/core';
 
 export type RunViewStatus = RunStatus | 'idle';
@@ -85,6 +86,75 @@ export interface RunView {
   workflow: DynamicWorkflowSnapshot | null;
   lastReview: { approved: boolean; notes: string } | null;
   summary: string | null;
+}
+
+export type TranscriptItem =
+  | { kind: 'user-message'; text: string }
+  | { kind: 'route'; routeKind: RouteKind; reason: string }
+  | { kind: 'plan'; taskCount: number }
+  | { kind: 'task-progress'; role: AgentRole; title: string; agentLabel: string | null; status: 'started' | 'succeeded' | 'failed' }
+  | { kind: 'review'; approved: boolean; notes: string }
+  | { kind: 'report'; title: string }
+  | { kind: 'workflow-phase'; name: string; status: WorkflowPhaseStatus }
+  | { kind: 'finished'; status: RunStatus; summary: string };
+
+/**
+ * Project a run's event log into an ordered chat transcript of structural
+ * milestones (user message → route → plan → per-task progress → review →
+ * finish). Streaming token/thinking deltas and heartbeats are intentionally
+ * dropped — those belong to the live "phrases" feed, not the readable timeline.
+ */
+export function reduceTranscript(events: OrchestratorEvent[]): TranscriptItem[] {
+  const items: TranscriptItem[] = [];
+  for (const event of events) {
+    switch (event.type) {
+      case 'run-started':
+        items.push({ kind: 'user-message', text: event.request.prompt });
+        break;
+      case 'routed':
+        items.push({ kind: 'route', routeKind: event.decision.kind, reason: event.decision.reason });
+        break;
+      case 'planned':
+        items.push({ kind: 'plan', taskCount: event.snapshot.tasks.length });
+        break;
+      case 'agent-assigned':
+        if (event.taskId) {
+          items.push({
+            kind: 'task-progress',
+            role: event.role,
+            title: event.title ?? event.taskId,
+            agentLabel: event.agentLabel ?? event.assignment?.agentId ?? null,
+            status: 'started',
+          });
+        }
+        break;
+      case 'task-finished':
+        items.push({
+          kind: 'task-progress',
+          role: event.role,
+          title: event.title,
+          agentLabel: null,
+          status: event.success ? 'succeeded' : 'failed',
+        });
+        break;
+      case 'review':
+        items.push({ kind: 'review', approved: event.approved, notes: event.notes });
+        break;
+      case 'report-created':
+        items.push({ kind: 'report', title: event.report.title });
+        break;
+      case 'workflow-phase-started':
+      case 'workflow-phase-finished':
+        items.push({ kind: 'workflow-phase', name: event.phase.name, status: event.phase.status });
+        break;
+      case 'run-finished':
+        items.push({ kind: 'finished', status: event.status, summary: event.summary });
+        break;
+      default:
+        break;
+    }
+  }
+  return items;
 }
 
 const MAX_EVENT_LINES = 200;

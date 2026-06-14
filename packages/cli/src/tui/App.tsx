@@ -1,24 +1,23 @@
 /**
- * The Omakase TUI: a persistent run console. It is a pure CLIENT over a detached
- * daemon ({@link RunControllerClient}) — it never owns an Orchestrator. Submitted
- * runs live in the daemon, so quitting the TUI does NOT stop them; relaunching
- * re-attaches and keeps showing live progress (replay + tail). Only an explicit
- * stop ([x]) cancels a run.
- *
- * Layout mirrors a workflow monitor: a header (task + N/M agents + elapsed), a
- * left "Plan" pane (stage + done/total), and a right "Activity" + detail pane
- * (live route/planner/agent stream plus per-task token/tool/elapsed rows).
+ * The Omakase TUI: an opencode-style conversational console over a detached
+ * daemon. It is a pure CLIENT ({@link RunControllerClient}) — it never owns an
+ * Orchestrator. A *session* groups multiple serial runs into one continuous
+ * conversation: each task starts a background run whose event stream renders as
+ * a chat transcript (left), while a sidebar (right, expanded by default) shows
+ * the focused run's plan + agents. Quitting never cancels a run; relaunching
+ * re-attaches. Only `/stop` cancels.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { writeFileSync } from 'node:fs';
-import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import type { DetectedAgent } from '@omakase/daemon';
-import type { RunStatus, WikiEntryKind, WorkMode } from '@omakase/core';
+import type { SessionStore, WorkMode } from '@omakase/core';
 import type { DaemonStatus } from '../daemon-control.js';
-import type { RunControllerClient, RunSummary } from '../run-client.js';
-import { initialRunView, type PhaseView, type RunView, type RunViewStatus, type TaskView } from '../view-model.js';
-import { loadTuiPreferences, saveTuiPreferences } from './preferences.js';
+import type { RunControllerClient } from '../run-client.js';
+import { initialRunView, type RunView, type TranscriptItem } from '../view-model.js';
+import { parseComposerInput } from '../composer-parse.js';
+import { Session } from './Session.js';
+import { Orchestration } from './Orchestration.js';
+import { Composer } from './Composer.js';
 
 /** Terminal size, kept in sync on resize so the UI fills and adapts. */
 function useTerminalSize(): { columns: number; rows: number } {
@@ -26,8 +25,7 @@ function useTerminalSize(): { columns: number; rows: number } {
   const [size, setSize] = useState({ columns: stdout?.columns ?? 80, rows: stdout?.rows ?? 24 });
   useEffect(() => {
     if (!stdout) return;
-    const onResize = (): void =>
-      setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 });
+    const onResize = (): void => setSize({ columns: stdout.columns ?? 80, rows: stdout.rows ?? 24 });
     onResize();
     stdout.on('resize', onResize);
     return () => {
@@ -41,875 +39,201 @@ export interface AppProps {
   client: RunControllerClient;
   cwd: string;
   mode: WorkMode;
+  sessions: SessionStore;
+  now?: () => number;
   /** Initial task already submitted by the CLI; its correlation token. */
   token?: string;
   /** Initial task text (for display / fallback submit). */
   task?: string;
-  /** Local agent detection for the dashboard. */
+  /** Local agent detection (for the agent override hints). */
   detect?: () => Promise<DetectedAgent[]>;
   /** Poll the project's daemon status for the header indicator. */
   daemonStatus?: () => Promise<DaemonStatus>;
-  /** Stop the project's daemon (for the daemon-management keys). */
+  /** Stop the project's daemon. */
   stopDaemon?: () => Promise<unknown>;
   /** (Re)start the project's daemon. */
   startDaemon?: () => Promise<unknown>;
-  /** Read-only local report/wiki server URL. */
+  /** Read-only local report/wiki server URL (surfaced via `/web`). */
   readOnlyUrl?: string;
-  /** Add a manual/editable project-wiki entry from the Knowledge workspace. */
-  addWikiEntry?: (entry: TuiWikiEntryInput) => Promise<void>;
 }
 
-export interface TuiWikiEntryInput {
-  title: string;
-  body: string;
-  kind: WikiEntryKind;
-  tags: string[];
-}
+type Focus = 'session' | 'sidebar' | 'composer';
 
-/** A task's phase/stage — must match view-model's computePhases grouping. */
-function stageOf(t: TaskView): string {
-  return t.tags[0] ?? t.role ?? 'Plan';
-}
-
-function tasksForPhase(view: RunView | null, selectedPhase: number): {
-  phaseIdx: number;
-  stage: string | undefined;
-  tasks: TaskView[];
-} {
-  if (!view) return { phaseIdx: 0, stage: undefined, tasks: [] };
-  const phaseIdx = view.phases.length > 0 ? Math.min(selectedPhase, view.phases.length - 1) : 0;
-  const stage = view.phases[phaseIdx]?.stage;
-  return {
-    phaseIdx,
-    stage,
-    tasks: stage != null ? view.tasks.filter((t) => stageOf(t) === stage) : view.tasks,
-  };
-}
-
-function tasksForDetail(view: RunView | null, selectedPhase: number, workspace: Workspace): {
-  phaseIdx: number;
-  stage: string | undefined;
-  tasks: TaskView[];
-} {
-  const phase = tasksForPhase(view, selectedPhase);
-  if (workspace === 'Agents' && view) {
-    return { phaseIdx: phase.phaseIdx, stage: 'all agents', tasks: view.tasks };
-  }
-  return phase;
-}
-
-function isRunnableAgent(agent: DetectedAgent): boolean {
-  return agent.available && agent.authStatus !== 'missing';
-}
-
-function isVisibleDetectedAgent(agent: DetectedAgent): boolean {
-  return isRunnableAgent(agent) || agent.available || Boolean(agent.unavailableReason);
-}
-
-function agentDisplay(task: TaskView): string {
-  return task.agentLabel ?? task.agentId ?? 'unassigned';
-}
-
-/** Cycle the "main agent" selection: auto → each available agent → auto. */
-function cycleAgent(current: string | null, agents: DetectedAgent[]): string | null {
-  const cycle: Array<string | null> = [null, ...agents.filter(isRunnableAgent).map((a) => a.id)];
-  const idx = cycle.indexOf(current);
-  return cycle[(idx + 1) % cycle.length] ?? null;
-}
-
-type Screen = 'list' | 'run';
-type FocusPane = 'plan' | 'detail';
-type Workspace = 'Plan' | 'Agents' | 'Acceptance' | 'Knowledge' | 'Reports' | 'Gate';
-const WORKSPACES: readonly Workspace[] = ['Plan', 'Agents', 'Acceptance', 'Knowledge', 'Reports', 'Gate'];
-type ComposeKind = 'new' | 'note' | 'criteria' | 'gate' | 'wiki';
-const SUBMITTED_NOTICE = 'submitted — waiting for the daemon to start it';
-
-function isSubmittedNotice(notice: string | null): boolean {
-  return notice === SUBMITTED_NOTICE;
-}
-
-function taskIcon(status: TaskView['status']): string {
-  switch (status) {
-    case 'succeeded':
-      return '✓';
-    case 'failed':
-      return '✗';
-    case 'cancelled':
-      return '∅';
-    case 'running':
-      return '▸';
-    case 'blocked':
-      return '⊘';
-    default:
-      return '·';
-  }
-}
-
-function statusColor(status: RunViewStatus | RunStatus): string {
-  if (status === 'succeeded') return 'green';
-  if (status === 'failed') return 'red';
-  if (status === 'cancelled' || status === 'incomplete' || status === 'paused') return 'yellow';
-  if (status === 'running') return 'cyan';
-  return 'gray';
-}
-
-function fmtDuration(ms: number): string {
-  if (ms <= 0) return '0s';
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
-}
-
-function parseCriteriaInput(text: string): string[] {
-  return text
-    .split(/\n|;/)
-    .map((item) => item.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-}
-
-function parseWikiInput(text: string): TuiWikiEntryInput | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const divider = trimmed.indexOf('::');
-  if (divider !== -1) {
-    const title = trimmed.slice(0, divider).replace(/\s+/g, ' ').trim();
-    const body = trimmed.slice(divider + 2).trim();
-    return title ? { title, body, kind: 'note', tags: ['knowledge', 'manual', 'tui'] } : null;
-  }
-  const lines = trimmed.split(/\r?\n/);
-  const title = (lines.shift() ?? '').replace(/\s+/g, ' ').trim();
-  const body = lines.join('\n').trim();
-  return title ? { title, body, kind: 'note', tags: ['knowledge', 'manual', 'tui'] } : null;
-}
-
-function latestOpenGate(view: RunView | null): string | null {
-  return [...(view?.riskGates ?? [])].reverse().find((gate) => gate.status === 'open')?.id ?? null;
-}
-
-function elapsedOf(view: RunView, nowMs: number): number {
-  if (view.startedAt == null) return 0;
-  // Only a genuinely-advancing run (running/paused) ticks; anything else
-  // (succeeded/failed/cancelled AND incomplete) freezes at its last update.
-  const advancing = view.status === 'running' || view.status === 'paused';
-  const end = advancing ? nowMs : view.updatedAt ?? view.startedAt;
-  return Math.max(0, end - view.startedAt);
-}
-
-export function App({
-  client,
-  cwd,
-  mode,
-  token,
-  task,
-  detect,
-  daemonStatus,
-  stopDaemon,
-  startDaemon,
-  readOnlyUrl,
-  addWikiEntry,
-}: AppProps): React.ReactElement {
+export function App(props: AppProps): React.ReactElement {
+  const now = props.now ?? (() => Date.now());
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
-  const { columns, rows } = useTerminalSize();
-  const active = useRef(true);
+  const size = useTerminalSize();
 
-  const [agents, setAgents] = useState<DetectedAgent[]>([]);
-  const [screen, setScreen] = useState<Screen>('list');
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [selected, setSelected] = useState(0);
-  const [selectedPhase, setSelectedPhase] = useState(0);
-  const [focusPane, setFocusPane] = useState<FocusPane>('plan');
-  const [workspace, setWorkspace] = useState<Workspace>('Plan');
-  const [selectedTask, setSelectedTask] = useState(0);
-  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(
-    () => loadTuiPreferences(cwd).selectedAgent,
-  ); // null = auto
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState('session');
+  const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  const [view, setView] = useState<RunView>(initialRunView(props.mode));
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<Focus>('composer');
+  const [expanded, setExpanded] = useState(true); // sidebar expanded by default
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
-  const [attachedId, setAttachedId] = useState<string | null>(null);
-  const attachedIdRef = useRef<string | null>(null);
-  const pendingTokenRef = useRef<string | null>(null);
-  const [view, setView] = useState<RunView | null>(null);
-  const [compose, setCompose] = useState<{ active: boolean; kind: ComposeKind; buffer: string }>({
-    active: false,
-    kind: 'new',
-    buffer: '',
-  });
-  const [notice, setNotice] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [notice, setNotice] = useState('');
 
-  const refreshRuns = async (): Promise<RunSummary[]> => {
-    const list = await client.list();
-    if (active.current) setRuns(list);
-    return list;
-  };
+  const tailRef = useRef<() => void>(() => {});
+  // Mirror the bits onSubmit needs but that live in async closures, so the
+  // single stable input handler always sees current values.
+  const stateRef = useRef({ sessionId, activeRunId, status: view.status as RunView['status'] });
+  stateRef.current = { sessionId, activeRunId, status: view.status };
 
-  const attach = async (id: string): Promise<void> => {
-    if (!active.current) return;
-    pendingTokenRef.current = null;
-    attachedIdRef.current = id;
-    setAttachedId(id);
-    setView(null);
-    setSelectedPhase(0);
-    setFocusPane('plan');
-    setWorkspace('Plan');
-    setSelectedTask(0);
-    setExpandedTaskId(null);
-    setScreen('run');
-    setNotice((current) => (isSubmittedNotice(current) ? null : current));
-    await refreshRuns();
-  };
+  function attachRun(runId: string): void {
+    tailRef.current();
+    setActiveRunId(runId);
+    tailRef.current = props.client.tailRun(runId, (u) => {
+      setView(u.view);
+      setTranscript(u.transcript);
+    });
+  }
 
-  // Mount: detect agents, then attach the initial task (if any) or show the list.
+  async function attachToken(sid: string, token: string): Promise<void> {
+    const runId = await props.client.resolveRunId(token);
+    if (!runId) return;
+    await props.sessions.appendRun(sid, runId, now());
+    attachRun(runId);
+  }
+
+  // ── session bootstrap ──────────────────────────────────────────────
   useEffect(() => {
-    active.current = true;
-    if (detect) void detect().then((a) => active.current && setAgents(a)).catch(() => undefined);
     void (async () => {
-      if (token) {
-        const id = await client.resolveRunId(token).catch(() => null);
-        if (id) await attach(id);
-        else {
-          setNotice('could not find the submitted run');
-          await refreshRuns();
-        }
-      } else if (task) {
-        const t = await client.submit(task);
-        const id = await client.resolveRunId(t).catch(() => null);
-        if (id) await attach(id);
-      } else {
-        await refreshRuns();
+      const existing = await props.sessions.list();
+      let id = existing[0]?.id ?? null;
+      let title = existing[0]?.title ?? 'session';
+      if (!id) {
+        const created = await props.sessions.create({ id: `ses-${now()}`, title: 'session', now: now() });
+        id = created.id;
+        title = created.title;
       }
+      setSessionId(id);
+      setSessionTitle(title);
+      if (props.token) await attachToken(id, props.token);
     })();
-    return () => {
-      active.current = false;
-    };
+    return () => tailRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live-tail the attached run (replay + poll). Detach/quit does NOT stop it.
+  // ── daemon status poll ─────────────────────────────────────────────
   useEffect(() => {
-    if (!attachedId) return;
-    const stop = client.tail(attachedId, (v) => {
-      if (active.current && attachedIdRef.current === attachedId && v.runId === attachedId) {
-        setView(v);
-        void refreshRuns();
-      }
-    });
-    return () => stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attachedId, client]);
-
-  useEffect(() => {
-    if (!view || !notice) return;
-    const terminal = view.status === 'succeeded' || view.status === 'failed' || view.status === 'cancelled';
-    if (notice.startsWith('stopping') && terminal) setNotice(null);
-    if (notice.startsWith('pausing') && view.status === 'paused') setNotice(null);
-    if (notice.startsWith('resuming') && view.status === 'running') setNotice(null);
-  }, [notice, view]);
-
-  // A 1s tick so live elapsed advances even when no events arrive.
-  useEffect(() => {
-    if (screen !== 'run') return;
-    const timer = setInterval(() => active.current && setNowMs(Date.now()), 1000);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  }, [screen]);
-
-  // The daemon may create the run record after the user backs out of a pending
-  // submission. Keep the list fresh without requiring another keypress/relaunch.
-  useEffect(() => {
-    if (screen !== 'list') return;
-    void refreshRuns();
-    const timer = setInterval(() => void refreshRuns(), 500);
-    timer.unref?.();
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen]);
-
-  // Poll the daemon's status for the header indicator (it can die independently).
-  useEffect(() => {
-    if (!daemonStatus) return;
-    const poll = (): void => {
-      void daemonStatus().then((s) => active.current && setDaemon(s)).catch(() => undefined);
+    if (!props.daemonStatus) return;
+    let live = true;
+    const tick = async (): Promise<void> => {
+      const status = await props.daemonStatus!();
+      if (live) setDaemon(status);
     };
-    poll();
-    const timer = setInterval(poll, 3000);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  }, [daemonStatus]);
-
-  const submitNew = async (text: string): Promise<void> => {
-    const t = await client.submit(text, selectedAgent ?? undefined);
-    pendingTokenRef.current = t;
-    const pending = {
-      ...initialRunView(mode),
-      status: 'pending' as const,
-      title: text,
-      events: [`queued ${t}`],
-      phrases: [`queued: ${text}`],
-      activity: [`queued: ${text}`],
+    void tick();
+    const t = setInterval(() => void tick(), 1500);
+    t.unref?.();
+    return () => {
+      live = false;
+      clearInterval(t);
     };
-    attachedIdRef.current = null;
-    setAttachedId(null);
-    setSelectedPhase(0);
-    setFocusPane('plan');
-    setWorkspace('Plan');
-    setSelectedTask(0);
-    setExpandedTaskId(null);
-    setView(pending);
-    setScreen('run');
-    setNotice(SUBMITTED_NOTICE);
-    void refreshRuns();
-    void resolveSubmittedRun(t);
-  };
+  }, [props.daemonStatus]);
 
-  const resolveSubmittedRun = async (tokenToResolve: string): Promise<void> => {
-    for (;;) {
-      const id = await client.resolveRunId(tokenToResolve, 1000).catch(() => null);
-      if (!active.current || pendingTokenRef.current !== tokenToResolve) return;
-      if (id) {
-        await attach(id);
-        return;
+  async function onSubmit(raw: string): Promise<void> {
+    const intent = parseComposerInput(raw);
+    const { sessionId: sid, activeRunId: runId, status } = stateRef.current;
+    if (intent.kind === 'empty' || !sid) return;
+    if (intent.kind === 'command') return void handleCommand(intent.name, intent.args);
+
+    // Serial within a session: a follow-up during an active run is an input note.
+    if (runId && (status === 'running' || status === 'paused')) {
+      const text = intent.kind === 'workflow' ? `/workflow ${intent.source}` : intent.prompt;
+      await props.client.sendInput(runId, text);
+      setNotice('sent input to the running run');
+      return;
+    }
+
+    const session = await props.sessions.load(sid);
+    const rollingSummary = session?.rollingSummary ?? '';
+    const taskIntent =
+      intent.kind === 'workflow'
+        ? { prompt: intent.source, files: [] as string[] }
+        : { prompt: intent.prompt, agentOverride: intent.agentOverride, files: intent.files };
+    setNotice(intent.kind === 'workflow' ? 'running workflow' : 'submitted — waiting for the daemon');
+    const token = await props.client.submitToSession({ rollingSummary }, taskIntent);
+    const created = await props.client.resolveRunId(token);
+    if (created) {
+      await props.sessions.appendRun(sid, created, now());
+      attachRun(created);
+      setNotice('');
+    }
+  }
+
+  async function handleCommand(name: string, args: string): Promise<void> {
+    const { activeRunId: runId } = stateRef.current;
+    switch (name) {
+      case 'stop':
+        if (runId) await props.client.stop(runId);
+        setNotice('stop requested');
+        break;
+      case 'pause':
+        if (runId) await props.client.pause(runId);
+        setNotice('pause requested');
+        break;
+      case 'resume':
+        if (runId) await props.client.resume(runId);
+        setNotice('resume requested');
+        break;
+      case 'new': {
+        const created = await props.sessions.create({ id: `ses-${now()}`, title: 'session', now: now() });
+        tailRef.current();
+        setActiveRunId(null);
+        setTranscript([]);
+        setView(initialRunView(props.mode));
+        setSessionId(created.id);
+        setSessionTitle(created.title);
+        setNotice('new session');
+        break;
       }
-      setNotice(SUBMITTED_NOTICE);
-      await refreshRuns();
-      await new Promise((r) => setTimeout(r, 100));
+      case 'web':
+        setNotice(props.readOnlyUrl ? `report server: ${props.readOnlyUrl}` : 'no report server');
+        break;
+      case 'clear':
+        setNotice('');
+        break;
+      case 'help':
+        setNotice('keys: [tab] focus  [o] sidebar  /stop /pause /resume /new /web /agent /model /workflow');
+        break;
+      default:
+        setNotice(`unknown command: /${name}${args ? ' ' + args : ''}`);
     }
-  };
-
-  const back = (): void => {
-    pendingTokenRef.current = null;
-    attachedIdRef.current = null;
-    setAttachedId(null);
-    setView(null);
-    setFocusPane('plan');
-    setWorkspace('Plan');
-    setSelectedTask(0);
-    setExpandedTaskId(null);
-    setScreen('list');
-    setNotice((current) => (isSubmittedNotice(current) ? null : current));
-    void refreshRuns();
-  };
-
-  const save = (): void => {
-    if (!view || !attachedId) return;
-    const file = path.join(cwd, `omakase-run-${attachedId}.md`);
-    const lines = [
-      `# Run ${attachedId} — ${view.status}`,
-      view.title ? `\n${view.title}\n` : '',
-      ...view.events,
-    ];
-    try {
-      writeFileSync(file, lines.join('\n'), 'utf8');
-      setNotice(`saved ${file}`);
-    } catch {
-      setNotice('save failed');
-    }
-  };
+  }
 
   useInput(
     (input, key) => {
-      if (compose.active) {
-        if (key.return) {
-          const text = compose.buffer.trim();
-          const kind = compose.kind;
-          setCompose({ active: false, kind, buffer: '' });
-          if (!text) return;
-          if (kind === 'new') void submitNew(text);
-          else if (kind === 'note' && attachedId) void client.sendInput(attachedId, text);
-          else if (kind === 'criteria' && attachedId) {
-            const criteria = parseCriteriaInput(text);
-            if (criteria.length > 0) void client.editCriteria(attachedId, criteria);
-          } else if (kind === 'gate' && attachedId) {
-            const gateId = latestOpenGate(view);
-            if (gateId) void client.answerGate(attachedId, gateId, text);
-          } else if (kind === 'wiki') {
-            const entry = parseWikiInput(text);
-            if (!entry) {
-              setNotice('wiki title is required');
-            } else if (!addWikiEntry) {
-              setNotice('wiki editing unavailable');
-            } else {
-              void addWikiEntry(entry).then(
-                () => active.current && setNotice(`wiki saved: ${entry.title}`),
-                () => active.current && setNotice('wiki save failed'),
-              );
-            }
-          }
-        } else if (key.escape) {
-          setCompose((c) => ({ ...c, active: false, buffer: '' }));
-        } else if (key.backspace || key.delete) {
-          setCompose((c) => ({ ...c, buffer: c.buffer.slice(0, -1) }));
-        } else if (input && !key.ctrl && !key.meta) {
-          setCompose((c) => ({ ...c, buffer: c.buffer + input }));
-        }
+      if (key.tab) {
+        setFocus((f) => (f === 'session' ? 'sidebar' : f === 'sidebar' ? 'composer' : 'session'));
         return;
       }
-
-      if (input === 'q') {
-        exit(); // quitting NEVER cancels the run — the daemon keeps driving it
-        return;
-      }
-      if (input === 'i') {
-        setCompose({ active: true, kind: 'new', buffer: '' });
-        return;
-      }
-      if (input === 'a') {
-        // Switch the "main agent" used for the NEXT task you start here.
-        setSelectedAgent((cur) => {
-          const next = cycleAgent(cur, agents);
-          saveTuiPreferences(cwd, { selectedAgent: next });
-          return next;
-        });
-        return;
-      }
-
-      if (screen === 'list') {
-        if (key.upArrow) setSelected((i) => Math.max(0, i - 1));
-        else if (key.downArrow) setSelected((i) => Math.min(runs.length - 1, i + 1));
-        else if (key.return && runs[selected]) void attach(runs[selected]!.id);
-        else if (input === 'k' && stopDaemon) {
-          setNotice('stopping daemon…');
-          void stopDaemon().then(() => active.current && setNotice('daemon stopped'));
-        } else if (input === 'r' && (startDaemon || stopDaemon)) {
-          setNotice('restarting daemon…');
-          void (async () => {
-            await stopDaemon?.();
-            await startDaemon?.();
-            if (active.current) setNotice('daemon restarted');
-          })();
-        }
-        return;
-      }
-
-      // run screen
-      const workspaceIndex = Number.parseInt(input, 10);
-      if (Number.isInteger(workspaceIndex) && workspaceIndex >= 1 && workspaceIndex <= WORKSPACES.length) {
-        setWorkspace(WORKSPACES[workspaceIndex - 1]!);
-        setFocusPane('plan');
-        setSelectedTask(0);
-        setExpandedTaskId(null);
-        return;
-      }
-      if (key.leftArrow) setFocusPane('plan');
-      else if (key.rightArrow) setFocusPane('detail');
-      else if (key.upArrow) {
-        if (focusPane === 'detail') setSelectedTask((i) => Math.max(0, i - 1));
-        else {
-          setSelectedPhase((i) => Math.max(0, i - 1));
-          setSelectedTask(0);
-          setExpandedTaskId(null);
-        }
-      } else if (key.downArrow) {
-        if (focusPane === 'detail') {
-          const taskCount = tasksForDetail(view, selectedPhase, workspace).tasks.length;
-          setSelectedTask((i) => Math.min(Math.max(0, taskCount - 1), i + 1));
-        } else {
-          setSelectedPhase((i) => Math.min(Math.max(0, (view?.phases.length ?? 1) - 1), i + 1));
-          setSelectedTask(0);
-          setExpandedTaskId(null);
-        }
-      } else if (key.return && focusPane === 'detail') {
-        const task = tasksForDetail(view, selectedPhase, workspace).tasks[selectedTask];
-        if (task) setExpandedTaskId((id) => (id === task.id ? null : task.id));
-      } else if (key.escape) back();
-      else if (input === 'x' && attachedId) {
-        setNotice('stopping…');
-        void client.stop(attachedId);
-      } else if (input === 'p' && attachedId) {
-        if (view?.status === 'paused') void client.resume(attachedId);
-        else {
-          setNotice('pausing…');
-          void client.pause(attachedId);
-        }
-      } else if (input === 'u' && attachedId) {
-        setCompose({ active: true, kind: 'note', buffer: '' });
-      } else if (input === 'e' && attachedId && workspace === 'Acceptance') {
-        setCompose({ active: true, kind: 'criteria', buffer: '' });
-      } else if (input === 'g' && attachedId && workspace === 'Gate') {
-        setCompose({ active: true, kind: 'gate', buffer: '' });
-      } else if (input === 'w' && workspace === 'Knowledge') {
-        setCompose({ active: true, kind: 'wiki', buffer: '' });
-      } else if (input === 's') {
-        save();
+      if (focus !== 'composer') {
+        if (input === 'o') setExpanded((e) => !e);
+        if (input === 'q') exit(); // quit never cancels runs
       }
     },
     { isActive: isRawModeSupported },
   );
 
-  useEffect(() => {
-    if (!view) return;
-    setSelectedPhase((i) => Math.min(Math.max(0, view.phases.length - 1), i));
-  }, [view]);
-
-  useEffect(() => {
-    if (!view) return;
-    const tasks = tasksForDetail(view, selectedPhase, workspace).tasks;
-    setSelectedTask((i) => Math.min(Math.max(0, tasks.length - 1), i));
-    if (expandedTaskId && !tasks.some((t) => t.id === expandedTaskId)) setExpandedTaskId(null);
-  }, [expandedTaskId, selectedPhase, view, workspace]);
-
-  const visibleAgents = agents.filter(isVisibleDetectedAgent);
-  const availableCount = visibleAgents.filter(isRunnableAgent).length;
-
+  const daemonText = daemon?.running ? `daemon up (${daemon.pid})` : daemon ? 'daemon down' : '';
+  const headerText = `omakase${daemonText ? `  ·  ${daemonText}` : ''}  ·  ${view.activeAgents}/${view.totalAgents} agents`;
   return (
-    <Box flexDirection="column" width={columns} height={rows}>
-      <Header
-        view={view}
-        screen={screen}
-        availableCount={availableCount}
-        agentTotal={visibleAgents.length}
-        nowMs={nowMs}
-        task={task}
-        daemon={daemon}
-      />
-      <Box flexGrow={1} flexDirection="column">
-        {screen === 'list' ? (
-          <RunList runs={runs} selected={selected} agents={visibleAgents} />
-        ) : (
-          <RunDetail
-            view={view}
-            nowMs={nowMs}
-            selectedPhase={selectedPhase}
-            focusPane={focusPane}
-            workspace={workspace}
-            selectedTask={selectedTask}
-            expandedTaskId={expandedTaskId}
-          />
-        )}
+    <Box flexDirection="column" width={size.columns} height={size.rows}>
+      <Box paddingX={1}>
+        <Text>{headerText}</Text>
       </Box>
-      {compose.active ? (
-        <Box>
-          <Text>
-            {composeLabel(compose.kind)} › <Text color="cyan">{compose.buffer}</Text>
-            <Text inverse> </Text>
-          </Text>
-        </Box>
-      ) : null}
-      {notice ? <Text dimColor>{notice}</Text> : null}
-      {readOnlyUrl ? <Text dimColor>web: {readOnlyUrl}</Text> : null}
-      <Box justifyContent="space-between">
-        <Text dimColor>{hints(compose.active, screen)}</Text>
-        <Text>
-          <Text dimColor>main agent: </Text>
-          <Text color="yellow">{selectedAgent ?? 'auto'}</Text>
-          <Text dimColor> [a]</Text>
-        </Text>
+      <Box flexGrow={1}>
+        <Session
+          transcript={transcript}
+          title={sessionTitle}
+          focused={focus === 'session'}
+          rows={size.rows - 6}
+        />
+        <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>
-    </Box>
-  );
-}
-
-function hints(composing: boolean, screen: Screen): string {
-  if (composing) return '[enter] submit  [esc] cancel';
-  if (screen === 'list') return '↑↓ select · [enter] attach · [i] new · [k] stop daemon · [r] restart · [q]uit';
-  return '[1-6] workspace · ←→ focus · ↑↓ select · [enter] expand · [e] criteria · [g] gate · [w] wiki · [x] stop · [p]ause/resume · [u] input · [s]ave · [esc] back · [q]uit';
-}
-
-function composeLabel(kind: ComposeKind): string {
-  if (kind === 'new') return 'new task';
-  if (kind === 'criteria') return 'criteria';
-  if (kind === 'gate') return 'gate answer';
-  if (kind === 'wiki') return 'wiki title :: body';
-  return 'note';
-}
-
-function daemonLabel(d: DaemonStatus | null): { text: string; color: string } {
-  if (!d) return { text: 'daemon ?', color: 'gray' };
-  return d.running
-    ? { text: `daemon ● up (${d.pid})`, color: 'green' }
-    : { text: 'daemon ○ down', color: 'red' };
-}
-
-function Header({
-  view,
-  screen,
-  availableCount,
-  agentTotal,
-  nowMs,
-  task,
-  daemon,
-}: {
-  view: RunView | null;
-  screen: Screen;
-  availableCount: number;
-  agentTotal: number;
-  nowMs: number;
-  task?: string;
-  daemon: DaemonStatus | null;
-}): React.ReactElement {
-  const title = view?.title ?? task ?? 'Omakase';
-  const elapsed = view ? fmtDuration(elapsedOf(view, nowMs)) : '';
-  const dl = daemonLabel(daemon);
-  return (
-    <Box justifyContent="space-between">
-      <Box>
-        <Text bold color="magenta">
-          omakase{' '}
-        </Text>
-        <Text>{title.split('\n')[0]?.slice(0, 56)}</Text>
-        {view ? (
-          <Text>
-            {' '}
-            · <Text color={statusColor(view.status)}>{view.status}</Text>
-          </Text>
-        ) : null}
-      </Box>
-      <Text dimColor>
-        <Text color={dl.color}>{dl.text}</Text>
-        {'  '}
-        {screen === 'run' && view
-          ? `${view.activeAgents}/${view.totalAgents} agents · ${elapsed}`
-          : `${availableCount}/${agentTotal} agents`}
-      </Text>
-    </Box>
-  );
-}
-
-function RunList({
-  runs,
-  selected,
-  agents,
-}: {
-  runs: RunSummary[];
-  selected: number;
-  agents: DetectedAgent[];
-}): React.ReactElement {
-  return (
-    <Box flexGrow={1}>
-      <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1} marginRight={1}>
-        <Text bold>Runs ({runs.length})</Text>
-        {runs.length === 0 ? <Text dimColor>no runs yet — press [i] to start one</Text> : null}
-        {runs.map((r, i) => (
-          <Text key={r.id} inverse={i === selected}>
-            <Text color={statusColor(r.status)}>{r.status.padEnd(10)}</Text> {r.done}/{r.total}{' '}
-            {r.title.split('\n')[0]?.slice(0, 48)}
-          </Text>
-        ))}
-      </Box>
-      <Box flexDirection="column" borderStyle="round" paddingX={1} width={28}>
-        <Text bold>Agents</Text>
-        {agents.length === 0 ? <Text dimColor>detecting…</Text> : null}
-        {agents.map((a) => {
-          const runnable = isRunnableAgent(a);
-          const color = runnable ? 'green' : a.available ? 'yellow' : 'gray';
-          const dot = runnable ? '●' : a.available ? '◐' : '○';
-          return (
-            <Text key={a.id}>
-              <Text color={color}>{dot}</Text> {a.id}
-              {a.available && a.authStatus === 'missing' ? <Text dimColor> auth</Text> : null}
-            </Text>
-          );
-        })}
-      </Box>
-    </Box>
-  );
-}
-
-function knowledgeLabel(view: RunView): string | null {
-  const stats = view.codegraphStats;
-  if (view.wikiEntries === 0 && !stats && view.codegraphFiles == null) return null;
-  if (stats) {
-    return `Knowledge · ${view.wikiEntries} wiki · ${stats.files} files · ${stats.internalEdges}/${stats.externalEdges} edges · ${stats.symbols} symbols · ${stats.cycles} cycles`;
-  }
-  return `Knowledge · ${view.wikiEntries} wiki${view.codegraphFiles != null ? ` · ${view.codegraphFiles} files` : ''}`;
-}
-
-function supportActivityForWorkspace(view: RunView, workspace: Workspace): string[] {
-  if (workspace === 'Reports') {
-    const reportLines = view.supportActivity.filter((line) => line.startsWith('reporter/') || line.startsWith('▣ report'));
-    return reportLines.length > 0 ? reportLines : view.supportActivity;
-  }
-  if (workspace === 'Knowledge') {
-    const knowledgeLines = view.supportActivity.filter((line) => line.startsWith('wiki-curator/') || line.startsWith('◇ knowledge event:'));
-    return knowledgeLines.length > 0 ? knowledgeLines : view.supportActivity;
-  }
-  return [];
-}
-
-function activityForWorkspace(view: RunView, workspace: Workspace): { title: string; lines: string[] } {
-  if (workspace === 'Reports') {
-    return { title: 'Report Activity', lines: supportActivityForWorkspace(view, workspace).slice(-10) };
-  }
-  if (workspace === 'Knowledge') {
-    return { title: 'Knowledge Activity', lines: supportActivityForWorkspace(view, workspace).slice(-10) };
-  }
-  const lines = (
-    view.activity.length > 0 ? view.activity : view.phrases.length > 0 ? view.phrases : view.events
-  ).slice(-10);
-  return { title: 'Activity', lines };
-}
-
-function WorkspacePane({
-  view,
-  workspace,
-  phaseIdx,
-}: {
-  view: RunView;
-  workspace: Workspace;
-  phaseIdx: number;
-}): React.ReactElement {
-  if (workspace === 'Plan') {
-    return (
-      <>
-        {view.phases.length === 0 ? <Text dimColor>no plan yet</Text> : null}
-        {view.phases.map((p: PhaseView, i) => (
-          <Text key={p.stage} color={i === phaseIdx ? 'cyan' : undefined}>
-            {i === phaseIdx ? '›' : ' '}
-            {p.done === p.total && p.total > 0 ? <Text color="green">✔</Text> : <Text dimColor>·</Text>} {p.stage}
-            <Text dimColor>
-              {'  '}
-              {p.done}/{p.total}
-            </Text>
-          </Text>
-        ))}
-      </>
-    );
-  }
-  if (workspace === 'Agents') {
-    return (
-      <>
-        {view.tasks.length === 0 ? <Text dimColor>no agents yet</Text> : null}
-        {view.tasks.map((task) => (
-          <Text key={task.id}>
-            {taskIcon(task.status)} {agentDisplay(task)} <Text dimColor>{task.tokens} tok · {task.toolCount} tools</Text>
-          </Text>
-        ))}
-      </>
-    );
-  }
-  if (workspace === 'Acceptance') {
-    const criteria = view.acceptance?.criteria ?? [];
-    return (
-      <>
-        <Text dimColor>
-          {view.acceptance
-            ? `${view.acceptance.progress.passed}/${view.acceptance.progress.total} complete`
-            : 'no acceptance yet'}
-        </Text>
-        {criteria.map((criterion) => (
-          <Text key={criterion.id}>
-            {criterion.status === 'pass' ? <Text color="green">✓</Text> : criterion.status === 'fail' ? <Text color="red">✗</Text> : <Text dimColor>·</Text>}{' '}
-            {criterion.title.slice(0, 28)}
-          </Text>
-        ))}
-      </>
-    );
-  }
-  if (workspace === 'Knowledge') {
-    return (
-      <>
-        <Text>{knowledgeLabel(view) ?? 'No project knowledge yet'}</Text>
-        {view.knowledgeEvents.slice(-6).map((event) => (
-          <React.Fragment key={event.id}>
-            <Text>◇ {event.title.slice(0, 28)}</Text>
-            {event.authorAgentId ? <Text dimColor>  wiki-curator/{event.authorAgentId}</Text> : null}
-          </React.Fragment>
-        ))}
-      </>
-    );
-  }
-  if (workspace === 'Reports') {
-    return (
-      <>
-        {view.reports.length === 0 ? <Text dimColor>no reports yet</Text> : null}
-        {view.reports.slice(-8).map((report) => (
-          <React.Fragment key={report.id}>
-            <Text>▣ {report.title.slice(0, 28)}</Text>
-            <Text dimColor>  {report.authorAgentId ? `${report.authorRole}/${report.authorAgentId}` : report.source}</Text>
-          </React.Fragment>
-        ))}
-      </>
-    );
-  }
-  return (
-    <>
-      {view.riskGates.length === 0 ? <Text dimColor>no open gates</Text> : null}
-      {view.riskGates.slice(-6).map((gate) => (
-        <Text key={gate.id}>
-          {gate.status === 'open' ? <Text color="yellow">⚠</Text> : <Text color="green">✓</Text>} {gate.question.slice(0, 28)}
-        </Text>
-      ))}
-    </>
-  );
-}
-
-function RunDetail({
-  view,
-  nowMs,
-  selectedPhase,
-  focusPane,
-  workspace,
-  selectedTask,
-  expandedTaskId,
-}: {
-  view: RunView | null;
-  nowMs: number;
-  selectedPhase: number;
-  focusPane: FocusPane;
-  workspace: Workspace;
-  selectedTask: number;
-  expandedTaskId: string | null;
-}): React.ReactElement {
-  if (!view) return <Text dimColor>attaching…</Text>;
-  const { phaseIdx, stage, tasks } = tasksForDetail(view, selectedPhase, workspace);
-  const activity = activityForWorkspace(view, workspace);
-  const knowledge = knowledgeLabel(view);
-  return (
-    <Box flexGrow={1}>
-      <Box flexDirection="column" borderStyle="round" paddingX={1} width={34} marginRight={1}>
-        <Text bold color={focusPane === 'plan' ? 'cyan' : undefined}>
-          {focusPane === 'plan' ? '› ' : ''}
-          {workspace}
-        </Text>
-        <Text dimColor>{WORKSPACES.map((item, i) => `${i + 1}:${item === workspace ? `[${item}]` : item}`).join(' ')}</Text>
-        <WorkspacePane view={view} workspace={workspace} phaseIdx={phaseIdx} />
-      </Box>
-      <Box flexDirection="column" borderStyle="round" paddingX={1} flexGrow={1}>
-        <Text bold>{activity.title}</Text>
-        {knowledge ? <Text dimColor>{knowledge.slice(0, 82)}</Text> : null}
-        {activity.lines.length === 0 ? <Text dimColor>{workspace === 'Reports' || workspace === 'Knowledge' ? 'waiting for support agent…' : 'waiting for planner…'}</Text> : null}
-        {activity.lines.map((p, i) => (
-          <Text key={`${i}-${p.slice(0, 12)}`} dimColor>
-            {p.slice(0, 82)}
-          </Text>
-        ))}
-        <Text bold color={focusPane === 'detail' ? 'cyan' : undefined}>
-          {focusPane === 'detail' ? '› ' : ''}
-          Detail{stage != null ? ` · ${stage}` : ''} · {tasks.length} agents
-        </Text>
-        {tasks.map((t, i) => {
-          const el = t.startedAt != null ? fmtDuration((t.finishedAt ?? nowMs) - t.startedAt) : '—';
-          const selected = focusPane === 'detail' && i === selectedTask;
-          const expanded = expandedTaskId === t.id;
-          return (
-            <React.Fragment key={t.id}>
-              <Text color={selected ? 'cyan' : undefined}>
-                {selected ? '›' : ' '}
-                {taskIcon(t.status)} <Text dimColor>[{t.role}]</Text> {t.title.slice(0, 36)}
-                <Text dimColor>
-                  {'   '}
-                  {agentDisplay(t)} ·
-                  {' '}
-                  {t.tokens} tok · {t.toolCount} tools · {el}
-                </Text>
-              </Text>
-              {expanded ? (
-                <>
-                  <Text dimColor>
-                    {'   '}id: {t.id} · status: {t.status} · role: {t.role}
-                  </Text>
-                  <Text dimColor>
-                    {'   '}agent: {t.agentId ?? 'unassigned'} · tokens: {t.tokens} · tools: {t.toolCount} · time: {el}
-                  </Text>
-                  {t.agentLabel ? <Text dimColor>{'   '}instance: {t.agentLabel}</Text> : null}
-                  <Text dimColor>{'   '}title: {t.title}</Text>
-                </>
-              ) : null}
-            </React.Fragment>
-          );
-        })}
-      </Box>
+      <Composer focused={focus === 'composer'} hint={notice} onSubmit={(raw) => void onSubmit(raw)} />
     </Box>
   );
 }

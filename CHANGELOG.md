@@ -7,6 +7,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Conversational TUI redesign (opencode-style): the TUI is now a chat-style
+  console — a Composer input line (natural-language tasks, `/slash` commands,
+  inline `@agent` / `#file`, `/workflow`), a Session transcript that projects the
+  run event stream as a readable chat timeline, and an expanded Orchestration
+  sidebar (plan + agents) for the focused run.
+- `SessionStore` (`@omakase/core`, `MemorySessionStore` / `FileSessionStore`
+  under `.omakase/sessions/`): groups multiple **serial** runs into one
+  continuous conversation with a rolling-summary context bridge injected into
+  each new run. Replaces the read-only two-pane monitor model.
 - Adapter stream-conformance fixtures (`packages/daemon/tests/fixtures/`) replayed
   through the parsers, pinning argv/stream mapping per release.
 - `createCodeGraphWatcher` (`@omakase/core`): a debounced, batched driver for

@@ -531,3 +531,43 @@ describe('view-model', () => {
     ).toContain('simple');
   });
 });
+
+import { reduceTranscript } from '../src/view-model.js';
+import type { OrchestratorEvent, PlanGraphSnapshot } from '@omakase/core';
+
+function plan(n: number): PlanGraphSnapshot {
+  return {
+    tasks: Array.from({ length: n }, (_, i) => ({
+      id: `t${i}`, title: `task ${i}`, role: 'worker', status: 'pending', dependsOn: [], tags: [], attempts: 0,
+    })),
+  } as unknown as PlanGraphSnapshot;
+}
+
+describe('reduceTranscript', () => {
+  it('projects the structural milestones into a chat transcript', () => {
+    const events: OrchestratorEvent[] = [
+      { type: 'run-started', runId: 'r1', mode: 'normal', request: { prompt: 'add OAuth' } } as OrchestratorEvent,
+      { type: 'routed', decision: { kind: 'complex', reason: 'multi-file' } } as OrchestratorEvent,
+      { type: 'planned', snapshot: plan(2) } as OrchestratorEvent,
+      { type: 'agent-assigned', taskId: 't0', role: 'worker', title: 'task 0', assignment: { agentId: 'claude' }, agentLabel: 'claude' } as OrchestratorEvent,
+      { type: 'task-finished', taskId: 't0', role: 'worker', title: 'task 0', success: true } as OrchestratorEvent,
+      { type: 'review', approved: true, notes: 'lgtm' } as OrchestratorEvent,
+      { type: 'run-finished', status: 'succeeded', summary: 'done' } as OrchestratorEvent,
+    ];
+    const items = reduceTranscript(events);
+    const kinds = items.map((i) => i.kind);
+    expect(kinds).toEqual(['user-message', 'route', 'plan', 'task-progress', 'task-progress', 'review', 'finished']);
+    expect(items[0]).toEqual({ kind: 'user-message', text: 'add OAuth' });
+    expect(items[2]).toEqual({ kind: 'plan', taskCount: 2 });
+    expect(items[3]).toMatchObject({ kind: 'task-progress', status: 'started', agentLabel: 'claude' });
+    expect(items[4]).toMatchObject({ kind: 'task-progress', status: 'succeeded' });
+  });
+
+  it('ignores noisy agent stream deltas and heartbeats', () => {
+    const events: OrchestratorEvent[] = [
+      { type: 'heartbeat', at: 1 } as OrchestratorEvent,
+      { type: 'agent-event', taskId: 't0', role: 'worker', assignment: { agentId: 'claude' }, event: { type: 'text_delta', delta: 'hi' } } as OrchestratorEvent,
+    ];
+    expect(reduceTranscript(events)).toEqual([]);
+  });
+});
