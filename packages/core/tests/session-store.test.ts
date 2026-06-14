@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { MemorySessionStore, isValidSession } from '../src/session/store.js';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { FileSessionStore, MemorySessionStore, isValidSession } from '../src/session/store.js';
 
 describe('MemorySessionStore', () => {
   it('creates, appends runs, updates summary/title, lists newest-first', async () => {
@@ -38,5 +41,27 @@ describe('MemorySessionStore', () => {
     expect(isValidSession({ id: 's', runIds: [], rollingSummary: '' })).toBe(false); // missing title/timestamps
     expect(isValidSession({ id: 's', title: 't', runIds: 'x', rollingSummary: '', createdAt: 1, updatedAt: 1 })).toBe(false);
     expect(isValidSession(null)).toBe(false);
+  });
+});
+
+describe('FileSessionStore', () => {
+  it('persists and reloads a session across instances', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'oma-ses-'));
+    const a = new FileSessionStore(dir);
+    await a.create({ id: 's1', title: 't', now: 1 });
+    await a.appendRun('s1', 'run-1', 2);
+
+    const b = new FileSessionStore(dir);
+    const loaded = await b.load('s1');
+    expect(loaded?.runIds).toEqual(['run-1']);
+    expect((await b.list()).map((s) => s.id)).toEqual(['s1']);
+  });
+
+  it('returns null for a malformed file instead of throwing', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'oma-ses-'));
+    await writeFile(path.join(dir, 'bad.json'), '{ not valid', 'utf8');
+    const store = new FileSessionStore(dir);
+    expect(await store.load('bad')).toBeNull();
+    expect(await store.list()).toEqual([]); // bad file skipped, not fatal
   });
 });
