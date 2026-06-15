@@ -69,6 +69,57 @@ function baseOptions(runtime: ReturnType<typeof scriptedRuntime>, planner: Plann
   };
 }
 
+class CountingStore extends MemoryRunStore {
+  saves = 0;
+  override async save(record: RunRecord): Promise<void> {
+    this.saves += 1;
+    return super.save(record);
+  }
+}
+
+function multiEventRuntime(n: number) {
+  const exec = createScriptedAgent((input) => {
+    const role = String(input.metadata?.role ?? 'worker');
+    if (role === 'reviewer') return [{ type: 'text_delta', delta: 'APPROVE' } as AgentEvent];
+    return Array.from({ length: n }, (_, i) => ({ type: 'text_delta', delta: `d${i}` }) as AgentEvent);
+  });
+  return createAgentRuntime({ executors: { scripted: exec }, now: () => 0 });
+}
+
+describe('Orchestrator streaming flush', () => {
+  it('coalesces mid-task progress saves when streamFlushMs > 0', async () => {
+    const N = 20;
+    const opts = (store: CountingStore, streamFlushMs: number) => ({
+      runtime: multiEventRuntime(N),
+      router: complexRouter,
+      planner: new RulePlanner(),
+      policy: customPolicy,
+      store,
+      idGenerator: createIdGenerator(),
+      clock: () => 0, // constant clock → throttled run defers every streaming save
+      detectionOptions,
+      streamFlushMs,
+    });
+
+    const eager = new CountingStore();
+    const eagerRun = await new Orchestrator(opts(eager, 0)).start({ prompt: 'stream it' }).result;
+
+    const throttled = new CountingStore();
+    const throttledRun = await new Orchestrator(opts(throttled, 100_000)).start({ prompt: 'stream it' }).result;
+
+    expect(eagerRun.status).toBe('succeeded');
+    expect(throttledRun.status).toBe('succeeded');
+    // Throttling must cut the per-token write storm...
+    expect(throttled.saves).toBeLessThan(eager.saves);
+    // ...without losing any streamed events from the durable final record.
+    const rec = await throttled.load(throttledRun.id);
+    const deltas = (rec?.events ?? []).filter(
+      (e) => e.type === 'agent-event' && e.event.type === 'text_delta' && /^d\d+$/.test(e.event.delta),
+    );
+    expect(deltas).toHaveLength(N);
+  });
+});
+
 describe('Orchestrator (Ralph loop)', () => {
   it('allocates distinct run ids across fresh orchestrator instances by default', async () => {
     const store = new MemoryRunStore();

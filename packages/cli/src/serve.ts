@@ -36,6 +36,8 @@ export interface ServeConfig {
   agentOverride?: string;
   budget?: RunBudget;
   detectionOptions?: DetectionOptions;
+  /** Coalesce window (ms) for streaming progress saves; 0 = save every event. */
+  streamFlushMs?: number;
 }
 
 export interface ServeDeps {
@@ -136,6 +138,8 @@ export function createServer(config: ServeConfig, deps: ServeDeps = {}): Server 
     ...(config.budget ? { budget: config.budget } : {}),
     ...(config.detectionOptions ? { detectionOptions: config.detectionOptions } : {}),
     ...(deps.now ? { clock: deps.now } : {}),
+    // Coalesce streaming saves so live token output doesn't thrash the run file.
+    streamFlushMs: config.streamFlushMs ?? 120,
   });
   const supervisor = new Supervisor({
     orchestrator,
