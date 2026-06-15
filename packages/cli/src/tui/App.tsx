@@ -249,6 +249,7 @@ export function App(props: AppProps): React.ReactElement {
           title={sessionTitle}
           focused={focus === 'session'}
           rows={size.rows - 6}
+          streaming={view.status === 'running' ? view.activity : []}
         />
         <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>

@@ -7,6 +7,8 @@ import { App } from '../src/tui/App.js';
 import { Orchestration } from '../src/tui/Orchestration.js';
 import { Session as SessionPane } from '../src/tui/Session.js';
 import { Editor } from '../src/tui/editor/Editor.js';
+import { MarkdownView } from '../src/tui/render/MarkdownView.js';
+import { DiffView } from '../src/tui/render/DiffView.js';
 import { initialRunView, type RunView, type TranscriptItem } from '../src/view-model.js';
 import type { RunControllerClient } from '../src/run-client.js';
 
@@ -66,6 +68,45 @@ describe('Session transcript pane', () => {
   it('shows an empty-session hint when there is no transcript', () => {
     const { lastFrame } = render(<SessionPane transcript={[]} title="new" focused rows={40} />);
     expect(lastFrame() ?? '').toMatch(/type a task|empty|start/i);
+  });
+
+  it('renders a live streaming assistant block from activity', () => {
+    const { lastFrame } = render(
+      <SessionPane transcript={[]} title="s" focused rows={40} streaming={['working on **it** now']} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('assistant');
+    expect(frame).toContain('working on');
+    expect(frame).toContain('it');
+  });
+});
+
+// ── Rich rendering (markdown + diff) ────────────────────────────────
+describe('Markdown / Diff rendering', () => {
+  it('renders headings, list markers and code, and colorizes diff fences', () => {
+    const src = ['# Heading', '- item one', '```diff', '+added', '-removed', '```'].join('\n');
+    const { lastFrame } = render(
+      <Box width={60}>
+        <MarkdownView source={src} />
+      </Box>,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Heading');
+    expect(frame).toContain('• item one');
+    expect(frame).toContain('+added');
+    expect(frame).toContain('-removed');
+  });
+
+  it('renders a standalone diff', () => {
+    const { lastFrame } = render(
+      <Box width={60}>
+        <DiffView patch={'@@ -1 +1 @@\n-old\n+new'} />
+      </Box>,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('@@ -1 +1 @@');
+    expect(frame).toContain('-old');
+    expect(frame).toContain('+new');
   });
 });
 
