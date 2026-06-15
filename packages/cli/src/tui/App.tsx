@@ -17,7 +17,22 @@ import { initialRunView, type RunView, type TranscriptItem } from '../view-model
 import { parseComposerInput } from '../composer-parse.js';
 import { Session } from './Session.js';
 import { Orchestration } from './Orchestration.js';
-import { Composer } from './Composer.js';
+import { Editor } from './editor/Editor.js';
+
+const SLASH_COMMANDS = [
+  '/new',
+  '/sessions',
+  '/runs',
+  '/stop',
+  '/pause',
+  '/resume',
+  '/model',
+  '/agent',
+  '/workflow',
+  '/web',
+  '/clear',
+  '/help',
+];
 
 /** Terminal size, kept in sync on resize so the UI fills and adapts. */
 function useTerminalSize(): { columns: number; rows: number } {
@@ -74,6 +89,7 @@ export function App(props: AppProps): React.ReactElement {
   const [expanded, setExpanded] = useState(true); // sidebar expanded by default
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [notice, setNotice] = useState('');
+  const [draft, setDraft] = useState('');
 
   const tailRef = useRef<() => void>(() => {});
   // Mirror the bits onSubmit needs but that live in async closures, so the
@@ -217,6 +233,9 @@ export function App(props: AppProps): React.ReactElement {
     { isActive: isRawModeSupported },
   );
 
+  const slashHint = draft.startsWith('/')
+    ? SLASH_COMMANDS.filter((c) => c.startsWith(draft.split(/\s/)[0] ?? '')).join('  ')
+    : '';
   const daemonText = daemon?.running ? `daemon up (${daemon.pid})` : daemon ? 'daemon down' : '';
   const headerText = `omakase${daemonText ? `  ·  ${daemonText}` : ''}  ·  ${view.activeAgents}/${view.totalAgents} agents`;
   return (
@@ -233,7 +252,12 @@ export function App(props: AppProps): React.ReactElement {
         />
         <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>
-      <Composer focused={focus === 'composer'} hint={notice} onSubmit={(raw) => void onSubmit(raw)} />
+      <Editor
+        focused={focus === 'composer'}
+        hint={slashHint || notice}
+        onSubmit={(raw) => void onSubmit(raw)}
+        onChange={setDraft}
+      />
     </Box>
   );
 }

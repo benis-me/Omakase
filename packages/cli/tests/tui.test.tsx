@@ -6,7 +6,7 @@ import { MemorySessionStore } from '@omakase/core';
 import { App } from '../src/tui/App.js';
 import { Orchestration } from '../src/tui/Orchestration.js';
 import { Session as SessionPane } from '../src/tui/Session.js';
-import { Composer } from '../src/tui/Composer.js';
+import { Editor } from '../src/tui/editor/Editor.js';
 import { initialRunView, type RunView, type TranscriptItem } from '../src/view-model.js';
 import type { RunControllerClient } from '../src/run-client.js';
 
@@ -69,33 +69,57 @@ describe('Session transcript pane', () => {
   });
 });
 
-// ── Composer (Task 10) ──────────────────────────────────────────────
-describe('Composer', () => {
-  it('accumulates typed input and submits the raw line on enter', async () => {
+// ── Editor (multiline, emacs keybinds) ──────────────────────────────
+describe('Editor', () => {
+  it('accepts mid-line edits and submits the joined text on enter', async () => {
     const submitted: string[] = [];
-    // A sized parent mirrors how App hosts the Composer (avoids unsized-render
-    // layout quirks in ink-testing-library).
     const { stdin } = render(
       <Box width={80}>
-        <Composer focused onSubmit={(raw) => submitted.push(raw)} hint="" />
+        <Editor focused onSubmit={(t) => submitted.push(t)} onChange={() => {}} hint="" />
       </Box>,
     );
-    await delay(10); // let ink subscribe to stdin before typing
-    stdin.write('add OAuth');
+    await delay(10);
+    stdin.write('helo');
+    await delay(10);
+    stdin.write('[D'); // left arrow → between 'hel' and 'o'
+    await delay(10);
+    stdin.write('l'); // 'hello'
+    await delay(10);
+    stdin.write('\r'); // submit
     await delay(20);
-    stdin.write('\r');
-    await delay(20);
-    expect(submitted).toEqual(['add OAuth']); // value accumulated, then submitted
+    expect(submitted).toEqual(['hello']);
   });
 
-  it('shows a slash-command menu when the line starts with /', async () => {
-    const { stdin, lastFrame } = render(<Composer focused onSubmit={() => {}} hint="" />);
-    await delay(10); // let ink subscribe to stdin before typing
-    stdin.write('/');
+  it('inserts a newline with ctrl+j and keeps both lines on submit', async () => {
+    const submitted: string[] = [];
+    const { stdin } = render(
+      <Box width={80}>
+        <Editor focused onSubmit={(t) => submitted.push(t)} onChange={() => {}} hint="" />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('line1');
+    await delay(10);
+    stdin.write('\n'); // ctrl+j → newline (not submit)
+    await delay(10);
+    stdin.write('line2');
+    await delay(10);
+    stdin.write('\r'); // submit
     await delay(20);
-    const frame = lastFrame() ?? '';
-    expect(frame).toMatch(/\/stop/);
-    expect(frame).toMatch(/\/workflow/);
+    expect(submitted).toEqual(['line1\nline2']);
+  });
+
+  it('reports the current text via onChange', async () => {
+    const changes: string[] = [];
+    const { stdin } = render(
+      <Box width={80}>
+        <Editor focused onSubmit={() => {}} onChange={(t) => changes.push(t)} hint="" />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('/');
+    await delay(10);
+    expect(changes.at(-1)).toBe('/');
   });
 });
 
