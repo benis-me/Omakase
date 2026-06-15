@@ -7,8 +7,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- opencode-grade TUI interaction (on top of the conversational redesign): a real
+  multiline editor with emacs/readline keybinds (ctrl+a/e/k/u/w, cursor + multi
+  line, ctrl+j newline), markdown + diff rendering, **live token streaming** in
+  the transcript (backed by a debounced `streamFlushMs` checkpoint so long runs
+  don't thrash the run file), a fuzzy command palette (ctrl+p), a leader-key
+  system (ctrl+x) with session/model/agent selectors, a status bar, and
+  scrollable history (pageup/pagedown, g/G, esc-to-interrupt).
 - Conversational TUI redesign (opencode-style): the TUI is now a chat-style
-  console — a Composer input line (natural-language tasks, `/slash` commands,
+  console — an input line (natural-language tasks, `/slash` commands,
   inline `@agent` / `#file`, `/workflow`), a Session transcript that projects the
   run event stream as a readable chat timeline, and an expanded Orchestration
   sidebar (plan + agents) for the focused run.
