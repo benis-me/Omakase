@@ -10,6 +10,8 @@ import { Editor } from '../src/tui/editor/Editor.js';
 import { MarkdownView } from '../src/tui/render/MarkdownView.js';
 import { DiffView } from '../src/tui/render/DiffView.js';
 import { Overlay, type OverlayItem } from '../src/tui/overlay/Overlay.js';
+import { StatusBar } from '../src/tui/StatusBar.js';
+import type { DetectedAgent } from '@omakase/daemon';
 import { initialRunView, type RunView, type TranscriptItem } from '../src/view-model.js';
 import type { RunControllerClient } from '../src/run-client.js';
 
@@ -267,6 +269,49 @@ describe('TUI App (conversational shell)', () => {
     );
     await delay(40);
     expect(lastFrame() ?? '').toMatch(/daemon up \(4242\)/);
+  });
+
+  it('renders a status bar with session, agent and daemon', () => {
+    const { lastFrame } = render(
+      <StatusBar session="redesign" agent="codex" mode="normal" daemon="daemon up (7)" activeAgents={2} totalAgents={3} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('session redesign');
+    expect(frame).toContain('agent codex');
+    expect(frame).toContain('daemon up (7)');
+    expect(frame).toContain('2/3 agents');
+  });
+
+  it('opens the sessions selector via the leader key (ctrl+x l)', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+x (leader)
+    await delay(15);
+    stdin.write('l'); // → sessions
+    await delay(20);
+    expect(lastFrame() ?? '').toContain('sessions');
+  });
+
+  it('selects a main agent via the leader key (ctrl+x a)', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const detect = async (): Promise<DetectedAgent[]> =>
+      [{ id: 'codex', available: true, authStatus: 'ok' }] as unknown as DetectedAgent[];
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} detect={detect} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+x
+    await delay(15);
+    stdin.write('a'); // → main agent selector
+    await delay(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('main agent');
+    expect(frame).toContain('codex');
   });
 
   it('opens the command palette on ctrl+p', async () => {
