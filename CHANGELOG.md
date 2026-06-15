@@ -7,13 +7,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- opencode-grade TUI interaction (on top of the conversational redesign): a real
-  multiline editor with emacs/readline keybinds (ctrl+a/e/k/u/w, cursor + multi
-  line, ctrl+j newline), markdown + diff rendering, **live token streaming** in
-  the transcript (backed by a debounced `streamFlushMs` checkpoint so long runs
-  don't thrash the run file), a fuzzy command palette (ctrl+p), a leader-key
-  system (ctrl+x) with session/model/agent selectors, a status bar, and
-  scrollable history (pageup/pagedown, g/G, esc-to-interrupt).
+- **TUI rebuilt on OpenTUI, run under Bun** (replacing Ink). opencode itself
+  uses OpenTUI — a Zig+TypeScript TUI framework built to escape Ink's limits
+  (the same limits behind input bugs like a non-deleting Backspace). The TUI now
+  renders with native OpenTUI primitives: `<textarea>` (a real multiline editor
+  with correct keybindings), `<markdown>`/`<diff>`, `<select>`, `<scrollbox>`.
+  `omakase tui` (Node) ensures the daemon and submits the task, then spawns the
+  app under `bun --conditions=development` (importing workspace source live, no
+  build). The framework-agnostic data layer (`RunControllerClient`,
+  `SessionStore`, `reduceTranscript`, `parseComposerInput`, fuzzy, leader) is
+  reused; a Bun smoke (`pnpm --filter @omakase/cli test:tui`) renders the real
+  app via OpenTUI's `testRender`. Requires Bun (https://bun.sh).
+- Live token streaming in the transcript, backed by a debounced `streamFlushMs`
+  checkpoint so long runs don't thrash the run file.
+- A fuzzy command palette (ctrl+p), a leader-key system (ctrl+x) with
+  session/model/agent selectors, a status bar, and scrollable history.
 - Conversational TUI redesign (opencode-style): the TUI is now a chat-style
   console — an input line (natural-language tasks, `/slash` commands,
   inline `@agent` / `#file`, `/workflow`), a Session transcript that projects the

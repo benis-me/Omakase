@@ -40,25 +40,27 @@ where the edges are and what would deepen each layer.
 - `omakase run` uses real installed agents by default (it will spend real model
   calls). Pass `--offline` (or `--agent builtin`) to force the built-in agent
   and run with no model calls.
-- The TUI is a conversational console (opencode-style). A **session** groups
-  multiple **serial** runs into one continuous conversation, with a
-  rolling-summary context bridge carried into each new run. The editor is a real
-  multiline buffer with emacs/readline keybinds (ctrl+a/e/k/u/w, cursor, ctrl+j
-  newline) and accepts natural-language tasks (routed by the router-agent),
-  `/slash` commands, inline `@agent` overrides and `#file` references. The left
-  pane renders the run event stream as a chat transcript with markdown + diff
-  rendering and **live token streaming**; the right sidebar (expanded by default,
-  `[o]` collapse, `Tab` focus) shows the focused run's plan + agents.
-  A fuzzy **command palette** (`ctrl+p`) and a **leader key** (`ctrl+x`) drive
-  session/model/agent selectors; the transcript scrolls (pageup/pagedown, `g`/`G`)
-  and `esc` interrupts the active run. Quitting never cancels a run — the daemon
-  owns it; relaunching re-attaches, and only `/stop` (or `esc`) cancels.
-  Streaming saves are coalesced by the daemon's `streamFlushMs` window so live
-  output doesn't thrash the run file.
+- The TUI is a conversational console built on **OpenTUI** (the same framework
+  opencode uses) and **runs under Bun** — `omakase tui` (Node) ensures the daemon
+  and submits the task, then spawns the app under `bun --conditions=development`.
+  **Bun must be installed** (https://bun.sh). A **session** groups multiple
+  **serial** runs into one continuous conversation with a rolling-summary context
+  bridge. The composer is a native multiline `<textarea>` (correct keybindings:
+  cursor, Backspace, ctrl+j newline) accepting natural-language tasks (routed by
+  the router-agent), `/slash` commands, inline `@agent`/`#file`. The left pane
+  renders the run event stream as a chat transcript (native `<markdown>`/`<diff>`)
+  with **live token streaming**; the right sidebar shows the focused run's plan +
+  agents. A fuzzy **command palette** (`ctrl+p`) and a **leader key** (`ctrl+x`)
+  drive session/model/agent selectors (native `<select>`); the transcript is a
+  `<scrollbox>` and `esc` interrupts the active run. Quitting never cancels a
+  run — the daemon owns it; relaunching re-attaches, and only `/stop`/`esc`
+  cancels. Streaming saves are coalesced by the daemon's `streamFlushMs` window.
+- The OpenTUI view layer is smoke-tested under Bun (`test:tui`, OpenTUI
+  `testRender`); the framework-agnostic logic (composer parse, transcript
+  projection, fuzzy, leader, session store) keeps full Node/vitest unit coverage.
 
-  Known TUI follow-ups: `@`-fuzzy file finder and `!`-shell prefix need editor-
-  buffer integration; colour themes and an external-`$EDITOR` handoff are not yet
-  wired.
+  Known TUI follow-ups: `@`-fuzzy file finder and `!`-shell prefix; colour themes
+  and an external-`$EDITOR` handoff are not yet wired.
 
 ## Planned enhancements
 
