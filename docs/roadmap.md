@@ -42,14 +42,23 @@ where the edges are and what would deepen each layer.
   and run with no model calls.
 - The TUI is a conversational console (opencode-style). A **session** groups
   multiple **serial** runs into one continuous conversation, with a
-  rolling-summary context bridge carried into each new run. The Composer accepts
-  natural-language tasks (routed by the router-agent), `/slash` commands
-  (`/stop` `/pause` `/resume` `/new` `/web` `/agent` `/model` `/workflow` …),
-  inline `@agent` overrides and `#file` references. The left pane renders the run
-  event stream as a chat transcript; the right sidebar (expanded by default,
-  `[o]` to collapse, `Tab` to switch focus) shows the focused run's plan +
-  agents. Quitting never cancels a run — the daemon owns it; relaunching
-  re-attaches, and only `/stop` cancels.
+  rolling-summary context bridge carried into each new run. The editor is a real
+  multiline buffer with emacs/readline keybinds (ctrl+a/e/k/u/w, cursor, ctrl+j
+  newline) and accepts natural-language tasks (routed by the router-agent),
+  `/slash` commands, inline `@agent` overrides and `#file` references. The left
+  pane renders the run event stream as a chat transcript with markdown + diff
+  rendering and **live token streaming**; the right sidebar (expanded by default,
+  `[o]` collapse, `Tab` focus) shows the focused run's plan + agents.
+  A fuzzy **command palette** (`ctrl+p`) and a **leader key** (`ctrl+x`) drive
+  session/model/agent selectors; the transcript scrolls (pageup/pagedown, `g`/`G`)
+  and `esc` interrupts the active run. Quitting never cancels a run — the daemon
+  owns it; relaunching re-attaches, and only `/stop` (or `esc`) cancels.
+  Streaming saves are coalesced by the daemon's `streamFlushMs` window so live
+  output doesn't thrash the run file.
+
+  Known TUI follow-ups: `@`-fuzzy file finder and `!`-shell prefix need editor-
+  buffer integration; colour themes and an external-`$EDITOR` handoff are not yet
+  wired.
 
 ## Planned enhancements
 

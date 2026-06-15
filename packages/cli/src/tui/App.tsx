@@ -17,7 +17,25 @@ import { initialRunView, type RunView, type TranscriptItem } from '../view-model
 import { parseComposerInput } from '../composer-parse.js';
 import { Session } from './Session.js';
 import { Orchestration } from './Orchestration.js';
-import { Composer } from './Composer.js';
+import { Editor } from './editor/Editor.js';
+import { Overlay, type OverlayItem } from './overlay/Overlay.js';
+import { StatusBar } from './StatusBar.js';
+import { resolveLeader, LEADER_HINT, LEADER_TIMEOUT_MS, type LeaderAction } from './leader.js';
+
+const SLASH_COMMANDS = [
+  '/new',
+  '/sessions',
+  '/runs',
+  '/stop',
+  '/pause',
+  '/resume',
+  '/model',
+  '/agent',
+  '/workflow',
+  '/web',
+  '/clear',
+  '/help',
+];
 
 /** Terminal size, kept in sync on resize so the UI fills and adapts. */
 function useTerminalSize(): { columns: number; rows: number } {
@@ -58,6 +76,7 @@ export interface AppProps {
 }
 
 type Focus = 'session' | 'sidebar' | 'composer';
+type OverlayKind = 'commands' | 'sessions' | 'model' | 'agent';
 
 export function App(props: AppProps): React.ReactElement {
   const now = props.now ?? (() => Date.now());
@@ -74,6 +93,14 @@ export function App(props: AppProps): React.ReactElement {
   const [expanded, setExpanded] = useState(true); // sidebar expanded by default
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [notice, setNotice] = useState('');
+  const [draft, setDraft] = useState('');
+  const [scroll, setScroll] = useState(0);
+  const [overlay, setOverlay] = useState<OverlayKind | null>(null);
+  const [leaderArmed, setLeaderArmed] = useState(false);
+  const [mainAgent, setMainAgent] = useState<string | null>(null);
+  const [agents, setAgents] = useState<DetectedAgent[]>([]);
+  const [sessionList, setSessionList] = useState<OverlayItem[]>([]);
+  const leaderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tailRef = useRef<() => void>(() => {});
   // Mirror the bits onSubmit needs but that live in async closures, so the
@@ -116,6 +143,18 @@ export function App(props: AppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── detected agents (for the model/agent selectors) ────────────────
+  useEffect(() => {
+    if (!props.detect) return;
+    let live = true;
+    void props.detect().then((list) => {
+      if (live) setAgents(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, [props.detect]);
+
   // ── daemon status poll ─────────────────────────────────────────────
   useEffect(() => {
     if (!props.daemonStatus) return;
@@ -152,7 +191,12 @@ export function App(props: AppProps): React.ReactElement {
     const taskIntent =
       intent.kind === 'workflow'
         ? { prompt: intent.source, files: [] as string[] }
-        : { prompt: intent.prompt, agentOverride: intent.agentOverride, files: intent.files };
+        : {
+            prompt: intent.prompt,
+            // An inline @agent wins; otherwise the selected main agent applies.
+            agentOverride: intent.agentOverride ?? mainAgent ?? undefined,
+            files: intent.files,
+          };
     setNotice(intent.kind === 'workflow' ? 'running workflow' : 'submitted — waiting for the daemon');
     const token = await props.client.submitToSession({ rollingSummary }, taskIntent);
     const created = await props.client.resolveRunId(token);
@@ -203,11 +247,90 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
+  function disarmLeader(): void {
+    if (leaderTimer.current) clearTimeout(leaderTimer.current);
+    leaderTimer.current = null;
+    setLeaderArmed(false);
+  }
+
+  async function openOverlay(kind: OverlayKind): Promise<void> {
+    if (kind === 'sessions') {
+      const list = await props.sessions.list();
+      setSessionList(list.map((s) => ({ id: s.id, label: s.title, hint: `${s.runIds.length} runs` })));
+    }
+    setOverlay(kind);
+  }
+
+  function dispatchLeader(action: LeaderAction): void {
+    switch (action) {
+      case 'sessions':
+        void openOverlay('sessions');
+        break;
+      case 'model':
+        void openOverlay('model');
+        break;
+      case 'agent':
+        void openOverlay('agent');
+        break;
+      case 'new-session':
+        void handleCommand('new', '');
+        break;
+      case 'stop':
+        void handleCommand('stop', '');
+        break;
+      case 'web':
+        void handleCommand('web', '');
+        break;
+      case 'help':
+        setNotice(LEADER_HINT);
+        break;
+      case 'sidebar':
+        setExpanded((e) => !e);
+        break;
+      case 'quit':
+        exit();
+        break;
+    }
+  }
+
   useInput(
     (input, key) => {
+      if (overlay) return; // the overlay owns input while open
+      if (leaderArmed) {
+        disarmLeader();
+        const action = resolveLeader(input);
+        if (action) dispatchLeader(action);
+        return;
+      }
+      if (key.ctrl && input === 'x') {
+        // Arm the leader; the next key resolves to an action (or times out).
+        setLeaderArmed(true);
+        if (leaderTimer.current) clearTimeout(leaderTimer.current);
+        leaderTimer.current = setTimeout(() => setLeaderArmed(false), LEADER_TIMEOUT_MS);
+        leaderTimer.current.unref?.();
+        return;
+      }
+      if (key.ctrl && input === 'p') {
+        void openOverlay('commands');
+        return;
+      }
       if (key.tab) {
         setFocus((f) => (f === 'session' ? 'sidebar' : f === 'sidebar' ? 'composer' : 'session'));
         return;
+      }
+      if (key.escape && activeRunId && (view.status === 'running' || view.status === 'paused')) {
+        void handleCommand('stop', ''); // opencode: esc interrupts the active run
+        return;
+      }
+      if (focus === 'session') {
+        const page = Math.max(4, size.rows - 8);
+        const max = transcript.length;
+        if (key.upArrow || input === 'k') setScroll((s) => Math.min(max, s + 1));
+        else if (key.downArrow || input === 'j') setScroll((s) => Math.max(0, s - 1));
+        else if (key.pageUp) setScroll((s) => Math.min(max, s + page));
+        else if (key.pageDown) setScroll((s) => Math.max(0, s - page));
+        else if (input === 'g') setScroll(max); // top
+        else if (input === 'G') setScroll(0); // bottom (follow)
       }
       if (focus !== 'composer') {
         if (input === 'o') setExpanded((e) => !e);
@@ -217,23 +340,94 @@ export function App(props: AppProps): React.ReactElement {
     { isActive: isRawModeSupported },
   );
 
+  const overlayItems: OverlayItem[] =
+    overlay === 'commands'
+      ? SLASH_COMMANDS.map((c) => ({ id: c, label: c }))
+      : overlay === 'sessions'
+        ? sessionList
+        : overlay === 'model' || overlay === 'agent'
+          ? [
+              { id: '__auto__', label: 'auto', hint: 'let the router pick' },
+              ...agents
+                .filter((a) => a.available)
+                .map((a) => ({ id: a.id, label: a.id, hint: a.authStatus === 'ok' ? 'ready' : a.authStatus })),
+            ]
+          : [];
+
+  function pickOverlay(item: OverlayItem): void {
+    const kind = overlay;
+    setOverlay(null);
+    if (kind === 'commands') {
+      void handleCommand(item.label.replace(/^\//, ''), '');
+    } else if (kind === 'sessions') {
+      void switchSession(item.id);
+    } else if (kind === 'model' || kind === 'agent') {
+      setMainAgent(item.id === '__auto__' ? null : item.id);
+      setNotice(`main agent: ${item.id === '__auto__' ? 'auto' : item.id}`);
+    }
+  }
+
+  async function switchSession(id: string): Promise<void> {
+    const session = await props.sessions.load(id);
+    if (!session) return;
+    tailRef.current();
+    setActiveRunId(null);
+    setTranscript([]);
+    setView(initialRunView(props.mode));
+    setSessionId(session.id);
+    setSessionTitle(session.title);
+    const latest = session.runIds.at(-1);
+    if (latest) attachRun(latest);
+  }
+
+  const slashHint = draft.startsWith('/')
+    ? SLASH_COMMANDS.filter((c) => c.startsWith(draft.split(/\s/)[0] ?? '')).join('  ')
+    : '';
   const daemonText = daemon?.running ? `daemon up (${daemon.pid})` : daemon ? 'daemon down' : '';
-  const headerText = `omakase${daemonText ? `  ·  ${daemonText}` : ''}  ·  ${view.activeAgents}/${view.totalAgents} agents`;
+  const overlayTitle =
+    overlay === 'commands'
+      ? 'commands  (↑↓ · enter · esc)'
+      : overlay === 'sessions'
+        ? 'sessions  (↑↓ · enter switch · esc)'
+        : 'main agent  (↑↓ · enter select · esc)';
+  const footer = leaderArmed ? LEADER_HINT : slashHint ? `${slashHint}   ·  ctrl+p palette` : notice || 'ctrl+x leader · ctrl+p palette';
   return (
     <Box flexDirection="column" width={size.columns} height={size.rows}>
-      <Box paddingX={1}>
-        <Text>{headerText}</Text>
-      </Box>
+      <StatusBar
+        session={sessionTitle}
+        agent={mainAgent ?? 'auto'}
+        mode={props.mode}
+        daemon={daemonText}
+        activeAgents={view.activeAgents}
+        totalAgents={view.totalAgents}
+      />
       <Box flexGrow={1}>
         <Session
           transcript={transcript}
           title={sessionTitle}
           focused={focus === 'session'}
           rows={size.rows - 6}
+          streaming={view.status === 'running' ? view.activity : []}
+          scroll={scroll}
         />
         <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>
-      <Composer focused={focus === 'composer'} hint={notice} onSubmit={(raw) => void onSubmit(raw)} />
+      {overlay ? (
+        <Overlay
+          title={overlayTitle}
+          items={overlayItems}
+          active={overlay !== null}
+          onPick={pickOverlay}
+          onClose={() => setOverlay(null)}
+        />
+      ) : (
+        <Editor
+          focused={focus === 'composer'}
+          hint={footer}
+          onSubmit={(raw) => void onSubmit(raw)}
+          onChange={setDraft}
+        />
+      )}
     </Box>
   );
 }

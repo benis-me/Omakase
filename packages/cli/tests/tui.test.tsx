@@ -6,7 +6,12 @@ import { MemorySessionStore } from '@omakase/core';
 import { App } from '../src/tui/App.js';
 import { Orchestration } from '../src/tui/Orchestration.js';
 import { Session as SessionPane } from '../src/tui/Session.js';
-import { Composer } from '../src/tui/Composer.js';
+import { Editor } from '../src/tui/editor/Editor.js';
+import { MarkdownView } from '../src/tui/render/MarkdownView.js';
+import { DiffView } from '../src/tui/render/DiffView.js';
+import { Overlay, type OverlayItem } from '../src/tui/overlay/Overlay.js';
+import { StatusBar } from '../src/tui/StatusBar.js';
+import type { DetectedAgent } from '@omakase/daemon';
 import { initialRunView, type RunView, type TranscriptItem } from '../src/view-model.js';
 import type { RunControllerClient } from '../src/run-client.js';
 
@@ -67,35 +72,148 @@ describe('Session transcript pane', () => {
     const { lastFrame } = render(<SessionPane transcript={[]} title="new" focused rows={40} />);
     expect(lastFrame() ?? '').toMatch(/type a task|empty|start/i);
   });
-});
 
-// ── Composer (Task 10) ──────────────────────────────────────────────
-describe('Composer', () => {
-  it('accumulates typed input and submits the raw line on enter', async () => {
-    const submitted: string[] = [];
-    // A sized parent mirrors how App hosts the Composer (avoids unsized-render
-    // layout quirks in ink-testing-library).
-    const { stdin } = render(
-      <Box width={80}>
-        <Composer focused onSubmit={(raw) => submitted.push(raw)} hint="" />
-      </Box>,
-    );
-    await delay(10); // let ink subscribe to stdin before typing
-    stdin.write('add OAuth');
-    await delay(20);
-    stdin.write('\r');
-    await delay(20);
-    expect(submitted).toEqual(['add OAuth']); // value accumulated, then submitted
+  it('scrolls up to reveal older transcript items', () => {
+    const many: TranscriptItem[] = Array.from({ length: 30 }, (_, i) => ({
+      kind: 'user-message',
+      text: `msg-${i}`,
+    }));
+    const bottom = render(<SessionPane transcript={many} title="s" focused rows={10} />);
+    expect(bottom.lastFrame() ?? '').toContain('msg-29'); // newest visible at the bottom
+    const scrolled = render(<SessionPane transcript={many} title="s" focused rows={10} scroll={20} />);
+    const frame = scrolled.lastFrame() ?? '';
+    expect(frame).toContain('older'); // scroll indicator
+    expect(frame).not.toContain('msg-29'); // scrolled away from the newest
   });
 
-  it('shows a slash-command menu when the line starts with /', async () => {
-    const { stdin, lastFrame } = render(<Composer focused onSubmit={() => {}} hint="" />);
-    await delay(10); // let ink subscribe to stdin before typing
-    stdin.write('/');
-    await delay(20);
+  it('renders a live streaming assistant block from activity', () => {
+    const { lastFrame } = render(
+      <SessionPane transcript={[]} title="s" focused rows={40} streaming={['working on **it** now']} />,
+    );
     const frame = lastFrame() ?? '';
-    expect(frame).toMatch(/\/stop/);
-    expect(frame).toMatch(/\/workflow/);
+    expect(frame).toContain('assistant');
+    expect(frame).toContain('working on');
+    expect(frame).toContain('it');
+  });
+});
+
+// ── Rich rendering (markdown + diff) ────────────────────────────────
+describe('Markdown / Diff rendering', () => {
+  it('renders headings, list markers and code, and colorizes diff fences', () => {
+    const src = ['# Heading', '- item one', '```diff', '+added', '-removed', '```'].join('\n');
+    const { lastFrame } = render(
+      <Box width={60}>
+        <MarkdownView source={src} />
+      </Box>,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Heading');
+    expect(frame).toContain('• item one');
+    expect(frame).toContain('+added');
+    expect(frame).toContain('-removed');
+  });
+
+  it('renders a standalone diff', () => {
+    const { lastFrame } = render(
+      <Box width={60}>
+        <DiffView patch={'@@ -1 +1 @@\n-old\n+new'} />
+      </Box>,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('@@ -1 +1 @@');
+    expect(frame).toContain('-old');
+    expect(frame).toContain('+new');
+  });
+});
+
+// ── Editor (multiline, emacs keybinds) ──────────────────────────────
+describe('Editor', () => {
+  it('accepts mid-line edits and submits the joined text on enter', async () => {
+    const submitted: string[] = [];
+    const { stdin } = render(
+      <Box width={80}>
+        <Editor focused onSubmit={(t) => submitted.push(t)} onChange={() => {}} hint="" />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('helo');
+    await delay(10);
+    stdin.write('[D'); // left arrow → between 'hel' and 'o'
+    await delay(10);
+    stdin.write('l'); // 'hello'
+    await delay(10);
+    stdin.write('\r'); // submit
+    await delay(20);
+    expect(submitted).toEqual(['hello']);
+  });
+
+  it('inserts a newline with ctrl+j and keeps both lines on submit', async () => {
+    const submitted: string[] = [];
+    const { stdin } = render(
+      <Box width={80}>
+        <Editor focused onSubmit={(t) => submitted.push(t)} onChange={() => {}} hint="" />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('line1');
+    await delay(10);
+    stdin.write('\n'); // ctrl+j → newline (not submit)
+    await delay(10);
+    stdin.write('line2');
+    await delay(10);
+    stdin.write('\r'); // submit
+    await delay(20);
+    expect(submitted).toEqual(['line1\nline2']);
+  });
+
+  it('reports the current text via onChange', async () => {
+    const changes: string[] = [];
+    const { stdin } = render(
+      <Box width={80}>
+        <Editor focused onSubmit={() => {}} onChange={(t) => changes.push(t)} hint="" />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('/');
+    await delay(10);
+    expect(changes.at(-1)).toBe('/');
+  });
+});
+
+// ── Overlay (fuzzy select) ──────────────────────────────────────────
+describe('Overlay', () => {
+  it('filters by fuzzy query and picks the selected item on enter', async () => {
+    const items: OverlayItem[] = [
+      { id: '/new', label: '/new' },
+      { id: '/stop', label: '/stop' },
+      { id: '/workflow', label: '/workflow' },
+    ];
+    const picked: string[] = [];
+    const { stdin, lastFrame } = render(
+      <Box width={60}>
+        <Overlay title="commands" items={items} active onPick={(i) => picked.push(i.id)} onClose={() => {}} />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('wf'); // fuzzy → /workflow
+    await delay(15);
+    expect(lastFrame() ?? '').toContain('/workflow');
+    stdin.write('\r');
+    await delay(15);
+    expect(picked).toEqual(['/workflow']);
+  });
+
+  it('closes on escape', async () => {
+    let closed = false;
+    const { stdin } = render(
+      <Box width={60}>
+        <Overlay title="t" items={[{ id: 'a', label: 'a' }]} active onPick={() => {}} onClose={() => { closed = true; }} />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write(''); // escape
+    await delay(15);
+    expect(closed).toBe(true);
   });
 });
 
@@ -164,6 +282,63 @@ describe('TUI App (conversational shell)', () => {
     );
     await delay(40);
     expect(lastFrame() ?? '').toMatch(/daemon up \(4242\)/);
+  });
+
+  it('renders a status bar with session, agent and daemon', () => {
+    const { lastFrame } = render(
+      <StatusBar session="redesign" agent="codex" mode="normal" daemon="daemon up (7)" activeAgents={2} totalAgents={3} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('session redesign');
+    expect(frame).toContain('agent codex');
+    expect(frame).toContain('daemon up (7)');
+    expect(frame).toContain('2/3 agents');
+  });
+
+  it('opens the sessions selector via the leader key (ctrl+x l)', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+x (leader)
+    await delay(15);
+    stdin.write('l'); // → sessions
+    await delay(20);
+    expect(lastFrame() ?? '').toContain('sessions');
+  });
+
+  it('selects a main agent via the leader key (ctrl+x a)', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const detect = async (): Promise<DetectedAgent[]> =>
+      [{ id: 'codex', available: true, authStatus: 'ok' }] as unknown as DetectedAgent[];
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} detect={detect} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+x
+    await delay(15);
+    stdin.write('a'); // → main agent selector
+    await delay(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('main agent');
+    expect(frame).toContain('codex');
+  });
+
+  it('opens the command palette on ctrl+p', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+p
+    await delay(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('commands');
+    expect(frame).toContain('/workflow');
   });
 
   it('quitting does NOT stop a run, but /stop does', async () => {

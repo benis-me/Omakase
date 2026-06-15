@@ -6,6 +6,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { TranscriptItem } from '../view-model.js';
+import { MarkdownView } from './render/MarkdownView.js';
 
 function line(item: TranscriptItem): React.ReactElement {
   switch (item.kind) {
@@ -55,9 +56,21 @@ export function Session(props: {
   title: string;
   focused: boolean;
   rows: number;
+  /** Live agent prose (RunView.activity tail) rendered as a streaming message. */
+  streaming?: string[];
+  /** Lines scrolled up from the bottom; 0 follows the newest output. */
+  scroll?: number;
 }): React.ReactElement {
-  const { transcript, title, focused, rows } = props;
-  const visible = transcript.slice(-Math.max(4, rows - 2));
+  const { transcript, title, focused, rows, streaming = [], scroll = 0 } = props;
+  const budget = Math.max(4, rows - 2);
+  const atBottom = scroll <= 0;
+  // When scrolled up we show history (no live stream block); at the bottom we
+  // pin the streaming block under the newest transcript items.
+  const stream = atBottom ? streaming.slice(-6) : [];
+  const end = Math.max(1, transcript.length - Math.max(0, scroll));
+  const windowSize = Math.max(2, budget - stream.length);
+  const start = Math.max(0, end - windowSize);
+  const visible = transcript.slice(start, end);
   return (
     <Box
       flexDirection="column"
@@ -66,11 +79,20 @@ export function Session(props: {
       borderColor={focused ? 'cyan' : 'gray'}
       paddingX={1}
     >
-      <Text bold>session · {title}</Text>
-      {visible.length === 0 ? (
+      <Text bold>
+        session · {title}
+        {!atBottom ? <Text dimColor> — ↑{scroll} older (↓/end to follow)</Text> : null}
+      </Text>
+      {visible.length === 0 && stream.length === 0 ? (
         <Text dimColor>type a task below to start — router will plan and dispatch agents</Text>
       ) : (
         visible.map((item, i) => <Box key={i}>{line(item)}</Box>)
+      )}
+      {stream.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="magenta">▌ assistant</Text>
+          <MarkdownView source={stream.join('\n')} />
+        </Box>
       )}
     </Box>
   );

@@ -110,6 +110,13 @@ export interface OrchestratorOptions {
   codegraph?: CodeGraph;
   idGenerator?: IdGenerator;
   clock?: () => number;
+  /**
+   * Coalesce mid-task progress checkpoints (the per-agent-event saves that drive
+   * live streaming in file-backed clients) to at most one per this many ms. `0`
+   * (default) saves on every event — exact, but a write storm for long real
+   * runs. The daemon sets ~120ms so streaming stays smooth without thrashing disk.
+   */
+  streamFlushMs?: number;
   detectionOptions?: DetectionOptions;
   maxIterations?: number;
   maxAttemptsPerTask?: number;
@@ -362,6 +369,10 @@ class RunController implements RunHandle {
   private pauseGate: Deferred | null = null;
   private readonly activeAborts = new Set<AbortController>();
   private checkpointSeq = 0;
+  private readonly streamFlushMs: number;
+  private progressDirty = false;
+  private progressTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastProgressFlush = 0;
   private readonly createdAt: number;
   private readonly resuming: boolean;
   private readonly control: ControlSource | undefined;
@@ -407,6 +418,7 @@ class RunController implements RunHandle {
     this.codegraph = options.codegraph;
     this.knowledgeStore = options.knowledgeStore;
     this.clock = options.clock ?? (() => Date.now());
+    this.streamFlushMs = Math.max(0, options.streamFlushMs ?? 0);
     this.detectionOptions = options.detectionOptions;
     this.maxIterations = options.maxIterations ?? 50;
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
@@ -1648,6 +1660,10 @@ class RunController implements RunHandle {
       return this.buildResult('failed', message);
     } finally {
       this.controlDisposer?.();
+      if (this.progressTimer) {
+        clearTimeout(this.progressTimer);
+        this.progressTimer = null;
+      }
       this.stream.end();
     }
   }
@@ -2051,6 +2067,34 @@ class RunController implements RunHandle {
     if (this.finished) return;
     this.checkpointSeq += 1;
     this.emit({ type: 'heartbeat', at: this.clock() });
+    if (this.streamFlushMs <= 0) {
+      await this.saveProgress();
+      return;
+    }
+    // Throttle: stream events fire faster than disk should be written. Save now
+    // if a flush window has elapsed; otherwise mark dirty and let a trailing
+    // timer flush the latest state, so the client still sees live streaming.
+    this.progressDirty = true;
+    const now = this.clock();
+    if (now - this.lastProgressFlush >= this.streamFlushMs) {
+      await this.flushProgress();
+    } else if (!this.progressTimer) {
+      this.progressTimer = setTimeout(() => {
+        this.progressTimer = null;
+        void this.flushProgress();
+      }, this.streamFlushMs);
+      this.progressTimer.unref?.();
+    }
+  }
+
+  private async flushProgress(): Promise<void> {
+    if (!this.progressDirty || this.finished) return;
+    this.progressDirty = false;
+    this.lastProgressFlush = this.clock();
+    await this.saveProgress();
+  }
+
+  private async saveProgress(): Promise<void> {
     const status = this.status === 'waiting-for-user' ? 'waiting-for-user' : 'running';
     await this.store.save(this.buildRecord(status, this.computeSummary(status))).catch(() => undefined);
   }
