@@ -94,6 +94,7 @@ export function App(props: AppProps): React.ReactElement {
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState('');
+  const [scroll, setScroll] = useState(0);
   const [overlay, setOverlay] = useState<OverlayKind | null>(null);
   const [leaderArmed, setLeaderArmed] = useState(false);
   const [mainAgent, setMainAgent] = useState<string | null>(null);
@@ -321,6 +322,16 @@ export function App(props: AppProps): React.ReactElement {
         void handleCommand('stop', ''); // opencode: esc interrupts the active run
         return;
       }
+      if (focus === 'session') {
+        const page = Math.max(4, size.rows - 8);
+        const max = transcript.length;
+        if (key.upArrow || input === 'k') setScroll((s) => Math.min(max, s + 1));
+        else if (key.downArrow || input === 'j') setScroll((s) => Math.max(0, s - 1));
+        else if (key.pageUp) setScroll((s) => Math.min(max, s + page));
+        else if (key.pageDown) setScroll((s) => Math.max(0, s - page));
+        else if (input === 'g') setScroll(max); // top
+        else if (input === 'G') setScroll(0); // bottom (follow)
+      }
       if (focus !== 'composer') {
         if (input === 'o') setExpanded((e) => !e);
         if (input === 'q') exit(); // quit never cancels runs
@@ -397,6 +408,7 @@ export function App(props: AppProps): React.ReactElement {
           focused={focus === 'session'}
           rows={size.rows - 6}
           streaming={view.status === 'running' ? view.activity : []}
+          scroll={scroll}
         />
         <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>

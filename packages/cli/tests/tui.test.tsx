@@ -73,6 +73,19 @@ describe('Session transcript pane', () => {
     expect(lastFrame() ?? '').toMatch(/type a task|empty|start/i);
   });
 
+  it('scrolls up to reveal older transcript items', () => {
+    const many: TranscriptItem[] = Array.from({ length: 30 }, (_, i) => ({
+      kind: 'user-message',
+      text: `msg-${i}`,
+    }));
+    const bottom = render(<SessionPane transcript={many} title="s" focused rows={10} />);
+    expect(bottom.lastFrame() ?? '').toContain('msg-29'); // newest visible at the bottom
+    const scrolled = render(<SessionPane transcript={many} title="s" focused rows={10} scroll={20} />);
+    const frame = scrolled.lastFrame() ?? '';
+    expect(frame).toContain('older'); // scroll indicator
+    expect(frame).not.toContain('msg-29'); // scrolled away from the newest
+  });
+
   it('renders a live streaming assistant block from activity', () => {
     const { lastFrame } = render(
       <SessionPane transcript={[]} title="s" focused rows={40} streaming={['working on **it** now']} />,

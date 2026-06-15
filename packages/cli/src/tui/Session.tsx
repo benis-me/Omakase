@@ -58,11 +58,19 @@ export function Session(props: {
   rows: number;
   /** Live agent prose (RunView.activity tail) rendered as a streaming message. */
   streaming?: string[];
+  /** Lines scrolled up from the bottom; 0 follows the newest output. */
+  scroll?: number;
 }): React.ReactElement {
-  const { transcript, title, focused, rows, streaming = [] } = props;
+  const { transcript, title, focused, rows, streaming = [], scroll = 0 } = props;
   const budget = Math.max(4, rows - 2);
-  const stream = streaming.slice(-6);
-  const visible = transcript.slice(-Math.max(2, budget - stream.length));
+  const atBottom = scroll <= 0;
+  // When scrolled up we show history (no live stream block); at the bottom we
+  // pin the streaming block under the newest transcript items.
+  const stream = atBottom ? streaming.slice(-6) : [];
+  const end = Math.max(1, transcript.length - Math.max(0, scroll));
+  const windowSize = Math.max(2, budget - stream.length);
+  const start = Math.max(0, end - windowSize);
+  const visible = transcript.slice(start, end);
   return (
     <Box
       flexDirection="column"
@@ -71,7 +79,10 @@ export function Session(props: {
       borderColor={focused ? 'cyan' : 'gray'}
       paddingX={1}
     >
-      <Text bold>session · {title}</Text>
+      <Text bold>
+        session · {title}
+        {!atBottom ? <Text dimColor> — ↑{scroll} older (↓/end to follow)</Text> : null}
+      </Text>
       {visible.length === 0 && stream.length === 0 ? (
         <Text dimColor>type a task below to start — router will plan and dispatch agents</Text>
       ) : (
