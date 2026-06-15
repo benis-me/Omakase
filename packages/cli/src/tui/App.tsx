@@ -18,6 +18,7 @@ import { parseComposerInput } from '../composer-parse.js';
 import { Session } from './Session.js';
 import { Orchestration } from './Orchestration.js';
 import { Editor } from './editor/Editor.js';
+import { Overlay, type OverlayItem } from './overlay/Overlay.js';
 
 const SLASH_COMMANDS = [
   '/new',
@@ -90,6 +91,7 @@ export function App(props: AppProps): React.ReactElement {
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState('');
+  const [palette, setPalette] = useState(false);
 
   const tailRef = useRef<() => void>(() => {});
   // Mirror the bits onSubmit needs but that live in async closures, so the
@@ -221,6 +223,11 @@ export function App(props: AppProps): React.ReactElement {
 
   useInput(
     (input, key) => {
+      if (palette) return; // the overlay owns input while open
+      if (key.ctrl && input === 'p') {
+        setPalette(true);
+        return;
+      }
       if (key.tab) {
         setFocus((f) => (f === 'session' ? 'sidebar' : f === 'sidebar' ? 'composer' : 'session'));
         return;
@@ -232,6 +239,13 @@ export function App(props: AppProps): React.ReactElement {
     },
     { isActive: isRawModeSupported },
   );
+
+  const commandItems: OverlayItem[] = SLASH_COMMANDS.map((c) => ({ id: c, label: c }));
+  function runPaletteItem(item: OverlayItem): void {
+    setPalette(false);
+    const name = item.label.replace(/^\//, '');
+    void handleCommand(name, '');
+  }
 
   const slashHint = draft.startsWith('/')
     ? SLASH_COMMANDS.filter((c) => c.startsWith(draft.split(/\s/)[0] ?? '')).join('  ')
@@ -253,12 +267,22 @@ export function App(props: AppProps): React.ReactElement {
         />
         <Orchestration view={view} focused={focus === 'sidebar'} expanded={expanded} />
       </Box>
-      <Editor
-        focused={focus === 'composer'}
-        hint={slashHint || notice}
-        onSubmit={(raw) => void onSubmit(raw)}
-        onChange={setDraft}
-      />
+      {palette ? (
+        <Overlay
+          title="commands  (↑↓ select · enter run · esc close)"
+          items={commandItems}
+          active={palette}
+          onPick={runPaletteItem}
+          onClose={() => setPalette(false)}
+        />
+      ) : (
+        <Editor
+          focused={focus === 'composer' && !palette}
+          hint={slashHint ? `${slashHint}   ·  ctrl+p palette` : notice || 'ctrl+p palette'}
+          onSubmit={(raw) => void onSubmit(raw)}
+          onChange={setDraft}
+        />
+      )}
     </Box>
   );
 }

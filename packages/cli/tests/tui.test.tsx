@@ -9,6 +9,7 @@ import { Session as SessionPane } from '../src/tui/Session.js';
 import { Editor } from '../src/tui/editor/Editor.js';
 import { MarkdownView } from '../src/tui/render/MarkdownView.js';
 import { DiffView } from '../src/tui/render/DiffView.js';
+import { Overlay, type OverlayItem } from '../src/tui/overlay/Overlay.js';
 import { initialRunView, type RunView, type TranscriptItem } from '../src/view-model.js';
 import type { RunControllerClient } from '../src/run-client.js';
 
@@ -164,6 +165,43 @@ describe('Editor', () => {
   });
 });
 
+// ── Overlay (fuzzy select) ──────────────────────────────────────────
+describe('Overlay', () => {
+  it('filters by fuzzy query and picks the selected item on enter', async () => {
+    const items: OverlayItem[] = [
+      { id: '/new', label: '/new' },
+      { id: '/stop', label: '/stop' },
+      { id: '/workflow', label: '/workflow' },
+    ];
+    const picked: string[] = [];
+    const { stdin, lastFrame } = render(
+      <Box width={60}>
+        <Overlay title="commands" items={items} active onPick={(i) => picked.push(i.id)} onClose={() => {}} />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write('wf'); // fuzzy → /workflow
+    await delay(15);
+    expect(lastFrame() ?? '').toContain('/workflow');
+    stdin.write('\r');
+    await delay(15);
+    expect(picked).toEqual(['/workflow']);
+  });
+
+  it('closes on escape', async () => {
+    let closed = false;
+    const { stdin } = render(
+      <Box width={60}>
+        <Overlay title="t" items={[{ id: 'a', label: 'a' }]} active onPick={() => {}} onClose={() => { closed = true; }} />
+      </Box>,
+    );
+    await delay(10);
+    stdin.write(''); // escape
+    await delay(15);
+    expect(closed).toBe(true);
+  });
+});
+
 // ── App conversational shell (Task 11) ──────────────────────────────
 function makeFakeClient(overrides: Partial<RunControllerClient> = {}): RunControllerClient {
   return {
@@ -229,6 +267,20 @@ describe('TUI App (conversational shell)', () => {
     );
     await delay(40);
     expect(lastFrame() ?? '').toMatch(/daemon up \(4242\)/);
+  });
+
+  it('opens the command palette on ctrl+p', async () => {
+    const client = makeFakeClient();
+    const sessions = new MemorySessionStore();
+    const { stdin, lastFrame } = render(
+      <App client={client} cwd="/tmp" mode="normal" sessions={sessions} now={() => 1} />,
+    );
+    await delay(40);
+    stdin.write(''); // ctrl+p
+    await delay(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('commands');
+    expect(frame).toContain('/workflow');
   });
 
   it('quitting does NOT stop a run, but /stop does', async () => {
