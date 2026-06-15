@@ -2,8 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "jsx": "react-jsx",
-    "types": ["node", "react"],
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@omakase/daemon/testing": ["../daemon/src/testing/index.ts"],
@@ -11,5 +10,6 @@
       "@omakase/core": ["../core/src/index.ts"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["src/tui-otui"]
 }

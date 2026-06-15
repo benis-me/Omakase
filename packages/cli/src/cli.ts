@@ -26,6 +26,8 @@ import {
 } from '@omakase/core';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createServer, type ServeConfig } from './serve.js';
 import {
   daemonStatus,
@@ -37,7 +39,6 @@ import {
 } from './daemon-control.js';
 import { RunControllerClient } from './run-client.js';
 import { startReadOnlyServer } from './read-only-server.js';
-import type { LaunchTuiOptions } from './tui/index.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
 
@@ -128,8 +129,66 @@ export interface CliDeps {
   ensureDaemon?: (cwd: string, serveArgs?: string[]) => Promise<DaemonInfo>;
   /** Stop the project's daemon (injected for tests). */
   stopDaemon?: (cwd: string) => Promise<unknown>;
-  /** Launch the TUI; injected so headless tests don't import Ink. */
+  /** Launch the TUI; injected so headless tests don't spawn Bun/OpenTUI. */
   launchTui?: (opts: LaunchTuiOptions) => Promise<void>;
+}
+
+/**
+ * What the `tui` command hands to its launcher. The default launcher spawns the
+ * OpenTUI app under Bun using the serializable fields (dirs, mode, token); the
+ * live `client`/`sessions` objects are kept for injected test launchers.
+ */
+export interface LaunchTuiOptions {
+  client: RunControllerClient;
+  sessions: FileSessionStore;
+  cwd: string;
+  mode: WorkMode;
+  runsDir: string;
+  queueDir: string;
+  detect: () => ReturnType<AgentRuntime['detect']>;
+  daemonStatus: () => Promise<unknown>;
+  stopDaemon: () => Promise<unknown>;
+  startDaemon: () => Promise<unknown>;
+  readOnlyUrl?: string;
+  task?: string;
+  token?: string;
+  /** Output sink for launcher-level messages (e.g. the non-TTY notice). */
+  write: (text: string) => void;
+}
+
+/**
+ * Default TUI launcher: the OpenTUI app needs Bun (FFI), so spawn it as a child
+ * under `bun --conditions=development` and inherit the terminal. The daemon was
+ * already ensured and any initial task submitted by the caller; this child is a
+ * pure client. Without a TTY there's nothing to attach to interactively, so we
+ * just report (the run, if any, keeps going in the daemon).
+ */
+async function defaultLaunchTui(opts: LaunchTuiOptions): Promise<void> {
+  if (!process.stdin.isTTY) {
+    opts.write(
+      opts.token
+        ? 'omakase tui: no interactive terminal — task submitted to the detached daemon; re-run `omakase tui` in a terminal to attach.'
+        : 'omakase tui: no interactive terminal — run `omakase tui` in a terminal to manage runs.',
+    );
+    return;
+  }
+  const entry = fileURLToPath(new URL('./tui-otui/main.tsx', import.meta.url));
+  const args = [
+    '--conditions=development', 'run', entry,
+    '--cwd', opts.cwd, '--runs-dir', opts.runsDir, '--queue-dir', opts.queueDir, '--mode', opts.mode,
+    ...(opts.token ? ['--token', opts.token] : []),
+    ...(opts.readOnlyUrl ? ['--read-only-url', opts.readOnlyUrl] : []),
+  ];
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('bun', args, { stdio: 'inherit' });
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') {
+        process.stderr.write('omakase tui: Bun is required for the TUI (https://bun.sh). Install it and retry.\n');
+        resolve();
+      } else reject(err);
+    });
+    child.on('exit', () => resolve());
+  });
 }
 
 function resolveMode(value: unknown): WorkMode {
@@ -555,34 +614,21 @@ export function createCli(deps: CliDeps = {}): Cli {
     const detect = (): ReturnType<AgentRuntime['detect']> =>
       runtime.detect(deps.detectionOptions);
 
-    const launch =
-      deps.launchTui ??
-      (async (opts) => {
-        // Without an interactive TTY the Ink UI could never be quit (useInput is
-        // inactive). Don't launch it — the run is already detached in the daemon;
-        // report and return so the command doesn't hang forever.
-        if (!process.stdin.isTTY) {
-          write(
-            opts.token
-              ? 'omakase tui: no interactive terminal — task submitted to the detached daemon; re-run `omakase tui` in a terminal to attach.'
-              : 'omakase tui: no interactive terminal — run `omakase tui` in a terminal to manage runs.',
-          );
-          return;
-        }
-        const { launchTui } = await import('./tui/index.js');
-        await launchTui(opts);
-      });
+    const launch = deps.launchTui ?? defaultLaunchTui;
     try {
       await launch({
         client,
         cwd,
         mode: baseMode,
         sessions,
+        runsDir,
+        queueDir,
         detect,
         daemonStatus: () => daemonStatus(cwd),
         stopDaemon: () => stop(cwd),
         startDaemon: () => ensure(cwd, serveArgs),
         readOnlyUrl: readOnlyServer.url,
+        write,
         ...(task.trim() ? { task: task.trim() } : {}),
         ...(token ? { token } : {}),
       });

@@ -4,11 +4,10 @@
     "rootDir": "src",
     "outDir": "dist",
     "noEmit": false,
-    "jsx": "react-jsx",
-    "types": ["node", "react"],
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {}
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "tests"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "tests", "src/tui-otui"]
 }
