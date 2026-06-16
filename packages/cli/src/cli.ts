@@ -172,7 +172,7 @@ async function defaultLaunchTui(opts: LaunchTuiOptions): Promise<void> {
     );
     return;
   }
-  const entry = fileURLToPath(new URL('./tui-otui/main.tsx', import.meta.url));
+  const entry = fileURLToPath(new URL('./tui/main.tsx', import.meta.url));
   const args = [
     '--conditions=development', 'run', entry,
     '--cwd', opts.cwd, '--runs-dir', opts.runsDir, '--queue-dir', opts.queueDir, '--mode', opts.mode,

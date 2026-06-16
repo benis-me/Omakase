@@ -20,7 +20,18 @@ import {
   type RunStore,
 } from '@omakase/core';
 import { applyPlanSnapshot, buildRunView, reduceTranscript, type RunView, type TranscriptItem } from './view-model.js';
-import { composeSessionPrompt } from './composer-parse.js';
+
+/**
+ * Fold a session's rolling summary and any referenced files into the run prompt,
+ * so each new run in a conversation inherits prior context. Pure.
+ */
+export function composeSessionPrompt(intent: { prompt: string; files: string[] }, rollingSummary: string): string {
+  const parts: string[] = [];
+  if (rollingSummary.trim()) parts.push(`Session context so far:\n${rollingSummary.trim()}\n`);
+  parts.push(intent.prompt);
+  if (intent.files.length > 0) parts.push(`\nContext files:\n${intent.files.map((f) => `- ${f}`).join('\n')}`);
+  return parts.join('\n');
+}
 
 export interface RunSummary {
   id: string;
