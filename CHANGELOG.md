@@ -7,17 +7,27 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- **TUI rebuilt on OpenTUI, run under Bun** (replacing Ink). opencode itself
-  uses OpenTUI — a Zig+TypeScript TUI framework built to escape Ink's limits
-  (the same limits behind input bugs like a non-deleting Backspace). The TUI now
-  renders with native OpenTUI primitives: `<textarea>` (a real multiline editor
-  with correct keybindings), `<markdown>`/`<diff>`, `<select>`, `<scrollbox>`.
-  `omakase tui` (Node) ensures the daemon and submits the task, then spawns the
-  app under `bun --conditions=development` (importing workspace source live, no
-  build). The framework-agnostic data layer (`RunControllerClient`,
-  `SessionStore`, `reduceTranscript`, `parseComposerInput`, fuzzy, leader) is
-  reused; a Bun smoke (`pnpm --filter @omakase/cli test:tui`) renders the real
-  app via OpenTUI's `testRender`. Requires Bun (https://bun.sh).
+- **TUI rebuilt from scratch on OpenTUI, run under Bun** (replacing Ink) — a
+  clean single-column conversational REPL modeled on factory.ai droid × opencode.
+  opencode itself uses OpenTUI, a Zig+TypeScript framework built to escape Ink's
+  limits (the same limits behind input bugs like a non-deleting Backspace).
+  - One transcript column with orchestration shown **inline** (route → plan →
+    workers → review → done); no persistent sidebar. Native `<textarea>` editor
+    (correct keybindings), `<markdown>`/`<diff>`, `<select>`, `<scrollbox>`.
+  - factory/opencode interactions: `/` command palette, `!` bash mode (runs
+    shell inline), `@file` references, `shift+tab` mode cycle (auto/plan/mission),
+    `ctrl+n`/`f2` agent cycle, `ctrl+o` detail toggle, `ctrl+x` leader, scroll
+    (pageup/pagedown, alt+↑/↓), `esc` interrupt, bottom status line.
+  - Capability fusion: inline multi-agent orchestration, `/workflow`, persistent
+    sessions with rolling-summary context, daemon-owned runs that survive quit,
+    and in-line risk-gate approval (factory-style approve/reject).
+  - Architecture: framework-agnostic pure logic (`composer`, `fuzzy`, `keymap`,
+    `feed`, `reduceTranscript`, `RunControllerClient`, `SessionStore`) is
+    Node-typechecked + vitest-tested; only the OpenTUI render layer (`src/tui/`)
+    is Bun-only and covered by a `testRender` Bun smoke (`pnpm --filter
+    @omakase/cli test:tui`). `omakase tui` (Node) ensures the daemon + submits
+    the task, then spawns the app under `bun --conditions=development`. Requires
+    Bun (https://bun.sh).
 - Live token streaming in the transcript, backed by a debounced `streamFlushMs`
   checkpoint so long runs don't thrash the run file.
 - A fuzzy command palette (ctrl+p), a leader-key system (ctrl+x) with
