@@ -6,7 +6,8 @@
  *   bun --conditions=development run src/tui-otui/main.tsx --cwd … --runs-dir … …
  */
 import React from 'react';
-import { render } from '@opentui/react';
+import { createCliRenderer } from '@opentui/core';
+import { createRoot } from '@opentui/react';
 import path from 'node:path';
 import { FileRunStore, FileSessionStore, type WorkMode } from '@omakase/core';
 import { createAgentRuntime, type DetectedAgent } from '@omakase/daemon';
@@ -30,7 +31,9 @@ const client = new RunControllerClient({ store: new FileRunStore(runsDir), contr
 const sessions = new FileSessionStore(path.join(cwd, '.omakase', 'sessions'));
 const runtime = createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
 
-render(
+const renderer = await createCliRenderer({ exitOnCtrlC: true });
+const root = createRoot(renderer);
+root.render(
   <App
     client={client}
     sessions={sessions}
