@@ -1,8 +1,9 @@
 /**
- * The omakase CLI. Three commands — `agents`, `run`, `tui` — all built on top
- * of @omakase/core (never reaching around it). Dependencies (output sink,
- * runtime, orchestrator factory) are injectable so the commands are testable
- * without real binaries, models, or a TTY.
+ * The omakase CLI: a headless entrypoint — `agents`, `run`, `workflow`, `serve`,
+ * `wiki`, `daemon` — all built on top of @omakase/core (never reaching around
+ * it) and persisting through the `.omks/` workspace (@omakase/storage).
+ * Dependencies (output sink, runtime, orchestrator factory, workspace) are
+ * injectable so the commands are testable without real binaries or models.
  */
 import {
   createAgentRuntime,
@@ -10,35 +11,26 @@ import {
   type DetectionOptions,
 } from '@omakase/daemon';
 import {
-  FileRunStore,
-  FileSessionStore,
-  MemoryRunStore,
   BunWorkflowScriptRunner,
   DynamicWorkflowRun,
   Orchestrator,
   ProjectWiki,
   createModelPolicy,
-  projectKnowledgeStore,
   renderWikiPagesMarkdown,
   type OrchestrationRequest,
   type WorkMode,
   type WikiEntryKind,
 } from '@omakase/core';
+import { openWorkspace, type OpenWorkspace } from '@omakase/storage';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { createServer, type ServeConfig } from './serve.js';
 import {
   daemonStatus,
-  ensureDaemon,
   stopDaemon,
   touchHeartbeat,
   writeDaemonInfo,
-  type DaemonInfo,
 } from './daemon-control.js';
-import { RunControllerClient } from './run-client.js';
-import { startReadOnlyServer } from './read-only-server.js';
 import { formatAgentsTable, formatRunSummary } from './render.js';
 import { buildRunView, formatEventLine } from './view-model.js';
 
@@ -125,70 +117,8 @@ export interface CliDeps {
   createRuntime?: () => AgentRuntime;
   createOrchestrator?: (runtime: AgentRuntime, mode: WorkMode, options?: { cwd?: string }) => Orchestrator;
   detectionOptions?: DetectionOptions;
-  /** Ensure the project's detached daemon is running (injected for tests). */
-  ensureDaemon?: (cwd: string, serveArgs?: string[]) => Promise<DaemonInfo>;
-  /** Stop the project's daemon (injected for tests). */
-  stopDaemon?: (cwd: string) => Promise<unknown>;
-  /** Launch the TUI; injected so headless tests don't spawn Bun/OpenTUI. */
-  launchTui?: (opts: LaunchTuiOptions) => Promise<void>;
-}
-
-/**
- * What the `tui` command hands to its launcher. The default launcher spawns the
- * OpenTUI app under Bun using the serializable fields (dirs, mode, token); the
- * live `client`/`sessions` objects are kept for injected test launchers.
- */
-export interface LaunchTuiOptions {
-  client: RunControllerClient;
-  sessions: FileSessionStore;
-  cwd: string;
-  mode: WorkMode;
-  runsDir: string;
-  queueDir: string;
-  detect: () => ReturnType<AgentRuntime['detect']>;
-  daemonStatus: () => Promise<unknown>;
-  stopDaemon: () => Promise<unknown>;
-  startDaemon: () => Promise<unknown>;
-  readOnlyUrl?: string;
-  task?: string;
-  token?: string;
-  /** Output sink for launcher-level messages (e.g. the non-TTY notice). */
-  write: (text: string) => void;
-}
-
-/**
- * Default TUI launcher: the OpenTUI app needs Bun (FFI), so spawn it as a child
- * under `bun --conditions=development` and inherit the terminal. The daemon was
- * already ensured and any initial task submitted by the caller; this child is a
- * pure client. Without a TTY there's nothing to attach to interactively, so we
- * just report (the run, if any, keeps going in the daemon).
- */
-async function defaultLaunchTui(opts: LaunchTuiOptions): Promise<void> {
-  if (!process.stdin.isTTY) {
-    opts.write(
-      opts.token
-        ? 'omakase tui: no interactive terminal — task submitted to the detached daemon; re-run `omakase tui` in a terminal to attach.'
-        : 'omakase tui: no interactive terminal — run `omakase tui` in a terminal to manage runs.',
-    );
-    return;
-  }
-  const entry = fileURLToPath(new URL('./tui/main.tsx', import.meta.url));
-  const args = [
-    '--conditions=development', 'run', entry,
-    '--cwd', opts.cwd, '--runs-dir', opts.runsDir, '--queue-dir', opts.queueDir, '--mode', opts.mode,
-    ...(opts.token ? ['--token', opts.token] : []),
-    ...(opts.readOnlyUrl ? ['--read-only-url', opts.readOnlyUrl] : []),
-  ];
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('bun', args, { stdio: 'inherit' });
-    child.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') {
-        process.stderr.write('omakase tui: Bun is required for the TUI (https://bun.sh). Install it and retry.\n');
-        resolve();
-      } else reject(err);
-    });
-    child.on('exit', () => resolve());
-  });
+  /** Open the `.omks` workspace for a project; injected so tests stay headless. */
+  openWorkspace?: (cwd: string) => OpenWorkspace;
 }
 
 function resolveMode(value: unknown): WorkMode {
@@ -255,8 +185,6 @@ Usage:
                                        from .omakase/queue. --watch to keep polling.
   omakase wiki [--cwd]                 Print the generated/editable project wiki
   omakase wiki add <title> [opts]      Add a manual wiki entry and refresh pages
-  omakase tui ["<task>"] [options]     Open the interactive TUI (attaches to the
-                                       detached daemon; quitting never stops a run)
   omakase daemon status|stop [--cwd]   Inspect or stop the project's run daemon
   omakase --version
 
@@ -286,16 +214,11 @@ export function createCli(deps: CliDeps = {}): Cli {
   const createRuntime =
     deps.createRuntime ??
     (() => createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 }));
-  const createOrchestrator =
-    deps.createOrchestrator ??
-    ((runtime: AgentRuntime, mode: WorkMode, options?: { cwd?: string }) =>
-      new Orchestrator({
-        runtime,
-        store: new MemoryRunStore(),
-        defaultMode: mode,
-        ...(options?.cwd ? { knowledgeStore: projectKnowledgeStore(options.cwd) } : {}),
-        ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
-      }));
+  // The `.omks` workspace seam. Real commands persist runs + knowledge to
+  // `<cwd>/.omks/omks.db` (and git-friendly markdown under `.omks/memory`);
+  // tests inject a fake to stay headless.
+  const resolveWorkspace = (cwd: string): OpenWorkspace =>
+    (deps.openWorkspace ?? openWorkspace)(cwd);
 
   async function agentsCommand(options: ParsedArgs['options']): Promise<number> {
     const runtime = createRuntime();
@@ -325,8 +248,13 @@ export function createCli(deps: CliDeps = {}): Cli {
 
   async function wikiCommand(positionals: string[], options: ParsedArgs['options']): Promise<number> {
     const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
-    const store = projectKnowledgeStore(cwd);
     const sub = positionals[1];
+    // Validate the subcommand and its arguments BEFORE opening the workspace, so
+    // a usage error doesn't scaffold a `.omks` dir as a side effect.
+    if (sub && sub !== 'add' && sub !== 'show') {
+      error(`omakase wiki: unknown subcommand "${sub}"`);
+      return 1;
+    }
     if (sub === 'add') {
       const title = positionals.slice(2).join(' ').replace(/\s+/g, ' ').trim();
       if (!title) {
@@ -338,69 +266,49 @@ export function createCli(deps: CliDeps = {}): Cli {
         error('omakase wiki add: --kind must be note, fact, decision, or risk');
         return 1;
       }
-      const snapshot = (await store.loadWiki()) ?? { entries: [] };
-      const wiki = ProjectWiki.fromJSON(snapshot);
-      const entry = wiki.add(kind, {
-        title,
-        body: typeof options.body === 'string' ? options.body : '',
-        tags: parseWikiTags(options.tags),
-        source: `manual:${Date.now()}`,
-      });
-      if (store.mergeWiki) await store.mergeWiki([entry]);
-      else await store.saveWiki(wiki.toJSON());
-      write(`wiki: added ${kind} "${entry.title}"`);
-      return 0;
+      const ws = resolveWorkspace(cwd);
+      const store = ws.knowledgeStore;
+      try {
+        const snapshot = (await store.loadWiki()) ?? { entries: [] };
+        const wiki = ProjectWiki.fromJSON(snapshot);
+        const entry = wiki.add(kind, {
+          title,
+          body: typeof options.body === 'string' ? options.body : '',
+          tags: parseWikiTags(options.tags),
+          source: `manual:${Date.now()}`,
+        });
+        if (store.mergeWiki) await store.mergeWiki([entry]);
+        else await store.saveWiki(wiki.toJSON());
+        write(`wiki: added ${kind} "${entry.title}"`);
+        return 0;
+      } finally {
+        ws.close();
+      }
     }
 
-    if (sub && sub !== 'show') {
-      error(`omakase wiki: unknown subcommand "${sub}"`);
-      return 1;
-    }
-    const pages = await store.loadWikiPages();
-    if (pages.length > 0) {
-      write(renderWikiPagesMarkdown(pages));
+    const ws = resolveWorkspace(cwd);
+    const store = ws.knowledgeStore;
+    try {
+      const pages = await store.loadWikiPages();
+      if (pages.length > 0) {
+        write(renderWikiPagesMarkdown(pages));
+        return 0;
+      }
+      const wiki = await store.loadWiki();
+      write(wiki ? ProjectWiki.fromJSON(wiki).toMarkdown() : '# Project Knowledge Base');
       return 0;
+    } finally {
+      ws.close();
     }
-    const wiki = await store.loadWiki();
-    write(wiki ? ProjectWiki.fromJSON(wiki).toMarkdown() : '# Project Knowledge Base');
-    return 0;
   }
 
-  async function runCommand(task: string, options: ParsedArgs['options']): Promise<number> {
-    if (!task.trim()) {
-      error('omakase run: a task description is required, e.g. omakase run "summarize this project"');
-      return 1;
-    }
-    const mode = resolveMode(options.mode);
-    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
-    const runtime = createRuntime();
-    // --offline / --agent <id> force every role onto one agent (the built-in by
-    // default), so a run completes with no model calls and no installed CLIs.
-    const ab = parseAgentBudget(options);
-    if (ab.error) {
-      error(`omakase run: ${ab.error}`);
-      return 1;
-    }
-    const { agentOverride, budget } = ab;
-    const orchestrator =
-      agentOverride || budget
-        ? new Orchestrator({
-            runtime,
-            store: new MemoryRunStore(),
-            defaultMode: agentOverride ? 'custom' : mode,
-            knowledgeStore: projectKnowledgeStore(cwd),
-            ...(agentOverride
-              ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
-              : {}),
-            ...(budget ? { budget } : {}),
-            ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
-          })
-        : createOrchestrator(runtime, mode, { cwd });
-    const request: OrchestrationRequest = {
-      prompt: task,
-      cwd,
-      mode: agentOverride ? 'custom' : mode,
-    };
+  /** Stream a run's events, print its summary, and return its exit code. */
+  async function driveRun(
+    orchestrator: Orchestrator,
+    request: OrchestrationRequest,
+    mode: WorkMode,
+    options: ParsedArgs['options'],
+  ): Promise<number> {
     const handle = orchestrator.start(request);
     for await (const event of handle.events) {
       if (options.json) {
@@ -428,6 +336,55 @@ export function createCli(deps: CliDeps = {}): Cli {
       }
     }
     return result.status === 'succeeded' ? 0 : 1;
+  }
+
+  async function runCommand(task: string, options: ParsedArgs['options']): Promise<number> {
+    if (!task.trim()) {
+      error('omakase run: a task description is required, e.g. omakase run "summarize this project"');
+      return 1;
+    }
+    const mode = resolveMode(options.mode);
+    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+    const runtime = createRuntime();
+    // --offline / --agent <id> force every role onto one agent (the built-in by
+    // default), so a run completes with no model calls and no installed CLIs.
+    const ab = parseAgentBudget(options);
+    if (ab.error) {
+      error(`omakase run: ${ab.error}`);
+      return 1;
+    }
+    const { agentOverride, budget } = ab;
+    const request: OrchestrationRequest = {
+      prompt: task,
+      cwd,
+      mode: agentOverride ? 'custom' : mode,
+    };
+
+    // The injected-test path: a fake orchestrator factory, no override/budget.
+    // Keep this purely in-memory so headless tests touch no filesystem.
+    if (deps.createOrchestrator && !agentOverride && !budget) {
+      return driveRun(deps.createOrchestrator(runtime, mode, { cwd }), request, mode, options);
+    }
+
+    // Every real run persists to the project's `.omks` workspace: runs land in
+    // `omks.db`, knowledge renders to `.omks/memory/`.
+    const ws = resolveWorkspace(cwd);
+    try {
+      const orchestrator = new Orchestrator({
+        runtime,
+        store: ws.runStore,
+        knowledgeStore: ws.knowledgeStore,
+        defaultMode: agentOverride ? 'custom' : mode,
+        ...(agentOverride
+          ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
+          : {}),
+        ...(budget ? { budget } : {}),
+        ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+      });
+      return await driveRun(orchestrator, request, mode, options);
+    } finally {
+      ws.close();
+    }
   }
 
   function serveConfig(options: ParsedArgs['options'], ab: AgentBudget): ServeConfig {
@@ -524,118 +481,54 @@ export function createCli(deps: CliDeps = {}): Cli {
     }
     const mode = resolveMode(options.mode);
     const runtime = createRuntime();
-    const runsDir =
-      typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs');
-    const run = new DynamicWorkflowRun({
-      runtime,
-      store: new FileRunStore(runsDir),
-      knowledgeStore: projectKnowledgeStore(cwd),
-      policy: ab.agentOverride
-        ? createModelPolicy('custom', { custom: { default: { agentId: ab.agentOverride } } })
-        : createModelPolicy(mode),
-      scriptRunner: new BunWorkflowScriptRunner({ cwd }),
-      script: {
-        id: `workflow-script-${Date.now()}`,
-        path: scriptPath,
-        source,
-        runtime: 'bun',
-        createdAt: Date.now(),
-      },
-      request: {
-        prompt: `Run workflow script ${path.basename(scriptPath)}`,
-        cwd,
-        mode: ab.agentOverride ? 'custom' : mode,
-      },
-      ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
-      maxConcurrency: Number(options.concurrency) || 16,
-      maxAgents: Number(options['max-agents']) || 1000,
-    });
-    const handle = run.start();
-    for await (const event of handle.events) {
-      if (options.json) {
-        write(JSON.stringify(event));
-      } else {
-        const line = formatEventLine(event);
-        if (line) write(line);
-      }
-    }
-    const result = await handle.result;
-    if (!options.json) {
-      write('');
-      write(formatRunSummary(buildRunView(result.events, mode)));
-      if (result.spentTokens > 0 || result.spentCostUsd > 0) {
-        write(`Spent: ${result.spentTokens} tokens, $${result.spentCostUsd.toFixed(4)}`);
-      }
-    }
-    return result.status === 'succeeded' ? 0 : 1;
-  }
-
-  async function tuiCommand(task: string, options: ParsedArgs['options']): Promise<number> {
-    const baseMode = resolveMode(options.mode);
-    const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
-    const ab = parseAgentBudget(options);
-    if (ab.error) {
-      error(`omakase tui: ${ab.error}`);
-      return 1;
-    }
-    const runsDir =
-      typeof options['runs-dir'] === 'string' ? options['runs-dir'] : path.join(cwd, '.omakase', 'runs');
-    const queueDir =
-      typeof options['queue-dir'] === 'string' ? options['queue-dir'] : path.join(cwd, '.omakase', 'queue');
-
-    // The TUI is a pure client: ensure a detached daemon owns the runs (so they
-    // survive quitting), then talk to it over the store + control files. Forward
-    // the resolved dirs and run-shaping flags so the spawned daemon uses the SAME
-    // dirs/config the client does (a reused daemon keeps its own config).
-    const serveArgs = ['--runs-dir', runsDir, '--queue-dir', queueDir];
-    if (typeof options.mode === 'string') serveArgs.push('--mode', options.mode);
-    if (options.offline) serveArgs.push('--offline');
-    if (typeof options.agent === 'string') serveArgs.push('--agent', options.agent);
-    if (options['max-tokens'] !== undefined) serveArgs.push('--max-tokens', String(options['max-tokens']));
-    if (options['max-cost'] !== undefined) serveArgs.push('--max-cost', String(options['max-cost']));
-    const ensure = deps.ensureDaemon ?? ((c: string, sa?: string[]) => ensureDaemon(c, {}, { serveArgs: sa, sourceKey: currentDaemonSourceKey() }));
-    await ensure(cwd, serveArgs);
-    const stop = deps.stopDaemon ?? ((c: string) => stopDaemon(c));
-
-    const runStore = new FileRunStore(runsDir);
-    const knowledgeStore = projectKnowledgeStore(cwd);
-    const sessions = new FileSessionStore(path.join(cwd, '.omakase', 'sessions'));
-    const client = new RunControllerClient({
-      store: runStore,
-      controlDir: runsDir,
-      queueDir,
-    });
-    const readOnlyServer = await startReadOnlyServer({ store: runStore, knowledgeStore });
-    // Submit the initial task (if any) so the daemon starts it; the App attaches.
-    const token = task.trim() ? await client.submit(task.trim(), ab.agentOverride) : undefined;
-
-    // Local agent detection for the dashboard (cheap, no run involved).
-    const runtime = createRuntime();
-    const detect = (): ReturnType<AgentRuntime['detect']> =>
-      runtime.detect(deps.detectionOptions);
-
-    const launch = deps.launchTui ?? defaultLaunchTui;
+    // Workflow runs persist to the project's `.omks` workspace, same as `run`.
+    const ws = resolveWorkspace(cwd);
     try {
-      await launch({
-        client,
-        cwd,
-        mode: baseMode,
-        sessions,
-        runsDir,
-        queueDir,
-        detect,
-        daemonStatus: () => daemonStatus(cwd),
-        stopDaemon: () => stop(cwd),
-        startDaemon: () => ensure(cwd, serveArgs),
-        readOnlyUrl: readOnlyServer.url,
-        write,
-        ...(task.trim() ? { task: task.trim() } : {}),
-        ...(token ? { token } : {}),
+      const run = new DynamicWorkflowRun({
+        runtime,
+        store: ws.runStore,
+        knowledgeStore: ws.knowledgeStore,
+        policy: ab.agentOverride
+          ? createModelPolicy('custom', { custom: { default: { agentId: ab.agentOverride } } })
+          : createModelPolicy(mode),
+        scriptRunner: new BunWorkflowScriptRunner({ cwd }),
+        script: {
+          id: `workflow-script-${Date.now()}`,
+          path: scriptPath,
+          source,
+          runtime: 'bun',
+          createdAt: Date.now(),
+        },
+        request: {
+          prompt: `Run workflow script ${path.basename(scriptPath)}`,
+          cwd,
+          mode: ab.agentOverride ? 'custom' : mode,
+        },
+        ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
+        maxConcurrency: Number(options.concurrency) || 16,
+        maxAgents: Number(options['max-agents']) || 1000,
       });
+      const handle = run.start();
+      for await (const event of handle.events) {
+        if (options.json) {
+          write(JSON.stringify(event));
+        } else {
+          const line = formatEventLine(event);
+          if (line) write(line);
+        }
+      }
+      const result = await handle.result;
+      if (!options.json) {
+        write('');
+        write(formatRunSummary(buildRunView(result.events, mode)));
+        if (result.spentTokens > 0 || result.spentCostUsd > 0) {
+          write(`Spent: ${result.spentTokens} tokens, $${result.spentCostUsd.toFixed(4)}`);
+        }
+      }
+      return result.status === 'succeeded' ? 0 : 1;
     } finally {
-      await readOnlyServer.close();
+      ws.close();
     }
-    return 0;
   }
 
   async function daemonCommand(sub: string | undefined, options: ParsedArgs['options']): Promise<number> {
@@ -684,9 +577,6 @@ export function createCli(deps: CliDeps = {}): Cli {
             return await workflowCommand(positionals, options);
           case 'serve':
             return await serveCommand(positionals.slice(1), options);
-          case 'tui':
-          case 'dev':
-            return await tuiCommand(positionals.slice(1).join(' '), options);
           case 'daemon':
             return await daemonCommand(positionals[1], options);
           default:

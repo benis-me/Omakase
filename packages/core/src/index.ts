@@ -82,7 +82,7 @@ export type { KnowledgeStore } from './knowledge/store.js';
 // ── Inbox, supervisor, run events ────────────────────────────────────────────
 export { Inbox } from './inbox.js';
 export type { InboxItem, InboxItemKind, InboxAppendOptions, InboxOptions } from './inbox.js';
-export { MemoryRunStore, FileRunStore } from './supervisor/run-store.js';
+export { MemoryRunStore, FileRunStore, isValidRunRecord } from './supervisor/run-store.js';
 export type { RunStore, RunRecord } from './supervisor/run-store.js';
 // ── Sessions ──────────────────────────────────────────────────────────────
 export { MemorySessionStore, FileSessionStore, isValidSession } from './session/store.js';

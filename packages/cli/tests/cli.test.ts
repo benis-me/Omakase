@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
 import { MemoryRunStore, Orchestrator, projectKnowledgeStore, type WorkMode } from '@omakase/core';
+import { openWorkspace, SqliteRunStore } from '@omakase/storage';
 import { createCli, parseArgs } from '../src/cli.js';
 
 const OFFLINE = { env: { PATH: '' }, includeWellKnownPathDirs: false } as const;
@@ -150,7 +151,39 @@ describe('omakase run', () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-run-knowledge-'));
     const code = await cli.main(['run', 'summarize project knowledge', '--cwd', cwd, '--agent', 'codex']);
     expect(code).toBe(0);
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki-pages.json'), 'utf8')).toContain('Project summary');
+    // The run persisted to the project's `.omks` workspace (omks.db), and the
+    // agent-authored knowledge rendered to the git-friendly markdown projection.
+    expect(existsSync(path.join(cwd, '.omks', 'omks.db'))).toBe(true);
+    expect(readFileSync(path.join(cwd, '.omks', 'memory', 'wiki-pages.md'), 'utf8')).toContain('Project summary');
+    const ws = openWorkspace(cwd);
+    try {
+      const runStore = new SqliteRunStore(ws.db);
+      expect((await runStore.list()).length).toBeGreaterThanOrEqual(1);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('persists an --offline run to the .omks workspace (no injected orchestrator)', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-run-offline-'));
+    // No injected createOrchestrator: --offline forces the built-in agent, so the
+    // run completes with no model calls and persists through the real `.omks` path.
+    const cli = createCli({
+      write: () => {},
+      error: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+    });
+    const code = await cli.main(['run', '--offline', 'summarize', '--cwd', cwd]);
+    expect(code).toBe(0);
+    expect(existsSync(path.join(cwd, '.omks', 'omks.db'))).toBe(true);
+    const ws = openWorkspace(cwd);
+    try {
+      const runStore = new SqliteRunStore(ws.db);
+      expect((await runStore.list()).length).toBe(1);
+    } finally {
+      ws.close();
+    }
   });
 });
 
@@ -174,8 +207,16 @@ describe('omakase wiki', () => {
     ]);
     expect(addCode).toBe(0);
     expect(out()).toContain('wiki: added decision "Deployment decision"');
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki.json'), 'utf8')).toContain('Deployment decision');
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki-pages.md'), 'utf8')).toContain('Architecture Decisions');
+    // The entry is durable in `.omks` (omks.db, surfaced via the knowledge store)
+    // and rendered into the git-friendly wiki-pages markdown projection.
+    const ws = openWorkspace(cwd);
+    try {
+      const wiki = await ws.knowledgeStore.loadWiki();
+      expect(wiki?.entries.map((e) => e.title)).toContain('Deployment decision');
+    } finally {
+      ws.close();
+    }
+    expect(readFileSync(path.join(cwd, '.omks', 'memory', 'wiki-pages.md'), 'utf8')).toContain('Architecture Decisions');
 
     const show = harness();
     const showCode = await show.cli.main(['wiki', '--cwd', cwd]);
@@ -190,6 +231,34 @@ describe('omakase wiki', () => {
     const code = await cli.main(['wiki', 'add', '--body', 'missing title']);
     expect(code).toBe(1);
     expect(err()).toContain('wiki add: a title is required');
+  });
+
+  it('persists a manual wiki entry to the .omks workspace via the real store', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-wiki-add-'));
+    // No injected openWorkspace → exercises the real `.omks` persistence path.
+    const cli = createCli({
+      write: () => {},
+      detectionOptions: OFFLINE,
+      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
+    });
+    const code = await cli.main([
+      'wiki',
+      'add',
+      'CLI editable knowledge',
+      '--body',
+      'Manual wiki edits persist beside agent-authored knowledge.',
+      '--cwd',
+      cwd,
+    ]);
+    expect(code).toBe(0);
+    expect(existsSync(path.join(cwd, '.omks', 'omks.db'))).toBe(true);
+    const ws = openWorkspace(cwd);
+    try {
+      const wiki = await ws.knowledgeStore.loadWiki();
+      expect(wiki?.entries.map((e) => e.title)).toContain('CLI editable knowledge');
+    } finally {
+      ws.close();
+    }
   });
 });
 
@@ -228,19 +297,28 @@ describe('omakase workflow', () => {
 
     const code = await cli.main(['workflow', 'run', scriptPath, '--cwd', cwd, '--agent', 'codex', '--json']);
     const events = out.filter(Boolean).map((line) => JSON.parse(line) as { type: string });
-    const runFile = readdirSync(path.join(cwd, '.omakase', 'runs')).find((file) => file.endsWith('.json'));
 
     expect(code).toBe(0);
     expect(err.join('\n')).toBe('');
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining(['workflow-created', 'workflow-phase-started', 'agent-event', 'workflow-finished']),
     );
-    expect(runFile).toBeTruthy();
-    const record = JSON.parse(readFileSync(path.join(cwd, '.omakase', 'runs', runFile!), 'utf8'));
-    expect(record.workflow.status).toBe('succeeded');
-    expect(record.workflow.phases[0].name).toBe('CLI Workflow');
-    expect(record.plan.tasks[0].title).toBe('CLI worker');
-    expect(readFileSync(path.join(cwd, '.omakase', 'knowledge-events.json'), 'utf8')).toContain('CLI workflow ran');
+    // The workflow run persisted to the project's `.omks` workspace (omks.db),
+    // and its updateWiki knowledge rendered to the git-friendly markdown.
+    expect(existsSync(path.join(cwd, '.omks', 'omks.db'))).toBe(true);
+    const ws = openWorkspace(cwd);
+    try {
+      const runStore = new SqliteRunStore(ws.db);
+      const ids = await runStore.list();
+      expect(ids.length).toBeGreaterThanOrEqual(1);
+      const record = await runStore.load(ids[0]!);
+      expect(record?.workflow?.status).toBe('succeeded');
+      expect(record?.workflow?.phases[0]?.name).toBe('CLI Workflow');
+      expect(record?.plan.tasks[0]?.title).toBe('CLI worker');
+    } finally {
+      ws.close();
+    }
+    expect(readFileSync(path.join(cwd, '.omks', 'memory', 'knowledge-events.md'), 'utf8')).toContain('CLI workflow ran');
   });
 });
 
@@ -251,145 +329,6 @@ describe('omakase serve', () => {
     const code = await cli.main(['serve', 'summarize the project', '--cwd', cwd]);
     expect(code).toBe(0);
     expect(out()).toMatch(/processed 1 run/);
-  });
-});
-
-describe('omakase tui', () => {
-  it('ensures a daemon, submits the task, and launches the client TUI', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
-    let ensured: string | undefined;
-    let captured: {
-      hasClient: boolean;
-      hasSessions?: boolean;
-      task?: string;
-      token?: string;
-      cwd?: string;
-      mode?: string;
-      readOnlyUrl?: string;
-    } = {
-      hasClient: false,
-    };
-    const cli = createCli({
-      write: () => {},
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c) => {
-        ensured = c;
-        return { pid: 1, startedAt: 0, version: '0', cwd: c };
-      },
-      launchTui: async (opts) => {
-        captured = {
-          hasClient: Boolean(opts.client),
-          hasSessions: Boolean(opts.sessions),
-          task: opts.task,
-          token: opts.token,
-          cwd: opts.cwd,
-          mode: opts.mode,
-          readOnlyUrl: opts.readOnlyUrl,
-        };
-      },
-    });
-    const code = await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power']);
-    expect(code).toBe(0);
-    expect(ensured).toBe(cwd); // a detached daemon was ensured
-    expect(captured).toMatchObject({ hasClient: true, hasSessions: true, task: 'do a thing', cwd, mode: 'max-power' });
-    expect(captured.readOnlyUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
-    expect(captured.token).toBeTruthy(); // initial task submitted → correlation token
-    // a queue file was dropped for the daemon (no in-process Orchestrator)
-    const queue = path.join(cwd, '.omakase', 'queue');
-    expect(readdirSync(queue).some((f) => f.endsWith('.prompt'))).toBe(true);
-  });
-
-  it('persists a manual wiki entry via the `wiki add` CLI', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-wiki-add-'));
-    const cli = createCli({
-      write: () => {},
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-    });
-    const code = await cli.main([
-      'wiki',
-      'add',
-      'CLI editable knowledge',
-      '--body',
-      'Manual wiki edits persist beside agent-authored knowledge.',
-      '--cwd',
-      cwd,
-    ]);
-    expect(code).toBe(0);
-    expect(readFileSync(path.join(cwd, '.omakase', 'wiki.json'), 'utf8')).toContain('CLI editable knowledge');
-  });
-
-  it('forwards the resolved dirs + flags to the spawned daemon (serveArgs)', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
-    let serveArgs: string[] | undefined;
-    const cli = createCli({
-      write: () => {},
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c, sa) => {
-        serveArgs = sa;
-        return { pid: 1, startedAt: 0, version: '0', cwd: c };
-      },
-      launchTui: async () => {},
-    });
-    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--mode', 'max-power', '--agent', 'codex']);
-    expect(serveArgs).toContain('--mode');
-    expect(serveArgs).toContain('max-power');
-    expect(serveArgs).toContain('--agent');
-    expect(serveArgs).toContain('codex');
-    expect(serveArgs).toContain('--runs-dir');
-    expect(serveArgs).toContain('--queue-dir');
-  });
-
-  it('pins the initial tui task in the queue when --agent is provided', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-agent-'));
-    const cli = createCli({
-      write: () => {},
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
-      launchTui: async () => {},
-    });
-    await cli.main(['tui', 'do a thing', '--cwd', cwd, '--agent', 'codex']);
-    const queue = path.join(cwd, '.omakase', 'queue');
-    const queued = readdirSync(queue).find((file) => file.endsWith('.prompt'));
-    expect(queued).toBeTruthy();
-    expect(readFileSync(path.join(queue, queued!), 'utf8')).toBe('@agent codex\ndo a thing');
-  });
-
-  it('does not hang the TUI without an interactive terminal', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
-    const out: string[] = [];
-    const cli = createCli({
-      write: (t) => out.push(t),
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
-      // launchTui NOT injected → exercises the real launcher's non-TTY guard
-    });
-    const code = await cli.main(['tui', 'do a thing', '--cwd', cwd]);
-    expect(code).toBe(0);
-    expect(out.join('\n')).toMatch(/no interactive terminal/);
-  });
-
-  it('launches the run-list TUI when given no task (nothing submitted)', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'omakase-cli-tui-'));
-    let captured: { hasClient: boolean; task?: string; token?: string } = { hasClient: false };
-    const cli = createCli({
-      write: () => {},
-      detectionOptions: OFFLINE,
-      createRuntime: () => createAgentRuntime({ fallbackToBuiltin: true, detection: OFFLINE }),
-      ensureDaemon: async (c) => ({ pid: 1, startedAt: 0, version: '0', cwd: c }),
-      launchTui: async (opts) => {
-        captured = { hasClient: Boolean(opts.client), task: opts.task, token: opts.token };
-      },
-    });
-    const code = await cli.main(['tui', '--cwd', cwd]);
-    expect(code).toBe(0);
-    expect(captured.hasClient).toBe(true);
-    expect(captured.task).toBeUndefined();
-    expect(captured.token).toBeUndefined();
   });
 });
 

@@ -16,6 +16,9 @@ export default defineConfig({
       '@omakase/core': fileURLToPath(
         new URL('../core/src/index.ts', import.meta.url),
       ),
+      '@omakase/storage': fileURLToPath(
+        new URL('../storage/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {

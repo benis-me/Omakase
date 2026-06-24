@@ -1,15 +1,13 @@
 {
   "name": "@omakase/cli",
   "version": "0.1.0",
-  "description": "Omakase command-line + TUI entrypoint. Detect agents, run tasks, and drive the orchestrator interactively — all on top of @omakase/core.",
+  "description": "Omakase headless command-line entrypoint. Detect agents, run tasks, and drive the orchestrator — all on top of @omakase/core, persisting through @omakase/storage.",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "agent",
     "ai",
     "cli",
-    "tui",
-    "ink",
     "omakase"
   ],
   "repository": {
@@ -33,20 +31,14 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "omakase": "node bin/omakase.mjs",
-    "dev": "tsx src/dev.ts",
-    "test:tui": "bun --conditions=development run tests-bun/smoke.tsx"
+    "dev": "tsx src/dev.ts"
   },
   "dependencies": {
     "@omakase/core": "workspace:*",
     "@omakase/daemon": "workspace:*",
-    "@opentui/core": "0.4.1",
-    "@opentui/react": "0.4.1",
-    "react": "^19"
+    "@omakase/storage": "workspace:*"
   },
   "engines": {
     "node": ">=20"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.3.14"
   }
 }

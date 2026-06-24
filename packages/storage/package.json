@@ -1,0 +1,50 @@
+{
+  "name": "@omakase/storage",
+  "version": "0.1.0",
+  "description": "Omakase persistence — .omks workspace files + per-workspace SQLite. Implements RunStore/SessionStore/KnowledgeStore over SQLite, plus authored-file readers (specs/agents/memory/commands/workflows), a global workspace registry, and a legacy .omakase importer.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "omakase",
+    "sqlite",
+    "persistence",
+    "storage",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/omakase.git",
+    "directory": "packages/storage"
+  },
+  "homepage": "https://github.com/your-org/omakase#readme",
+  "bugs": "https://github.com/your-org/omakase/issues",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "yaml": "^2.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}
