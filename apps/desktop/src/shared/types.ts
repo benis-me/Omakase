@@ -118,6 +118,6 @@ export interface AppInfo {
   id: string;
   name: string;
   path: string;
-  kind: 'editor' | 'terminal';
+  kind: 'editor' | 'terminal' | 'other';
   icon: string | null;
 }

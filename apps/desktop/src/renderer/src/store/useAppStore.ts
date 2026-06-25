@@ -1,7 +1,10 @@
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type {
   ActiveWorkspace,
+  AppInfo,
   AppSettings,
+  GitInfo,
   ProjectInfo,
   ScriptSession,
   ThemeMode,
@@ -24,6 +27,8 @@ interface AppState {
   projects: ProjectInfo[];
   sessions: Record<string, ScriptSession>;
   selectedTerminal: string | null;
+  gitInfo: GitInfo | null;
+  apps: AppInfo[];
 
   init: () => Promise<void>;
   setNav: (nav: NavSection) => void;
@@ -34,6 +39,8 @@ interface AppState {
   stopScript: (id: string) => Promise<void>;
   restartScript: (id: string) => Promise<void>;
   selectTerminal: (id: string | null) => void;
+  loadGit: () => Promise<void>;
+  killPortAndRestart: (id: string, port: number) => Promise<void>;
 
   browseAndAdd: () => Promise<void>;
   createWorkspace: (parentDir: string, name: string) => Promise<void>;
@@ -57,6 +64,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   sessions: {},
   selectedTerminal: null,
+  gitInfo: null,
+  apps: [],
 
   init: async () => {
     const [workspaces, active, settings] = await Promise.all([
@@ -68,7 +77,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     api().onWorkspacesChanged((list) => set({ workspaces: list }));
     api().onActiveWorkspaceChanged((ws) =>
-      set({ active: ws, projects: [], sessions: {}, selectedTerminal: null }),
+      set({ active: ws, projects: [], sessions: {}, selectedTerminal: null, gitInfo: null }),
     );
     api().onSettingsChanged((s) => set({ settings: s }));
 
@@ -82,7 +91,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         return prev ? { sessions: { ...s.sessions, [id]: { ...prev, url } } } : {};
       }),
     );
+    api().onPortConflict(({ id, port }) => {
+      const name = get().projects.flatMap((p) => p.scripts).find((s) => s.id === id)?.name ?? id;
+      toast.error(`Port ${port} is already in use (${name})`, {
+        action: { label: 'Free & restart', onClick: () => void get().killPortAndRestart(id, port) },
+      });
+    });
 
+    void api().apps.list().then((apps) => set({ apps }));
     if (active) void get().scanDev();
   },
 
@@ -94,6 +110,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const byId: Record<string, ScriptSession> = {};
     for (const s of sessions) byId[s.id] = s;
     set({ projects, sessions: byId });
+    void get().loadGit();
+  },
+
+  loadGit: async () => {
+    set({ gitInfo: await api().git.status() });
+  },
+
+  killPortAndRestart: async (id, port) => {
+    await api().ports.kill(port);
+    await get().restartScript(id);
   },
 
   startScript: async (id) => {

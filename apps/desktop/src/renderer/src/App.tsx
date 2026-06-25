@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Toaster } from 'sonner';
 import { useAppStore } from '@/store/useAppStore';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
@@ -68,6 +69,7 @@ export default function App() {
         </Panel>
       </PanelGroup>
       <CommandPalette />
+      <Toaster theme="system" position="bottom-right" richColors closeButton />
     </div>
   );
 }

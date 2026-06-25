@@ -46,6 +46,23 @@ const api: OmakaseApi = {
     getBuffer: (scriptId) => ipcRenderer.invoke(IPC.TerminalGetBuffer, scriptId),
     clear: (scriptId) => ipcRenderer.invoke(IPC.TerminalClear, scriptId),
   },
+  ports: {
+    who: (port) => ipcRenderer.invoke(IPC.PortsWho, port),
+    kill: (port) => ipcRenderer.invoke(IPC.PortsKill, port),
+    killPid: (pid) => ipcRenderer.invoke(IPC.PortsKillPid, pid),
+  },
+  git: {
+    status: () => ipcRenderer.invoke(IPC.GitStatus),
+  },
+  apps: {
+    list: () => ipcRenderer.invoke(IPC.AppsList),
+    openWith: (appId, target) => ipcRenderer.invoke(IPC.AppsOpenWith, appId, target),
+    openTerminal: (appId) => ipcRenderer.invoke(IPC.AppsOpenTerminal, appId),
+  },
+  env: {
+    read: (absPath) => ipcRenderer.invoke(IPC.EnvRead, absPath),
+    write: (absPath, content) => ipcRenderer.invoke(IPC.EnvWrite, absPath, content),
+  },
   versions: {
     electron: process.versions.electron ?? '',
     node: process.versions.node ?? '',

@@ -94,4 +94,14 @@ export function registerIpc(
   );
   ipcMain.handle(IPC.TerminalGetBuffer, (_e, id: string) => dev.getBuffer(id));
   ipcMain.handle(IPC.TerminalClear, (_e, id: string) => dev.clear(id));
+
+  ipcMain.handle(IPC.PortsWho, (_e, port: number) => dev.portsWho(port));
+  ipcMain.handle(IPC.PortsKill, (_e, port: number) => dev.portsKill(port));
+  ipcMain.handle(IPC.PortsKillPid, (_e, pid: number) => dev.portsKillPid(pid));
+  ipcMain.handle(IPC.GitStatus, () => dev.gitStatus());
+  ipcMain.handle(IPC.AppsList, () => dev.listApps());
+  ipcMain.handle(IPC.AppsOpenWith, (_e, appId: string, target?: string) => dev.openWith(appId, target));
+  ipcMain.handle(IPC.AppsOpenTerminal, (_e, appId: string) => dev.openTerminal(appId));
+  ipcMain.handle(IPC.EnvRead, (_e, absPath: string) => dev.readEnv(absPath));
+  ipcMain.handle(IPC.EnvWrite, (_e, absPath: string, content: string) => dev.writeEnv(absPath, content));
 }

@@ -35,6 +35,15 @@ export const IPC = {
   TerminalResize: 'terminal:resize',
   TerminalGetBuffer: 'terminal:getBuffer',
   TerminalClear: 'terminal:clear',
+  PortsWho: 'ports:who',
+  PortsKill: 'ports:kill',
+  PortsKillPid: 'ports:killPid',
+  GitStatus: 'git:status',
+  AppsList: 'apps:list',
+  AppsOpenWith: 'apps:openWith',
+  AppsOpenTerminal: 'apps:openTerminal',
+  EnvRead: 'env:read',
+  EnvWrite: 'env:write',
 
   // Events (main → renderer)
   EvtWorkspacesChanged: 'evt:workspacesChanged',

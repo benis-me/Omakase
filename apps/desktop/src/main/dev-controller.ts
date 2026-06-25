@@ -4,10 +4,15 @@
  * node-pty, surfacing terminal output, status, URLs, and port conflicts to the
  * renderer through the injected {@link DevEvents}.
  */
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import type { OpenWorkspace } from '@omakase/storage';
-import type { ProjectInfo, ScriptInfo, ScriptSession } from '@shared/types';
+import type { AppInfo, GitInfo, PortInfo, ProjectInfo, ScriptInfo, ScriptSession } from '@shared/types';
 import { scanWorkspace } from './services/scanner.js';
 import { ProcessManager } from './services/process-manager.js';
+import { PortService } from './services/port-service.js';
+import { GitService } from './services/git-service.js';
+import { AppLauncher } from './services/app-launcher.js';
 
 export interface DevEvents {
   scriptData(id: string, chunk: string): void;
@@ -19,6 +24,9 @@ export interface DevEvents {
 
 export class DevController {
   private readonly processes: ProcessManager;
+  private readonly ports = new PortService();
+  private readonly git = new GitService();
+  private readonly apps = new AppLauncher();
   private workspace: OpenWorkspace | null = null;
   private projects: ProjectInfo[] = [];
   private readonly scriptIndex = new Map<string, ScriptInfo>();
@@ -82,6 +90,60 @@ export class DevController {
 
   clear(id: string): void {
     this.processes.clearBuffer(id);
+  }
+
+  // ── Ports ─────────────────────────────────────────────────────────────────
+
+  portsWho(port: number): Promise<PortInfo[]> {
+    return this.ports.whoListens(port);
+  }
+  portsKill(port: number): Promise<number[]> {
+    return this.ports.killPort(port);
+  }
+  portsKillPid(pid: number): Promise<void> {
+    return this.ports.killPid(pid);
+  }
+
+  // ── Git ─────────────────────────────────────────────────────────────────
+
+  gitStatus(): Promise<GitInfo | null> {
+    return this.workspace ? this.git.info(this.workspace.root) : Promise.resolve(null);
+  }
+
+  // ── Open with / terminal ──────────────────────────────────────────────────
+
+  listApps(): AppInfo[] {
+    return this.apps.list();
+  }
+  openWith(appId: string, target?: string): void {
+    this.apps.openWith(appId, this.resolveInWorkspace(target) ?? this.workspace?.root ?? '');
+  }
+  openTerminal(appId: string): void {
+    if (this.workspace) this.apps.runInTerminal(appId, this.workspace.root, '');
+  }
+
+  // ── Env files ─────────────────────────────────────────────────────────────
+
+  readEnv(absPath: string): string {
+    const resolved = this.resolveInWorkspace(absPath);
+    if (!resolved) return '';
+    try {
+      return readFileSync(resolved, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+  writeEnv(absPath: string, content: string): void {
+    const resolved = this.resolveInWorkspace(absPath);
+    if (resolved) writeFileSync(resolved, content, 'utf8');
+  }
+
+  /** Resolve a path and confirm it stays within the workspace root (no escapes). */
+  private resolveInWorkspace(target?: string): string | null {
+    if (!this.workspace || !target) return null;
+    const root = path.resolve(this.workspace.root);
+    const resolved = path.resolve(root, target);
+    return resolved === root || resolved.startsWith(root + path.sep) ? resolved : null;
   }
 
   shutdown(): void {

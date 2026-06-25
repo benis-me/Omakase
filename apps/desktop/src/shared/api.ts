@@ -4,9 +4,12 @@
  */
 import type {
   ActiveWorkspace,
+  AppInfo,
   AppSettings,
   AppVersions,
+  GitInfo,
   LegacyImportSummary,
+  PortInfo,
   ProjectInfo,
   ScriptSession,
   WorkspaceInfo,
@@ -53,6 +56,23 @@ export interface OmakaseApi {
     resize(scriptId: string, cols: number, rows: number): Promise<void>;
     getBuffer(scriptId: string): Promise<string>;
     clear(scriptId: string): Promise<void>;
+  };
+  ports: {
+    who(port: number): Promise<PortInfo[]>;
+    kill(port: number): Promise<number[]>;
+    killPid(pid: number): Promise<void>;
+  };
+  git: {
+    status(): Promise<GitInfo | null>;
+  };
+  apps: {
+    list(): Promise<AppInfo[]>;
+    openWith(appId: string, target?: string): Promise<void>;
+    openTerminal(appId: string): Promise<void>;
+  };
+  env: {
+    read(absPath: string): Promise<string>;
+    write(absPath: string, content: string): Promise<void>;
   };
   versions: AppVersions;
 
