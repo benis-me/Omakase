@@ -106,6 +106,35 @@ _Code style, patterns to follow, things to avoid._
 _What "complete" looks like here: tests green, lint clean, etc._
 `;
 
+// A runnable starter "mission": orchestrator → parallel workers → validator,
+// expressed with the dynamic-workflow API (agent/phase/parallel/log). String.raw
+// keeps the backslashes/regex literal in the generated script.
+const MISSION_TEMPLATE = String.raw`// name: Mission
+// Orchestrator -> parallel workers -> independent validator.
+// Decompose a goal into features, build each in parallel, then validate.
+
+phase('Plan');
+const plan = await agent(
+  'List 3 to 6 independently buildable features for this workspace, one feature per line.',
+);
+
+phase('Build');
+const features = plan
+  .split('\n')
+  .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+  .filter(Boolean);
+log('Building ' + features.length + ' feature(s)');
+await parallel(
+  features.map((f) => () => agent('Implement this feature, writing tests first:\n' + f)),
+);
+
+phase('Validate');
+await agent(
+  'Independently validate the work for correctness and completeness; list any gaps as ' +
+    'concrete fix-tasks. Do NOT implement fixes yourself.\n\nFeatures:\n' + features.join('\n'),
+);
+`;
+
 export interface EnsureWorkspaceOptions {
   name?: string;
   now?: number;
@@ -134,6 +163,9 @@ export function ensureWorkspace(root: string, options: EnsureWorkspaceOptions = 
 
   const agentsMd = path.join(memoryDir(root), 'AGENTS.md');
   if (!existsSync(agentsMd)) writeFileSync(agentsMd, STARTER_AGENTS_MD, 'utf8');
+
+  const missionFile = path.join(workflowsDir(root), 'mission.ts');
+  if (!existsSync(missionFile)) writeFileSync(missionFile, MISSION_TEMPLATE, 'utf8');
 
   let manifest = readWorkspace(root);
   if (!manifest) {

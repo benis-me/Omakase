@@ -113,9 +113,10 @@ describe('omks authored documents', () => {
     expect(cmd?.body.trim()).toBe('Remember: $ARGUMENTS');
   });
 
-  it('creates workflows and derives the name from a // name: hint', () => {
+  it('seeds a mission template and creates workflows from a // name: hint', () => {
+    expect(listWorkflows(root).some((w) => w.name === 'Mission')).toBe(true);
     const wf = createWorkflow(root, 'Nightly Audit');
     expect(wf.id).toBe('nightly-audit');
-    expect(listWorkflows(root)[0].name).toBe('Nightly Audit');
+    expect(listWorkflows(root).map((w) => w.name)).toContain('Nightly Audit');
   });
 });
