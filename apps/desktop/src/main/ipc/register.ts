@@ -4,7 +4,7 @@
  */
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { AgentDoc, RunControl, RunStartInput, SpecDoc } from '@shared/types';
+import type { AgentDoc, AutonomyLevel, RunControl, RunStartInput, SpecDoc } from '@shared/types';
 import type { WorkspaceHost } from '../workspace-host.js';
 import type { DevController } from '../dev-controller.js';
 import type { ContentController } from '../content-controller.js';
@@ -145,6 +145,7 @@ export function registerIpc(
   ipcMain.handle(IPC.RunsList, () => runs.listRuns());
   ipcMain.handle(IPC.RunsGet, (_e, id: string) => runs.getRun(id));
   ipcMain.handle(IPC.RunsStart, (_e, input: RunStartInput) => runs.startRun(input));
+  ipcMain.handle(IPC.RunsResume, (_e, id: string, autonomy: AutonomyLevel) => runs.resumeRun(id, autonomy));
   ipcMain.handle(IPC.RunsControl, (_e, id: string, command: RunControl) => runs.control(id, command));
   ipcMain.handle(IPC.RunsDelete, (_e, id: string) => runs.deleteRun(id));
 }

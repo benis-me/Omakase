@@ -8,6 +8,7 @@ import type {
   AppInfo,
   AppSettings,
   AppVersions,
+  AutonomyLevel,
   CockpitEvent,
   DetectedAgentDto,
   GitInfo,
@@ -120,6 +121,7 @@ export interface OmakaseApi {
     list(): Promise<RunSummaryDto[]>;
     get(id: string): Promise<RunDetailDto | null>;
     start(input: RunStartInput): Promise<string>;
+    resume(id: string, autonomy: AutonomyLevel): Promise<boolean>;
     control(id: string, command: RunControl): Promise<void>;
     delete(id: string): Promise<void>;
   };

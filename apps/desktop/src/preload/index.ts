@@ -98,6 +98,7 @@ const api: OmakaseApi = {
     list: () => ipcRenderer.invoke(IPC.RunsList),
     get: (id) => ipcRenderer.invoke(IPC.RunsGet, id),
     start: (input) => ipcRenderer.invoke(IPC.RunsStart, input),
+    resume: (id, autonomy) => ipcRenderer.invoke(IPC.RunsResume, id, autonomy),
     control: (id, command) => ipcRenderer.invoke(IPC.RunsControl, id, command),
     delete: (id) => ipcRenderer.invoke(IPC.RunsDelete, id),
   },

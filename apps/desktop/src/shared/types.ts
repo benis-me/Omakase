@@ -201,6 +201,10 @@ export interface RunSummaryDto {
   spentCostUsd: number | null;
   createdAt: number;
   updatedAt: number;
+  /** True if this run is executing in-process right now (vs. interrupted/done). */
+  live: boolean;
+  /** True if a non-live, non-terminal run can be resumed. */
+  resumable: boolean;
 }
 
 export type CockpitEventKind =

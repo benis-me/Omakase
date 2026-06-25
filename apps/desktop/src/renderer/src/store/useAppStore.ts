@@ -51,6 +51,7 @@ interface AppState {
     mode?: AppSettings['defaultMode'];
     autonomy?: AppSettings['defaultAutonomy'];
   }) => Promise<void>;
+  resumeRun: (id: string) => Promise<void>;
   controlRun: (command: RunControl) => Promise<void>;
   deleteRun: (id: string) => Promise<void>;
 
@@ -177,6 +178,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       specId: input.specId,
     });
     set({ currentRunId: id, feed: [] });
+    void get().loadRuns();
+  },
+  resumeRun: async (id) => {
+    const autonomy = get().settings?.defaultAutonomy ?? 'low';
+    await api().runs.resume(id, autonomy);
+    await get().openRun(id);
     void get().loadRuns();
   },
   controlRun: async (command) => {
