@@ -145,6 +145,9 @@ export function registerIpc(
   ipcMain.handle(IPC.RunsList, () => runs.listRuns());
   ipcMain.handle(IPC.RunsGet, (_e, id: string) => runs.getRun(id));
   ipcMain.handle(IPC.RunsStart, (_e, input: RunStartInput) => runs.startRun(input));
+  ipcMain.handle(IPC.RunsStartWorkflow, (_e, workflowId: string, autonomy: AutonomyLevel) =>
+    runs.startWorkflow(workflowId, autonomy),
+  );
   ipcMain.handle(IPC.RunsResume, (_e, id: string, autonomy: AutonomyLevel) => runs.resumeRun(id, autonomy));
   ipcMain.handle(IPC.RunsControl, (_e, id: string, command: RunControl) => runs.control(id, command));
   ipcMain.handle(IPC.RunsDelete, (_e, id: string) => runs.deleteRun(id));

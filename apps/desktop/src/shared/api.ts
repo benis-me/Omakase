@@ -121,6 +121,7 @@ export interface OmakaseApi {
     list(): Promise<RunSummaryDto[]>;
     get(id: string): Promise<RunDetailDto | null>;
     start(input: RunStartInput): Promise<string>;
+    startWorkflow(workflowId: string, autonomy: AutonomyLevel): Promise<string>;
     resume(id: string, autonomy: AutonomyLevel): Promise<boolean>;
     control(id: string, command: RunControl): Promise<void>;
     delete(id: string): Promise<void>;

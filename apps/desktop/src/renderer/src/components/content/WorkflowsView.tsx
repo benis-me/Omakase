@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Play, Trash2 } from 'lucide-react';
 import type { WorkflowDoc } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
@@ -8,6 +8,7 @@ import { ContentLayout, EmptyDetail } from './ContentLayout';
 
 export function WorkflowsView() {
   const activePath = useAppStore((s) => s.active?.path);
+  const startWorkflow = useAppStore((s) => s.startWorkflow);
   const [workflows, setWorkflows] = useState<WorkflowDoc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [source, setSource] = useState('');
@@ -70,12 +71,16 @@ export function WorkflowsView() {
           <div className="flex items-center gap-2 border-b px-4 py-2">
             <span className="font-mono text-[12px] text-muted-foreground">workflows/{selected.id}.ts</span>
             <Button
-              variant={dirty ? 'omk' : 'ghost'}
+              variant="ghost"
               size="sm"
-              className="ml-auto"
-              disabled={!dirty}
-              onClick={() => void save()}
+              className="ml-auto gap-1.5 text-muted-foreground hover:text-run"
+              title="Run this workflow (requires Bun)"
+              onClick={() => void startWorkflow(selected.id)}
             >
+              <Play className="size-3.5" />
+              Run
+            </Button>
+            <Button variant={dirty ? 'omk' : 'ghost'} size="sm" disabled={!dirty} onClick={() => void save()}>
               Save
             </Button>
             <button

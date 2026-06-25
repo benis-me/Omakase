@@ -80,6 +80,7 @@ export const IPC = {
   RunsList: 'runs:list',
   RunsGet: 'runs:get',
   RunsStart: 'runs:start',
+  RunsStartWorkflow: 'runs:startWorkflow',
   RunsResume: 'runs:resume',
   RunsControl: 'runs:control',
   RunsDelete: 'runs:delete',

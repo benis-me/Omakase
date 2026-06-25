@@ -29,6 +29,15 @@ describe('toCockpitEvent', () => {
       toCockpitEvent(ev({ type: 'risk-gate-opened', gate: { id: 'g1', question: 'Proceed?', reason: 'user-confirmation' }, gates: [] }), 0),
     ).toMatchObject({ kind: 'gate', gateId: 'g1', level: 'warn', detail: 'Proceed?' });
   });
+
+  it('maps dynamic-workflow agent and finish events', () => {
+    expect(
+      toCockpitEvent(ev({ type: 'workflow-agent-started', agent: { title: 'worker A', role: 'worker' }, workflow: {} }), 0),
+    ).toMatchObject({ kind: 'task', title: 'worker A', role: 'worker' });
+    expect(
+      toCockpitEvent(ev({ type: 'workflow-finished', workflow: { status: 'succeeded' } }), 1),
+    ).toMatchObject({ kind: 'finished', level: 'success' });
+  });
 });
 
 describe('toCockpitFeed', () => {

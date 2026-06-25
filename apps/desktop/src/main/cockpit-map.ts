@@ -101,6 +101,26 @@ export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEv
     }
     case 'error':
       return make(seq, 'error', `Error: ${event.phase}`, { detail: event.message, level: 'error' });
+    case 'workflow-created':
+      return make(seq, 'status', 'Workflow started');
+    case 'workflow-phase-started':
+      return make(seq, 'plan', `Phase: ${event.phase.name}`);
+    case 'workflow-agent-started':
+      return make(seq, 'task', event.agent.title, { role: event.agent.role });
+    case 'workflow-agent-finished': {
+      const ok = event.agent.status === 'succeeded';
+      return make(seq, 'task', event.agent.title, {
+        role: event.agent.role,
+        status: event.agent.status,
+        level: ok ? 'success' : event.agent.status === 'failed' ? 'error' : 'info',
+      });
+    }
+    case 'workflow-checkpoint':
+      return make(seq, 'note', `Checkpoint: ${event.checkpoint.label}`);
+    case 'workflow-finished': {
+      const level: CockpitLevel = event.workflow.status === 'succeeded' ? 'success' : event.workflow.status === 'failed' ? 'error' : 'info';
+      return make(seq, 'finished', `Workflow ${event.workflow.status}`, { status: event.workflow.status, level });
+    }
     default:
       return null;
   }

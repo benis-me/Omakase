@@ -55,6 +55,7 @@ interface AppState {
     autonomy?: AppSettings['defaultAutonomy'];
   }) => Promise<void>;
   resumeRun: (id: string) => Promise<void>;
+  startWorkflow: (workflowId: string) => Promise<void>;
   controlRun: (command: RunControl) => Promise<void>;
   deleteRun: (id: string) => Promise<void>;
 
@@ -190,6 +191,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     await api().runs.resume(id, autonomy);
     await get().openRun(id);
     void get().loadRuns();
+  },
+  startWorkflow: async (workflowId) => {
+    const autonomy = get().settings?.defaultAutonomy ?? 'low';
+    try {
+      const runId = await api().runs.startWorkflow(workflowId, autonomy);
+      set({ nav: 'runs', currentRunId: runId, feed: [] });
+      void get().loadRuns();
+    } catch (err) {
+      toast.error(`Could not start workflow: ${err instanceof Error ? err.message : String(err)}`);
+    }
   },
   controlRun: async (command) => {
     const id = get().currentRunId;

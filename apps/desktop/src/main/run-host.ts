@@ -9,18 +9,21 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
 import {
+  BunWorkflowScriptRunner,
+  createModelPolicy,
+  DynamicWorkflowRun,
   FileControlSource,
   Orchestrator,
   RESUMABLE_STATUSES,
   writeControl,
   type ControlPoll,
   type ControlSource,
-  type RunHandle,
+  type OrchestratorEvent,
   type RunRecord,
   type RunStatus,
 } from '@omakase/core';
 import type { OpenWorkspace } from '@omakase/storage';
-import { readSpec, type RunSummary } from '@omakase/storage';
+import { readSpec, readWorkflow, type RunSummary } from '@omakase/storage';
 import type {
   AutonomyLevel,
   CockpitEvent,
@@ -32,8 +35,17 @@ import type {
 import type { WorkspaceHost } from './workspace-host.js';
 import { toCockpitEvent, toCockpitFeed } from './cockpit-map.js';
 
+/** The slice of a run handle the host needs — satisfied by both the Orchestrator
+ * RunHandle and a DynamicWorkflowHandle. */
+interface LiveHandle {
+  readonly id: string;
+  readonly events: AsyncIterable<OrchestratorEvent>;
+  readonly result: Promise<unknown>;
+  cancel(): void;
+}
+
 interface LiveRun {
-  handle: RunHandle;
+  handle: LiveHandle;
   autonomy: AutonomyLevel;
   controlDir: string;
   controlSeq: number;
@@ -118,6 +130,29 @@ export class RunHost {
     // Continue the cockpit feed's seq numbering after the already-persisted feed.
     this.track(handle, autonomy, controlDir, toCockpitFeed(record.events).length);
     return true;
+  }
+
+  /** Run a dynamic workflow script as a run (requires Bun on PATH). */
+  startWorkflow(workflowId: string, autonomy: AutonomyLevel): string {
+    const ws = this.requireWorkspace();
+    const doc = readWorkflow(ws.root, workflowId);
+    if (!doc) throw new Error('Workflow not found.');
+    const controlDir = this.controlDir(ws);
+    this.runtime ??= createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
+    const run = new DynamicWorkflowRun({
+      runtime: this.runtime,
+      store: ws.runStore,
+      knowledgeStore: ws.knowledgeStore,
+      policy: createModelPolicy('normal'),
+      scriptRunner: new BunWorkflowScriptRunner({ cwd: ws.root }),
+      script: { id: doc.id, path: doc.path, source: doc.source, runtime: 'bun', createdAt: Date.now() },
+      request: { prompt: `Run workflow: ${doc.name}`, cwd: ws.root, mode: 'normal' },
+      maxConcurrency: 16,
+      maxAgents: 1000,
+    });
+    const handle = run.start();
+    this.track(handle, autonomy, controlDir, 0);
+    return handle.id;
   }
 
   async control(runId: string, command: RunControl): Promise<void> {
@@ -213,7 +248,7 @@ export class RunHost {
     });
   }
 
-  private track(handle: RunHandle, autonomy: AutonomyLevel, controlDir: string, seqBase: number): void {
+  private track(handle: LiveHandle, autonomy: AutonomyLevel, controlDir: string, seqBase: number): void {
     const run: LiveRun = { handle, autonomy, controlDir, controlSeq: 0, seq: seqBase };
     this.live.set(handle.id, run);
     this.events.liveChanged(this.live.size);
