@@ -5,12 +5,24 @@ import { WorkspaceHost } from './workspace-host.js';
 import { DevController } from './dev-controller.js';
 import { ContentController } from './content-controller.js';
 import { RunHost } from './run-host.js';
+import { TrayController } from './tray.js';
 import { registerIpc } from './ipc/register.js';
 
 let mainWindow: BrowserWindow | null = null;
 let host: WorkspaceHost;
 let dev: DevController;
 let runs: RunHost;
+let tray: TrayController | null = null;
+
+function showMainWindow(): void {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -58,6 +70,7 @@ app.whenReady().then(() => {
   runs = new RunHost(host, {
     cockpitEvent: (runId, event) => send(IPC.EvtRunEvent, { runId, event }),
     runStatus: (runId) => send(IPC.EvtRunStatus, runId),
+    liveChanged: (count) => tray?.update(count),
   });
 
   const settings = host.getSettings();
@@ -75,12 +88,16 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  tray = new TrayController(showMainWindow);
+  tray.init();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+// On macOS, keep the process (and any in-process runs) alive when the window is
+// closed — the tray reopens it. Other platforms quit.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
@@ -90,3 +107,5 @@ app.on('before-quit', () => {
   dev?.shutdown();
   host?.shutdown();
 });
+
+app.on('will-quit', () => tray?.destroy());

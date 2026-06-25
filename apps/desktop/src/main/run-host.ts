@@ -44,6 +44,8 @@ export interface RunHostEvents {
   cockpitEvent(runId: string, event: CockpitEvent): void;
   /** A run's lifecycle changed — the renderer should refresh the list. */
   runStatus(runId: string): void;
+  /** The number of in-process live runs changed (drives the tray). */
+  liveChanged(count: number): void;
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -164,6 +166,7 @@ export class RunHost {
     }
     await run.handle.result.catch(() => null);
     this.live.delete(runId);
+    this.events.liveChanged(this.live.size);
     this.events.runStatus(runId);
   }
 
@@ -213,6 +216,7 @@ export class RunHost {
   private track(handle: RunHandle, autonomy: AutonomyLevel, controlDir: string, seqBase: number): void {
     const run: LiveRun = { handle, autonomy, controlDir, controlSeq: 0, seq: seqBase };
     this.live.set(handle.id, run);
+    this.events.liveChanged(this.live.size);
     void this.pump(handle.id, run);
   }
 }
