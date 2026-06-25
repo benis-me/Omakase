@@ -1,111 +1,121 @@
 # Omakase
 
-> Agent runtime, multi-agent orchestration core, and CLI/TUI for autonomous
-> software work.
+> A desktop cockpit for spec-driven, long-running, autonomous multi-agent work —
+> built on the coding-CLI agents you already have installed.
 
-Omakase is a library-first toolkit for building agents on top of the coding-CLI
-agents you already have installed (Claude Code, Codex, Gemini, Cursor Agent,
-pi, …). It detects them, runs them through one unified event protocol, and
-orchestrates them in a continuous **router → planner → workers → reviewer →
-replan** loop with a resumable supervisor — usable as a library or through the
-`omakase` CLI/TUI.
+**おまかせ (omakase)** — "I'll leave it to you." Hand a spec to autonomous,
+long-running, multi-agent loops and let them complete the work, while you watch
+and steer. Omakase orchestrates the agent CLIs already on your machine (Claude
+Code, Codex, Gemini, Cursor Agent, pi, …) through one unified event protocol and
+a continuous **router → planner → workers → reviewer → replan** loop, with a
+DevDock-style project workbench built in.
 
 ```
-@omakase/cli   ──▶   @omakase/core   ──▶   @omakase/daemon
- CLI + Ink TUI        orchestration         agent runtime (dependency-free)
+apps/desktop ─┐
+              ├─▶ @omakase/core ─▶ @omakase/daemon
+@omakase/cli ─┘        ▲
+                       │
+              @omakase/storage  (.omks files + SQLite)
 ```
 
 - **`@omakase/daemon`** — detect agent CLIs, run them through a single
   `AgentEvent` stream, load skills. Zero runtime dependencies.
 - **`@omakase/core`** — the Ralph loop: router, plan graph, work modes, hooks,
-  wiki + codegraph, spec/TDD workflows, and a resumable, checkpointing
-  supervisor.
-- **`@omakase/cli`** — `omakase agents | run | tui`, all built on the core.
+  wiki + codegraph, spec / TDD / dynamic workflows, and a resumable,
+  checkpointing supervisor.
+- **`@omakase/storage`** — a per-project `.omks/` workspace: git-friendly
+  authored files (specs, agents, memory, commands, workflows) plus a SQLite
+  database for high-volume run/event data. Implements core's storage interfaces.
+- **`@omakase/cli`** — headless `omakase agents | run | serve`, on the core.
+- **`apps/desktop`** — the Electron cockpit (electron-vite + React 19 + Zustand +
+  Tailwind v4 + shadcn + radix).
+
+## The cockpit
+
+A workspace is any folder; opening it scaffolds a `.omks/` directory. The left
+rail switches a workspace's surfaces; the right pane edits/views them:
+
+- **Runs** — start a run from a spec or a prompt and watch the live, single-column
+  feed (routing, plan, tasks, tool calls, reviews, reports, knowledge, gates,
+  finish). Pause / resume / stop, queue a steering message, and answer risk
+  gates. The **autonomy dial** (off / low / medium / high) auto-proceeds past
+  gates up to its risk threshold; higher gates pause for your decision.
+- **Specs** — first-class markdown specs (phase + status) you hand to the loop.
+- **Agents** — author custom agent definitions; see the agent CLIs detected
+  locally.
+- **Memory** — the `AGENTS.md` briefing, rules, the accumulated project wiki, and
+  the agent knowledge log.
+- **Workflows** — dynamic orchestration scripts.
+- **Dev** — a DevDock-style workbench: scan and run project scripts with live
+  xterm terminals, free conflicting ports, edit `.env` files, see git status,
+  and "open with" your editor/terminal.
 
 ## Requirements
 
-- Node ≥ 20 (developed on 22)
-- pnpm 9
+- Node ≥ 20 (developed on 22), pnpm 9
+- macOS for the Dev workbench's "open with" + port tools (the rest is
+  cross-platform)
+- Optional: any coding-agent CLI on your `PATH`. With none installed, runs fall
+  back to the dependency-free built-in agent (no model calls).
 
-## Quickstart
+## Run the desktop app
 
 ```bash
 pnpm install
-pnpm -r build
-
-# List the agent CLIs detected on this machine
-pnpm --filter @omakase/cli omakase agents
-
-# Run a task. By default it uses your strongest installed agent; add --offline
-# to force the built-in agent and run with no model calls.
-pnpm --filter @omakase/cli omakase run "summarize this project" --offline
-
-# Open the interactive TUI
-pnpm --filter @omakase/cli omakase tui "add input validation and write tests"
-
-# Supervise a queue for long-running / 24-7 operation: resumes anything left
-# unfinished and ingests task files dropped into .omakase/queue/*.txt
-pnpm --filter @omakase/cli omakase serve --watch
+pnpm -r build                          # build daemon / core / storage / cli
+pnpm --filter @omakase/desktop dev     # launch the Electron app
 ```
 
-During development you can skip the build and run from source via tsx:
+> **Native modules:** `better-sqlite3` and `node-pty` stay compiled for Node so
+> the test suite runs under Node. `pnpm --filter @omakase/desktop dev` rebuilds
+> them for Electron's ABI (`electron-builder install-app-deps`); after running
+> the app, run `pnpm rebuild better-sqlite3` before `pnpm -r test` again. Package
+> a distributable with `pnpm --filter @omakase/desktop dist:mac`.
+
+## Headless CLI
+
+The same engine, without a UI — for automation and as the detached runner. The
+interactive `run`/`wiki`/`workflow` commands persist into the project's `.omks`
+workspace:
 
 ```bash
-pnpm --filter @omakase/cli dev agents
+pnpm --filter @omakase/cli omakase agents                       # list detected agents
+pnpm --filter @omakase/cli omakase run "summarize this" --offline
+pnpm --filter @omakase/cli omakase serve --watch                # 24/7 queue supervisor
 ```
 
-## Install `omakase` globally (auto-tracks your code)
+## The `.omks` workspace
 
-Put `omakase` on your `PATH` as a live launcher that runs the TypeScript source
-via tsx — so any edit to the code takes effect immediately, with **no rebuild**:
-
-```bash
-pnpm install            # once, so node_modules/.bin/tsx exists
-pnpm run link:global    # symlinks ~/.local/bin/omakase → scripts/omakase.sh
+```
+.omks/
+├── workspace.json      # manifest: name, settings, project roots
+├── specs/<id>.md       # authored specs (frontmatter + body)
+├── agents/<id>.md      # custom agent definitions
+├── memory/AGENTS.md    # briefing packet injected into runs
+├── memory/wiki.md      # rendered project wiki (knowledge accumulates here)
+├── commands/, workflows/
+└── omks.db             # SQLite: runs, events, tasks, knowledge (gitignored)
 ```
 
-Then from any project directory (the CLI operates on the current working dir):
-
-```bash
-cd ~/some-project
-omakase agents
-omakase run "summarize this project" --offline
-omakase serve --watch
-```
-
-`~/.local/bin` must be on your `PATH`. The launcher is a symlink into this repo,
-so both the launcher and the code it runs stay in sync with your checkout; after
-a dependency change run `pnpm install` again. Uninstall with
-`rm ~/.local/bin/omakase`.
-
-Prefer a compiled global binary instead (faster startup, no tsx)? Build and let
-pnpm link it — but then rebuild (or run `pnpm run build:watch`) after edits:
-
-```bash
-pnpm -r build && pnpm --filter @omakase/cli link --global
-```
+Authored content is git-friendly markdown; machine-written run/event data lives
+in SQLite. A legacy `.omakase/` directory is imported non-destructively on first
+open.
 
 ## Use it as a library
 
 ```ts
 import { createAgentRuntime } from '@omakase/daemon';
-import { Orchestrator, MemoryRunStore } from '@omakase/core';
+import { Orchestrator } from '@omakase/core';
+import { openWorkspace } from '@omakase/storage';
 
 const runtime = createAgentRuntime({ fallbackToBuiltin: true });
-const agents = await runtime.detect();
-
-const orchestrator = new Orchestrator({ runtime, store: new MemoryRunStore() });
-const handle = orchestrator.start({ prompt: 'Build a CSV parser and write tests', cwd: process.cwd() });
+const ws = openWorkspace(process.cwd());                 // ensures .omks, opens omks.db
+const orchestrator = new Orchestrator({ runtime, store: ws.runStore, knowledgeStore: ws.knowledgeStore });
+const handle = orchestrator.start({ prompt: 'Build a CSV parser and write tests', cwd: ws.root });
 
 for await (const event of handle.events) console.log(event.type);
-const result = await handle.result; // { status, summary, plan, wiki, events }
-```
-
-The runnable end-to-end demo lives in
-[`examples/local-project`](./examples/local-project):
-
-```bash
-pnpm --filter @omakase/example-local-project start
+const result = await handle.result;                      // { status, summary, plan, wiki, events }
+ws.close();
 ```
 
 ## Scripts
@@ -115,23 +125,31 @@ pnpm --filter @omakase/example-local-project start
 | `pnpm -r build` | Build every package (topological order) |
 | `pnpm -r typecheck` | Strict typecheck every package |
 | `pnpm -r test` | Run every package's Vitest suite |
-| `pnpm check` | `typecheck` + `test` |
+| `pnpm --filter @omakase/desktop build` | electron-vite build (main/preload/renderer) |
 
 ## Testing philosophy
 
-Nothing in the test suite touches a real model or requires a real agent CLI.
-The daemon's `Transport` is the seam: a controllable **fake transport** scripts
-stdout/stdin/exit so detection, every stream parser, the pi RPC session, and
-abort/timeout are all deterministic. The core runs against **scripted in-process
-agents**, and the CLI/TUI commands take injectable dependencies so they run
-headless. Real CLIs are a runtime concern, verified by hand (`omakase agents`
-detects them; `omakase run` drives them).
+Nothing in the test suite touches a real model or requires a real agent CLI. The
+daemon's `Transport` is the seam: a controllable **fake transport** scripts
+stdout/stdin/exit so detection, every stream parser, and abort/timeout are
+deterministic. The core runs against **scripted in-process agents**; storage runs
+against temp-dir SQLite; the desktop main process is tested headless under Node.
+Real CLIs are a runtime concern, verified by hand.
 
 ## Docs
 
-- [Architecture](./docs/architecture.md) — layers, boundaries, key types, decisions
-- [Runtime contract](./docs/runtime-contract.md) — the adapter contract + event model
-- [Roadmap](./docs/roadmap.md) — known limitations and what's next
+- [Design spec](./docs/superpowers/specs/2026-06-25-omakase-desktop-design.md) —
+  architecture, storage model, loop modes, phasing
+- [Research](./docs/research/spec-driven-autonomous-agents-2026.md) — Ralph loop,
+  Factory Droid, Anthropic dynamic workflows, loop engineering
+
+## Status
+
+Built and green: the storage layer, the Electron shell + workspace management,
+the Dev workbench, the authored-content surfaces, and the live Runs cockpit.
+Roadmap: Mission mode (orchestrator / worker / validator with fresh-context
+workers), detached-daemon handoff so runs survive app close, run resume on
+reopen, and packaging polish.
 
 ## License
 
