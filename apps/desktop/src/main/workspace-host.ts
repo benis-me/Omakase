@@ -61,6 +61,13 @@ export class WorkspaceHost {
   /** Register a folder as a workspace (scaffolding `.omks` if absent) and activate it. */
   add(targetPath: string, name?: string): ActiveWorkspace {
     const resolved = path.resolve(targetPath);
+    // Re-opening the already-active workspace must NOT reopen it: that would
+    // close the SQLite handle any live runs are still using. Just re-register.
+    if (this.active && this.active.root === resolved && !name) {
+      this.registry.addWorkspace({ path: resolved, id: this.active.manifest.id, name: this.active.manifest.name });
+      this.registry.touch(resolved);
+      return toActiveDto(this.active);
+    }
     const ws = openWorkspace(resolved, name ? { name } : {});
     this.registry.addWorkspace({ path: resolved, id: ws.manifest.id, name: ws.manifest.name });
     return this.activate(ws);

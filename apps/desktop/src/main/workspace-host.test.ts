@@ -74,4 +74,16 @@ describe('WorkspaceHost', () => {
     const project = tmp('omk-nolegacy-');
     await expect(host.hasLegacy(project)).resolves.toBe(false);
   });
+
+  it('does not reopen (or close) the active workspace when re-opened', () => {
+    const project = tmp('omk-reopen-');
+    host.add(project);
+    const ws = host.activeWorkspace;
+    expect(ws).not.toBeNull();
+    // Re-opening the same path must keep the SAME open handle (live runs use it).
+    host.open(project);
+    expect(host.activeWorkspace).toBe(ws);
+    // The SQLite handle is still usable (it was not closed underneath us).
+    expect(() => ws?.runStore.summaries()).not.toThrow();
+  });
 });
