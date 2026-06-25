@@ -76,6 +76,13 @@ export const IPC = {
   WorkflowsSave: 'workflows:save',
   WorkflowsDelete: 'workflows:delete',
 
+  // Runs cockpit
+  RunsList: 'runs:list',
+  RunsGet: 'runs:get',
+  RunsStart: 'runs:start',
+  RunsControl: 'runs:control',
+  RunsDelete: 'runs:delete',
+
   // Events (main → renderer)
   EvtWorkspacesChanged: 'evt:workspacesChanged',
   EvtActiveWorkspaceChanged: 'evt:activeWorkspaceChanged',
@@ -85,6 +92,8 @@ export const IPC = {
   EvtScriptUrl: 'evt:scriptUrl',
   EvtProjectsUpdated: 'evt:projectsUpdated',
   EvtPortConflict: 'evt:portConflict',
+  EvtRunEvent: 'evt:runEvent',
+  EvtRunStatus: 'evt:runStatus',
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

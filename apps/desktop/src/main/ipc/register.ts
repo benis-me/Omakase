@@ -4,15 +4,17 @@
  */
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { AgentDoc, SpecDoc } from '@shared/types';
+import type { AgentDoc, RunControl, RunStartInput, SpecDoc } from '@shared/types';
 import type { WorkspaceHost } from '../workspace-host.js';
 import type { DevController } from '../dev-controller.js';
 import type { ContentController } from '../content-controller.js';
+import type { RunHost } from '../run-host.js';
 
 export function registerIpc(
   host: WorkspaceHost,
   dev: DevController,
   content: ContentController,
+  runs: RunHost,
   getWindow: () => BrowserWindow | null,
 ): void {
   const send = (channel: string, payload: unknown): void => {
@@ -138,4 +140,11 @@ export function registerIpc(
   ipcMain.handle(IPC.WorkflowsCreate, (_e, name: string) => content.createWorkflow(name));
   ipcMain.handle(IPC.WorkflowsSave, (_e, id: string, source: string) => content.saveWorkflow(id, source));
   ipcMain.handle(IPC.WorkflowsDelete, (_e, id: string) => content.deleteWorkflow(id));
+
+  // Runs cockpit
+  ipcMain.handle(IPC.RunsList, () => runs.listRuns());
+  ipcMain.handle(IPC.RunsGet, (_e, id: string) => runs.getRun(id));
+  ipcMain.handle(IPC.RunsStart, (_e, input: RunStartInput) => runs.startRun(input));
+  ipcMain.handle(IPC.RunsControl, (_e, id: string, command: RunControl) => runs.control(id, command));
+  ipcMain.handle(IPC.RunsDelete, (_e, id: string) => runs.deleteRun(id));
 }

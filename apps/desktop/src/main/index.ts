@@ -4,11 +4,13 @@ import { IPC } from '@shared/ipc';
 import { WorkspaceHost } from './workspace-host.js';
 import { DevController } from './dev-controller.js';
 import { ContentController } from './content-controller.js';
+import { RunHost } from './run-host.js';
 import { registerIpc } from './ipc/register.js';
 
 let mainWindow: BrowserWindow | null = null;
 let host: WorkspaceHost;
 let dev: DevController;
+let runs: RunHost;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -53,11 +55,15 @@ app.whenReady().then(() => {
   });
   host.setActiveListener((ws) => void dev.setWorkspace(ws));
   const content = new ContentController(host);
+  runs = new RunHost(host, {
+    cockpitEvent: (runId, event) => send(IPC.EvtRunEvent, { runId, event }),
+    runStatus: (runId) => send(IPC.EvtRunStatus, runId),
+  });
 
   const settings = host.getSettings();
   nativeTheme.themeSource = settings.theme;
 
-  registerIpc(host, dev, content, () => mainWindow);
+  registerIpc(host, dev, content, runs, () => mainWindow);
 
   // Restore the last workspace (best-effort; a deleted folder is just skipped).
   if (settings.lastWorkspace) {
@@ -80,6 +86,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  runs?.shutdown();
   dev?.shutdown();
   host?.shutdown();
 });

@@ -94,6 +94,13 @@ const api: OmakaseApi = {
     save: (id, source) => ipcRenderer.invoke(IPC.WorkflowsSave, id, source),
     delete: (id) => ipcRenderer.invoke(IPC.WorkflowsDelete, id),
   },
+  runs: {
+    list: () => ipcRenderer.invoke(IPC.RunsList),
+    get: (id) => ipcRenderer.invoke(IPC.RunsGet, id),
+    start: (input) => ipcRenderer.invoke(IPC.RunsStart, input),
+    control: (id, command) => ipcRenderer.invoke(IPC.RunsControl, id, command),
+    delete: (id) => ipcRenderer.invoke(IPC.RunsDelete, id),
+  },
   versions: {
     electron: process.versions.electron ?? '',
     node: process.versions.node ?? '',
@@ -108,6 +115,8 @@ const api: OmakaseApi = {
   onScriptUrl: (cb) => sub(IPC.EvtScriptUrl, cb),
   onProjectsUpdated: (cb) => sub(IPC.EvtProjectsUpdated, cb),
   onPortConflict: (cb) => sub(IPC.EvtPortConflict, cb),
+  onRunEvent: (cb) => sub(IPC.EvtRunEvent, cb),
+  onRunStatus: (cb) => sub(IPC.EvtRunStatus, cb),
 };
 
 contextBridge.exposeInMainWorld('omakase', api);

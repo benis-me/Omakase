@@ -6,6 +6,7 @@ import { SpecsView } from './content/SpecsView';
 import { AgentsView } from './content/AgentsView';
 import { MemoryView } from './content/MemoryView';
 import { WorkflowsView } from './content/WorkflowsView';
+import { RunsView } from './runs/RunsView';
 
 export function DetailPane() {
   const nav = useAppStore((s) => s.nav);
@@ -13,6 +14,7 @@ export function DetailPane() {
   const item = NAV_SECTIONS.find((n) => n.id === nav) ?? NAV_SECTIONS[0];
   const Icon = item.icon;
 
+  if (nav === 'runs') return <RunsView />;
   if (nav === 'dev') return <DevWorkbench />;
   if (nav === 'specs') return <SpecsView />;
   if (nav === 'agents') return <AgentsView />;

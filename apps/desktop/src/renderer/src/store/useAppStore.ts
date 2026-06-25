@@ -4,8 +4,11 @@ import type {
   ActiveWorkspace,
   AppInfo,
   AppSettings,
+  CockpitEvent,
   GitInfo,
   ProjectInfo,
+  RunControl,
+  RunSummaryDto,
   ScriptSession,
   ThemeMode,
   WorkspaceInfo,
@@ -30,9 +33,26 @@ interface AppState {
   gitInfo: GitInfo | null;
   apps: AppInfo[];
 
+  // Runs cockpit slice
+  runs: RunSummaryDto[];
+  currentRunId: string | null;
+  feed: CockpitEvent[];
+
   init: () => Promise<void>;
   setNav: (nav: NavSection) => void;
   setPaletteOpen: (open: boolean) => void;
+
+  loadRuns: () => Promise<void>;
+  openRun: (id: string) => Promise<void>;
+  closeRun: () => void;
+  startRun: (input: {
+    prompt?: string;
+    specId?: string;
+    mode?: AppSettings['defaultMode'];
+    autonomy?: AppSettings['defaultAutonomy'];
+  }) => Promise<void>;
+  controlRun: (command: RunControl) => Promise<void>;
+  deleteRun: (id: string) => Promise<void>;
 
   scanDev: () => Promise<void>;
   startScript: (id: string) => Promise<void>;
@@ -67,6 +87,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitInfo: null,
   apps: [],
 
+  runs: [],
+  currentRunId: null,
+  feed: [],
+
   init: async () => {
     const [workspaces, active, settings] = await Promise.all([
       api().workspaces.list(),
@@ -77,7 +101,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     api().onWorkspacesChanged((list) => set({ workspaces: list }));
     api().onActiveWorkspaceChanged((ws) =>
-      set({ active: ws, projects: [], sessions: {}, selectedTerminal: null, gitInfo: null }),
+      set({
+        active: ws,
+        projects: [],
+        sessions: {},
+        selectedTerminal: null,
+        gitInfo: null,
+        runs: [],
+        currentRunId: null,
+        feed: [],
+      }),
     );
     api().onSettingsChanged((s) => set({ settings: s }));
 
@@ -97,6 +130,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         action: { label: 'Free & restart', onClick: () => void get().killPortAndRestart(id, port) },
       });
     });
+
+    api().onRunEvent(({ runId, event }) => {
+      if (runId === get().currentRunId) set((s) => ({ feed: [...s.feed, event] }));
+    });
+    api().onRunStatus(() => void get().loadRuns());
 
     void api().apps.list().then((apps) => set({ apps }));
     if (active) void get().scanDev();
@@ -120,6 +158,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   killPortAndRestart: async (id, port) => {
     await api().ports.kill(port);
     await get().restartScript(id);
+  },
+
+  loadRuns: async () => {
+    set({ runs: await api().runs.list() });
+  },
+  openRun: async (id) => {
+    const detail = await api().runs.get(id);
+    set({ currentRunId: id, feed: detail?.events ?? [] });
+  },
+  closeRun: () => set({ currentRunId: null, feed: [] }),
+  startRun: async (input) => {
+    const settings = get().settings;
+    const id = await api().runs.start({
+      mode: input.mode ?? settings?.defaultMode ?? 'normal',
+      autonomy: input.autonomy ?? settings?.defaultAutonomy ?? 'low',
+      prompt: input.prompt,
+      specId: input.specId,
+    });
+    set({ currentRunId: id, feed: [] });
+    void get().loadRuns();
+  },
+  controlRun: async (command) => {
+    const id = get().currentRunId;
+    if (id) await api().runs.control(id, command);
+  },
+  deleteRun: async (id) => {
+    await api().runs.delete(id);
+    if (get().currentRunId === id) set({ currentRunId: null, feed: [] });
+    void get().loadRuns();
   },
 
   startScript: async (id) => {

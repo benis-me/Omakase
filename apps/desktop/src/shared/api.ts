@@ -8,6 +8,7 @@ import type {
   AppInfo,
   AppSettings,
   AppVersions,
+  CockpitEvent,
   DetectedAgentDto,
   GitInfo,
   KnowledgeEventDto,
@@ -15,6 +16,10 @@ import type {
   PortInfo,
   ProjectInfo,
   RuleDoc,
+  RunControl,
+  RunDetailDto,
+  RunStartInput,
+  RunSummaryDto,
   ScriptSession,
   SpecDoc,
   WorkflowDoc,
@@ -111,6 +116,13 @@ export interface OmakaseApi {
     save(id: string, source: string): Promise<void>;
     delete(id: string): Promise<void>;
   };
+  runs: {
+    list(): Promise<RunSummaryDto[]>;
+    get(id: string): Promise<RunDetailDto | null>;
+    start(input: RunStartInput): Promise<string>;
+    control(id: string, command: RunControl): Promise<void>;
+    delete(id: string): Promise<void>;
+  };
   versions: AppVersions;
 
   onWorkspacesChanged(cb: (list: WorkspaceInfo[]) => void): () => void;
@@ -121,6 +133,8 @@ export interface OmakaseApi {
   onScriptUrl(cb: (payload: { id: string; url: string }) => void): () => void;
   onProjectsUpdated(cb: (projects: ProjectInfo[]) => void): () => void;
   onPortConflict(cb: (payload: { id: string; port: number }) => void): () => void;
+  onRunEvent(cb: (payload: { runId: string; event: CockpitEvent }) => void): () => void;
+  onRunStatus(cb: (runId: string) => void): () => void;
 }
 
 declare global {

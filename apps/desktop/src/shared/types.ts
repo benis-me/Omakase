@@ -180,3 +180,67 @@ export interface DetectedAgentDto {
   version: string | null;
   models: string[];
 }
+
+// ── Runs cockpit ─────────────────────────────────────────────────────────────
+
+export type RunMode = 'normal' | 'max-power' | 'custom';
+
+export interface RunStartInput {
+  mode: RunMode;
+  autonomy: AutonomyLevel;
+  prompt?: string;
+  specId?: string;
+}
+
+export interface RunSummaryDto {
+  id: string;
+  mode: string;
+  status: string;
+  summary: string;
+  spentTokens: number | null;
+  spentCostUsd: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type CockpitEventKind =
+  | 'status'
+  | 'route'
+  | 'plan'
+  | 'task'
+  | 'tool'
+  | 'review'
+  | 'report'
+  | 'knowledge'
+  | 'gate'
+  | 'gate-answered'
+  | 'iteration'
+  | 'error'
+  | 'finished'
+  | 'note';
+
+export type CockpitLevel = 'info' | 'warn' | 'error' | 'success';
+
+export interface CockpitEvent {
+  seq: number;
+  kind: CockpitEventKind;
+  title: string;
+  detail?: string;
+  role?: string;
+  status?: string;
+  level: CockpitLevel;
+  gateId?: string;
+}
+
+export interface RunDetailDto {
+  summary: RunSummaryDto;
+  events: CockpitEvent[];
+}
+
+/** A control command the cockpit sends to a run. */
+export interface RunControl {
+  command: 'stop' | 'pause' | 'resume' | 'input' | 'answer-gate';
+  text?: string;
+  gateId?: string;
+  answer?: string;
+}
