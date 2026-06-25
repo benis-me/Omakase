@@ -2,6 +2,10 @@ import { FolderOpen } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { NAV_SECTIONS } from './nav';
 import { DevWorkbench } from './dev/DevWorkbench';
+import { SpecsView } from './content/SpecsView';
+import { AgentsView } from './content/AgentsView';
+import { MemoryView } from './content/MemoryView';
+import { WorkflowsView } from './content/WorkflowsView';
 
 export function DetailPane() {
   const nav = useAppStore((s) => s.nav);
@@ -10,6 +14,10 @@ export function DetailPane() {
   const Icon = item.icon;
 
   if (nav === 'dev') return <DevWorkbench />;
+  if (nav === 'specs') return <SpecsView />;
+  if (nav === 'agents') return <AgentsView />;
+  if (nav === 'memory') return <MemoryView />;
+  if (nav === 'workflows') return <WorkflowsView />;
 
   return (
     <div className="flex h-full flex-col">

@@ -45,6 +45,37 @@ export const IPC = {
   EnvRead: 'env:read',
   EnvWrite: 'env:write',
 
+  // Specs
+  SpecsList: 'specs:list',
+  SpecsGet: 'specs:get',
+  SpecsCreate: 'specs:create',
+  SpecsSave: 'specs:save',
+  SpecsDelete: 'specs:delete',
+
+  // Agents (authored definitions + local detection)
+  AgentsList: 'agents:list',
+  AgentsGet: 'agents:get',
+  AgentsCreate: 'agents:create',
+  AgentsSave: 'agents:save',
+  AgentsDelete: 'agents:delete',
+  AgentsDetect: 'agents:detect',
+
+  // Memory
+  MemoryReadAgentsMd: 'memory:readAgentsMd',
+  MemoryWriteAgentsMd: 'memory:writeAgentsMd',
+  MemoryReadWiki: 'memory:readWiki',
+  MemoryListRules: 'memory:listRules',
+  MemoryWriteRule: 'memory:writeRule',
+  MemoryDeleteRule: 'memory:deleteRule',
+  MemoryKnowledgeEvents: 'memory:knowledgeEvents',
+
+  // Workflows
+  WorkflowsList: 'workflows:list',
+  WorkflowsGet: 'workflows:get',
+  WorkflowsCreate: 'workflows:create',
+  WorkflowsSave: 'workflows:save',
+  WorkflowsDelete: 'workflows:delete',
+
   // Events (main → renderer)
   EvtWorkspacesChanged: 'evt:workspacesChanged',
   EvtActiveWorkspaceChanged: 'evt:activeWorkspaceChanged',

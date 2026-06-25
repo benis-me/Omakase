@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { IPC } from '@shared/ipc';
 import { WorkspaceHost } from './workspace-host.js';
 import { DevController } from './dev-controller.js';
+import { ContentController } from './content-controller.js';
 import { registerIpc } from './ipc/register.js';
 
 let mainWindow: BrowserWindow | null = null;
@@ -51,11 +52,12 @@ app.whenReady().then(() => {
     portConflict: (id, port) => send(IPC.EvtPortConflict, { id, port }),
   });
   host.setActiveListener((ws) => void dev.setWorkspace(ws));
+  const content = new ContentController(host);
 
   const settings = host.getSettings();
   nativeTheme.themeSource = settings.theme;
 
-  registerIpc(host, dev, () => mainWindow);
+  registerIpc(host, dev, content, () => mainWindow);
 
   // Restore the last workspace (best-effort; a deleted folder is just skipped).
   if (settings.lastWorkspace) {

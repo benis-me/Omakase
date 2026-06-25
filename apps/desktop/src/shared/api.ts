@@ -4,14 +4,20 @@
  */
 import type {
   ActiveWorkspace,
+  AgentDoc,
   AppInfo,
   AppSettings,
   AppVersions,
+  DetectedAgentDto,
   GitInfo,
+  KnowledgeEventDto,
   LegacyImportSummary,
   PortInfo,
   ProjectInfo,
+  RuleDoc,
   ScriptSession,
+  SpecDoc,
+  WorkflowDoc,
   WorkspaceInfo,
 } from './types.js';
 
@@ -73,6 +79,37 @@ export interface OmakaseApi {
   env: {
     read(absPath: string): Promise<string>;
     write(absPath: string, content: string): Promise<void>;
+  };
+  specs: {
+    list(): Promise<SpecDoc[]>;
+    get(id: string): Promise<SpecDoc | null>;
+    create(title: string): Promise<SpecDoc | null>;
+    save(doc: SpecDoc): Promise<void>;
+    delete(id: string): Promise<void>;
+  };
+  agents: {
+    list(): Promise<AgentDoc[]>;
+    get(id: string): Promise<AgentDoc | null>;
+    create(name: string): Promise<AgentDoc | null>;
+    save(doc: AgentDoc): Promise<void>;
+    delete(id: string): Promise<void>;
+    detect(): Promise<DetectedAgentDto[]>;
+  };
+  memory: {
+    readAgentsMd(): Promise<string>;
+    writeAgentsMd(text: string): Promise<void>;
+    readWiki(): Promise<string>;
+    listRules(): Promise<RuleDoc[]>;
+    writeRule(name: string, body: string): Promise<void>;
+    deleteRule(name: string): Promise<void>;
+    knowledgeEvents(): Promise<KnowledgeEventDto[]>;
+  };
+  workflows: {
+    list(): Promise<WorkflowDoc[]>;
+    get(id: string): Promise<WorkflowDoc | null>;
+    create(name: string): Promise<WorkflowDoc | null>;
+    save(id: string, source: string): Promise<void>;
+    delete(id: string): Promise<void>;
   };
   versions: AppVersions;
 

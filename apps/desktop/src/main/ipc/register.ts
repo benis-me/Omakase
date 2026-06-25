@@ -4,12 +4,15 @@
  */
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { IPC } from '@shared/ipc';
+import type { AgentDoc, SpecDoc } from '@shared/types';
 import type { WorkspaceHost } from '../workspace-host.js';
 import type { DevController } from '../dev-controller.js';
+import type { ContentController } from '../content-controller.js';
 
 export function registerIpc(
   host: WorkspaceHost,
   dev: DevController,
+  content: ContentController,
   getWindow: () => BrowserWindow | null,
 ): void {
   const send = (channel: string, payload: unknown): void => {
@@ -103,5 +106,36 @@ export function registerIpc(
   ipcMain.handle(IPC.AppsOpenWith, (_e, appId: string, target?: string) => dev.openWith(appId, target));
   ipcMain.handle(IPC.AppsOpenTerminal, (_e, appId: string) => dev.openTerminal(appId));
   ipcMain.handle(IPC.EnvRead, (_e, absPath: string) => dev.readEnv(absPath));
-  ipcMain.handle(IPC.EnvWrite, (_e, absPath: string, content: string) => dev.writeEnv(absPath, content));
+  ipcMain.handle(IPC.EnvWrite, (_e, absPath: string, value: string) => dev.writeEnv(absPath, value));
+
+  // Specs
+  ipcMain.handle(IPC.SpecsList, () => content.listSpecs());
+  ipcMain.handle(IPC.SpecsGet, (_e, id: string) => content.getSpec(id));
+  ipcMain.handle(IPC.SpecsCreate, (_e, title: string) => content.createSpec(title));
+  ipcMain.handle(IPC.SpecsSave, (_e, doc: SpecDoc) => content.saveSpec(doc));
+  ipcMain.handle(IPC.SpecsDelete, (_e, id: string) => content.deleteSpec(id));
+
+  // Agents
+  ipcMain.handle(IPC.AgentsList, () => content.listAgents());
+  ipcMain.handle(IPC.AgentsGet, (_e, id: string) => content.getAgent(id));
+  ipcMain.handle(IPC.AgentsCreate, (_e, name: string) => content.createAgent(name));
+  ipcMain.handle(IPC.AgentsSave, (_e, doc: AgentDoc) => content.saveAgent(doc));
+  ipcMain.handle(IPC.AgentsDelete, (_e, id: string) => content.deleteAgent(id));
+  ipcMain.handle(IPC.AgentsDetect, () => content.detectAgents());
+
+  // Memory
+  ipcMain.handle(IPC.MemoryReadAgentsMd, () => content.readAgentsMd());
+  ipcMain.handle(IPC.MemoryWriteAgentsMd, (_e, text: string) => content.writeAgentsMd(text));
+  ipcMain.handle(IPC.MemoryReadWiki, () => content.readWiki());
+  ipcMain.handle(IPC.MemoryListRules, () => content.listRules());
+  ipcMain.handle(IPC.MemoryWriteRule, (_e, name: string, body: string) => content.writeRule(name, body));
+  ipcMain.handle(IPC.MemoryDeleteRule, (_e, name: string) => content.deleteRule(name));
+  ipcMain.handle(IPC.MemoryKnowledgeEvents, () => content.knowledgeEvents());
+
+  // Workflows
+  ipcMain.handle(IPC.WorkflowsList, () => content.listWorkflows());
+  ipcMain.handle(IPC.WorkflowsGet, (_e, id: string) => content.getWorkflow(id));
+  ipcMain.handle(IPC.WorkflowsCreate, (_e, name: string) => content.createWorkflow(name));
+  ipcMain.handle(IPC.WorkflowsSave, (_e, id: string, source: string) => content.saveWorkflow(id, source));
+  ipcMain.handle(IPC.WorkflowsDelete, (_e, id: string) => content.deleteWorkflow(id));
 }

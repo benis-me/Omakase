@@ -121,3 +121,62 @@ export interface AppInfo {
   kind: 'editor' | 'terminal' | 'other';
   icon: string | null;
 }
+
+// ── Authored content (specs / agents / memory / workflows) ───────────────────
+
+export type SpecPhase = 'idea' | 'spec' | 'acceptance' | 'test-plan' | 'tasks' | 'done';
+export type SpecStatus = 'draft' | 'ready' | 'running' | 'done' | 'archived';
+
+export interface SpecDoc {
+  id: string;
+  title: string;
+  phase: SpecPhase;
+  status: SpecStatus;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+  body: string;
+}
+
+export interface AgentDoc {
+  id: string;
+  name: string;
+  role: string;
+  agentId: string;
+  model: string | null;
+  reasoning: string | null;
+  tools: string[];
+  createdAt: number;
+  updatedAt: number;
+  body: string;
+}
+
+export interface WorkflowDoc {
+  id: string;
+  name: string;
+  source: string;
+  path: string;
+}
+
+export interface RuleDoc {
+  name: string;
+  body: string;
+}
+
+export interface KnowledgeEventDto {
+  id: string;
+  runId: string;
+  kind: string;
+  title: string;
+  body: string;
+  createdAt: number;
+}
+
+/** A locally-detected agent CLI (claude, codex, …) from the daemon. */
+export interface DetectedAgentDto {
+  id: string;
+  name: string;
+  available: boolean;
+  version: string | null;
+  models: string[];
+}
