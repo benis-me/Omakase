@@ -37,6 +37,7 @@ import {
 import { createIteration, finishIteration, type IterationSnapshot } from './iterations.js';
 import { answerRiskGate, createRiskGate, type RiskGateSnapshot } from './risk-gates.js';
 import { cleanAgentArtifactText, createReportArtifact, type ReportArtifact, type ReportKind } from './reports.js';
+import { buildValidationPrompt, parseValidationVerdict } from './validation.js';
 import {
   createKnowledgeEvent,
   knowledgeEventToWikiEntry,
@@ -133,6 +134,16 @@ export interface OrchestratorOptions {
   control?: ControlSource;
   /** Registers the recurring poll that re-checks {@link control}; see {@link ControlPoll}. */
   controlPoll?: ControlPoll;
+  /**
+   * Run an independent VALIDATOR at the finish line: when the run would otherwise
+   * succeed, a validator agent judges the work against the acceptance criteria and,
+   * if it finds gaps, injects fix-tasks and re-runs the loop (bounded by
+   * {@link maxValidationRounds}). Off by default — set true for spec/mission runs.
+   * Falls back to a no-op when no real validator agent is available (e.g. offline).
+   */
+  validate?: boolean;
+  /** Max validate → fix → re-loop rounds before finishing anyway (default 2). */
+  maxValidationRounds?: number;
 }
 
 const REVIEW_REJECTS =
@@ -336,6 +347,8 @@ class RunController implements RunHandle {
   private readonly clock: () => number;
   private readonly detectionOptions: DetectionOptions | undefined;
   private readonly maxIterations: number;
+  private readonly validateEnabled: boolean;
+  private readonly maxValidationRounds: number;
   private readonly maxAttempts: number;
   private readonly maxConcurrency: number;
   private readonly budget: RunBudget | undefined;
@@ -421,6 +434,8 @@ class RunController implements RunHandle {
     this.streamFlushMs = Math.max(0, options.streamFlushMs ?? 0);
     this.detectionOptions = options.detectionOptions;
     this.maxIterations = options.maxIterations ?? 50;
+    this.validateEnabled = options.validate ?? false;
+    this.maxValidationRounds = options.maxValidationRounds ?? 2;
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
     this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 4);
     this.budget = options.budget;
@@ -674,7 +689,7 @@ class RunController implements RunHandle {
   }
 
   private async runSupportAgent(
-    role: Extract<AgentRole, 'reporter' | 'wiki-curator'>,
+    role: Extract<AgentRole, 'reporter' | 'wiki-curator' | 'validator'>,
     prompt: string,
   ): Promise<{ result: AgentRunResult; assignment: ReturnType<ModelPolicy['select']> }> {
     const assignment = this.policy.select(role, {
@@ -745,6 +760,55 @@ class RunController implements RunHandle {
     // carry author metadata, but their usage must not trip the user's task
     // completion/budget gates.
     return { result, assignment };
+  }
+
+  /**
+   * Independent validation gate. When a run would otherwise succeed, an
+   * independent validator judges the work against the acceptance criteria; on a
+   * gap verdict it injects fix-tasks and re-runs the loop, bounded by
+   * {@link maxValidationRounds}. A no-op unless {@link validateEnabled}.
+   */
+  private async validationGate(): Promise<void> {
+    if (!this.validateEnabled) return;
+    let round = 0;
+    while (round < this.maxValidationRounds && !this.cancelled && !this.budgetExhausted) {
+      this.applyImplicitAcceptanceIfNeeded();
+      // Only gate a run that would otherwise succeed — nothing to validate otherwise.
+      if (this.computeFinalStatus() !== 'succeeded') return;
+      const verdict = await this.runValidator();
+      this.wiki.addNote({
+        title: `Validation — ${verdict.passed ? 'passed' : 'gaps found'}`,
+        body: verdict.notes || (verdict.gaps.length ? verdict.gaps.join('\n') : 'No gaps.'),
+        tags: ['validation', verdict.passed ? 'passed' : 'rejected'],
+        source: `validator:${this.id}`,
+      });
+      if (verdict.passed) return;
+      const gaps = verdict.gaps.filter((g) => g.trim()).slice(0, 8);
+      if (gaps.length === 0) return; // rejected but no actionable gaps — don't livelock
+      for (const gap of gaps) {
+        this.graph.addTask({
+          title: `Fix: ${gap.slice(0, 70)}`,
+          description: gap,
+          role: 'worker',
+          tags: ['validator-fix'],
+        });
+      }
+      await this.replan('validation-rejected');
+      await this.checkpoint();
+      await this.loop();
+      round += 1;
+    }
+  }
+
+  private async runValidator(): Promise<ReturnType<typeof parseValidationVerdict>> {
+    const criteria = this.request.acceptanceCriteria ?? [];
+    const prompt = buildValidationPrompt(this.request.prompt, criteria, this.supportContext());
+    const { result } = await this.runSupportAgent('validator', prompt);
+    // No real validator available (offline / scripted gating) → don't block finishing.
+    if (result.status !== 'completed' || !result.text.trim()) {
+      return { passed: true, gaps: [], notes: 'validator unavailable' };
+    }
+    return parseValidationVerdict(result.text);
   }
 
   private supportContext(): string {
@@ -1619,6 +1683,7 @@ class RunController implements RunHandle {
 
       await this.checkpoint();
       await this.loop();
+      await this.validationGate();
       this.applyImplicitAcceptanceIfNeeded();
 
       const status = this.computeFinalStatus();

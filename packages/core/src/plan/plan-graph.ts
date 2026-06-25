@@ -26,6 +26,7 @@ export const TERMINAL_STATUSES: readonly TaskStatus[] = [
 export type ReplanReason =
   | 'task-failed'
   | 'review-rejected'
+  | 'validation-rejected'
   | 'user-input'
   | 'criteria-edited'
   | 'new-requirement'

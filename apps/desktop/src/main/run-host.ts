@@ -104,7 +104,8 @@ export class RunHost {
     const acceptanceCriteria = spec ? extractCriteria(spec.body) : [];
 
     const controlDir = this.controlDir(ws);
-    const handle = this.buildOrchestrator(ws, controlDir, input.mode).start({
+    // Spec-driven runs get an independent validator at the finish line.
+    const handle = this.buildOrchestrator(ws, controlDir, input.mode, Boolean(input.specId)).start({
       prompt,
       cwd: ws.root,
       mode: input.mode,
@@ -230,7 +231,12 @@ export class RunHost {
     return dir;
   }
 
-  private buildOrchestrator(ws: OpenWorkspace, controlDir: string, defaultMode: RunStartInput['mode']): Orchestrator {
+  private buildOrchestrator(
+    ws: OpenWorkspace,
+    controlDir: string,
+    defaultMode: RunStartInput['mode'],
+    validate = false,
+  ): Orchestrator {
     this.runtime ??= createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
     const controlPoll: ControlPoll = (tick) => {
       const timer = setInterval(tick, 250);
@@ -245,6 +251,7 @@ export class RunHost {
       defaultMode,
       control,
       controlPoll,
+      validate,
     });
   }
 

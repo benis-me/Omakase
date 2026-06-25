@@ -150,7 +150,13 @@ export function createModelPolicy(
         rationale: 'normal: light/cheap model for fast routing',
       };
     }
-    if (role === 'planner' || role === 'reviewer' || role === 'reporter' || role === 'wiki-curator') {
+    if (
+      role === 'planner' ||
+      role === 'reviewer' ||
+      role === 'validator' ||
+      role === 'reporter' ||
+      role === 'wiki-curator'
+    ) {
       return {
         role,
         agentId: top.id,

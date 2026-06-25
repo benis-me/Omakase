@@ -3,9 +3,24 @@
  */
 
 /** The roles in the Ralph loop and out-of-band support agents. */
-export type AgentRole = 'router' | 'planner' | 'worker' | 'reviewer' | 'reporter' | 'wiki-curator';
+export type AgentRole =
+  | 'router'
+  | 'planner'
+  | 'worker'
+  | 'reviewer'
+  | 'validator'
+  | 'reporter'
+  | 'wiki-curator';
 
-export const AGENT_ROLES: readonly AgentRole[] = ['router', 'planner', 'worker', 'reviewer', 'reporter', 'wiki-curator'];
+export const AGENT_ROLES: readonly AgentRole[] = [
+  'router',
+  'planner',
+  'worker',
+  'reviewer',
+  'validator',
+  'reporter',
+  'wiki-curator',
+];
 
 /**
  * Work modes govern how aggressively the system spends model capability:

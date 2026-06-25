@@ -125,6 +125,8 @@ export { answerRiskGate, createRiskGate } from './risk-gates.js';
 export type { RiskGateReason, RiskGateSnapshot, RiskGateStatus } from './risk-gates.js';
 export { cleanAgentArtifactText, createReportArtifact } from './reports.js';
 export type { ReportArtifact, ReportKind } from './reports.js';
+export { buildValidationPrompt, parseValidationVerdict } from './validation.js';
+export type { ValidationVerdict } from './validation.js';
 export {
   createKnowledgeEvent,
   knowledgeEventToWikiEntry,
