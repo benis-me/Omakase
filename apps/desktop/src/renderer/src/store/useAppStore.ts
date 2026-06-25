@@ -18,6 +18,9 @@ export type NavSection = 'runs' | 'specs' | 'agents' | 'memory' | 'workflows' | 
 
 const api = (): typeof window.omakase => window.omakase;
 
+// Guard against double-subscription under React StrictMode's double-invoked effects.
+let booted = false;
+
 interface AppState {
   ready: boolean;
   workspaces: WorkspaceInfo[];
@@ -93,6 +96,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   feed: [],
 
   init: async () => {
+    if (booted) return;
+    booted = true;
     const [workspaces, active, settings] = await Promise.all([
       api().workspaces.list(),
       api().workspaces.active(),

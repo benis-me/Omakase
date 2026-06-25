@@ -5,7 +5,7 @@
  * detached daemon would use (Phase 5), so the model is uniform. The autonomy
  * dial governs how far a run proceeds before a risk gate pauses for the user.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
 import {
@@ -108,6 +108,9 @@ export class RunHost {
     const record = await ws.runStore.load(id);
     if (!record || !RESUMABLE_STATUSES.includes(record.status)) return false;
     const controlDir = this.controlDir(ws);
+    // Drop any leftover control command from the previous session so the resumed
+    // run doesn't immediately act on a stale pause/stop/answer.
+    rmSync(join(controlDir, `${id}.control.json`), { force: true });
     const handle = await this.buildOrchestrator(ws, controlDir, record.mode).resume(id);
     if (!handle) return false;
     // Continue the cockpit feed's seq numbering after the already-persisted feed.
@@ -116,10 +119,12 @@ export class RunHost {
   }
 
   async control(runId: string, command: RunControl): Promise<void> {
+    // Only a live run honours control. Writing for a finished run would leave a
+    // stale, high-seq command file that a later resume would wrongly apply.
     const run = this.live.get(runId);
-    const controlDir = run?.controlDir ?? join(this.host.activeWorkspace?.root ?? '.', '.omks', 'control');
-    const seq = run ? (run.controlSeq += 1) : Date.now();
-    await writeControl(controlDir, runId, { seq, ...command });
+    if (!run) return;
+    run.controlSeq += 1;
+    await writeControl(run.controlDir, runId, { seq: run.controlSeq, ...command });
   }
 
   async deleteRun(id: string): Promise<void> {
