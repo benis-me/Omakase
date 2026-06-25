@@ -4,6 +4,10 @@ import type { KnowledgeEventDto, RuleDoc } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { Textarea } from '../ui/textarea';
+import { Tooltip } from '../ui/tooltip';
+import { Card, CardContent, CardHeader } from '../ui/card';
 import { ContentLayout } from './ContentLayout';
 
 type Sel = { kind: 'agents' } | { kind: 'rule'; name: string } | { kind: 'wiki' } | { kind: 'knowledge' };
@@ -56,47 +60,64 @@ export function MemoryView() {
   };
 
   const navBtn = (active: boolean): string =>
-    cn('block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px]', active ? 'bg-accent' : 'hover:bg-accent/50');
+    cn(
+      'block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
+      active ? 'bg-accent' : 'hover:bg-accent/50',
+    );
   const editable = sel.kind === 'agents' || sel.kind === 'rule';
 
   return (
     <ContentLayout title="Memory">
-      <div className="w-56 shrink-0 overflow-y-auto border-r p-1.5">
-        <button className={navBtn(sel.kind === 'agents')} onClick={() => setSel({ kind: 'agents' })}>
-          AGENTS.md
-        </button>
-        <button className={navBtn(sel.kind === 'wiki')} onClick={() => setSel({ kind: 'wiki' })}>
-          Wiki
-        </button>
-        <button className={navBtn(sel.kind === 'knowledge')} onClick={() => setSel({ kind: 'knowledge' })}>
-          Knowledge ({events.length})
-        </button>
-        <div className="mt-2 flex items-center px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Rules
-          <button onClick={() => void addRule()} className="ml-auto hover:text-foreground" title="Add rule">
-            <Plus className="size-3.5" />
+      <div className="w-56 shrink-0 overflow-y-auto border-r p-2">
+        <div className="flex flex-col gap-0.5">
+          <button className={navBtn(sel.kind === 'agents')} onClick={() => setSel({ kind: 'agents' })}>
+            AGENTS.md
+          </button>
+          <button className={navBtn(sel.kind === 'wiki')} onClick={() => setSel({ kind: 'wiki' })}>
+            Wiki
+          </button>
+          <button className={navBtn(sel.kind === 'knowledge')} onClick={() => setSel({ kind: 'knowledge' })}>
+            <span className="flex items-center gap-1.5">
+              Knowledge
+              <Badge variant="outline">{events.length}</Badge>
+            </span>
           </button>
         </div>
-        {rules.map((r) => (
-          <button
-            key={r.name}
-            className={navBtn(sel.kind === 'rule' && sel.name === r.name)}
-            onClick={() => setSel({ kind: 'rule', name: r.name })}
-          >
-            <span className="font-mono text-[12px]">{r.name}</span>
-          </button>
-        ))}
+        <div className="mt-3 flex items-center px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Rules
+          <Tooltip content="Add rule">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="ml-auto size-5 text-muted-foreground hover:text-foreground"
+              onClick={() => void addRule()}
+            >
+              <Plus />
+            </Button>
+          </Tooltip>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          {rules.map((r) => (
+            <button
+              key={r.name}
+              className={navBtn(sel.kind === 'rule' && sel.name === r.name)}
+              onClick={() => setSel({ kind: 'rule', name: r.name })}
+            >
+              <span className="font-mono text-[12px]">{r.name}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
         {editable ? (
           <>
-            <div className="flex items-center gap-2 border-b px-4 py-2">
+            <div className="flex h-11 items-center gap-2 border-b px-4">
               <span className="font-mono text-[12px] text-muted-foreground">
                 {sel.kind === 'agents' ? 'memory/AGENTS.md' : `memory/rules/${sel.name}.md`}
               </span>
               <Button
-                variant={dirty ? 'omk' : 'ghost'}
+                variant={dirty ? 'omk' : 'outline'}
                 size="sm"
                 className="ml-auto"
                 disabled={!dirty}
@@ -105,23 +126,26 @@ export function MemoryView() {
                 Save
               </Button>
               {sel.kind === 'rule' && (
-                <button
-                  onClick={() => void removeRule(sel.name)}
-                  className="text-muted-foreground hover:text-destructive"
-                  title="Delete rule"
-                >
-                  <Trash2 className="size-4" />
-                </button>
+                <Tooltip content="Delete rule">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => void removeRule(sel.name)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </Tooltip>
               )}
             </div>
-            <textarea
+            <Textarea
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
                 setDirty(true);
               }}
               spellCheck={false}
-              className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+              className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
             />
           </>
         ) : sel.kind === 'wiki' ? (
@@ -129,23 +153,30 @@ export function MemoryView() {
             {wiki || 'The project wiki is empty. Agents accumulate knowledge here as they run.'}
           </pre>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            {events.length === 0 && (
-              <p className="p-4 text-center text-[12px] text-muted-foreground">
-                No knowledge events yet.
-              </p>
-            )}
-            {events.map((e) => (
-              <div key={e.id} className="mb-2 rounded-md border p-3">
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-                    {e.kind}
-                  </span>
-                  <span className="truncate text-[13px] font-medium">{e.title}</span>
-                </div>
-                {e.body && <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">{e.body}</p>}
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {events.length === 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
+                  No knowledge events yet. Agents record what they learn here as runs progress.
+                </p>
               </div>
-            ))}
+            ) : (
+              <div className="flex flex-col gap-2">
+                {events.map((e) => (
+                  <Card key={e.id}>
+                    <CardHeader className="flex-row items-center gap-2 p-3">
+                      <Badge variant="outline">{e.kind}</Badge>
+                      <span className="truncate text-[13px] font-medium">{e.title}</span>
+                    </CardHeader>
+                    {e.body && (
+                      <CardContent className="px-3 pb-3 pt-0">
+                        <p className="text-[12px] leading-relaxed text-muted-foreground">{e.body}</p>
+                      </CardContent>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

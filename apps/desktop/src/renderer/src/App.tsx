@@ -1,28 +1,36 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Toaster } from 'sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAppStore } from '@/store/useAppStore';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { DetailPane } from './components/DetailPane';
 import { EmptyState } from './components/EmptyState';
 import { CommandPalette } from './components/CommandPalette';
+import { SettingsDialog } from './components/SettingsDialog';
 
 /**
- * Toggle the `.dark` class from the OS/Electron effective color scheme. The main
- * process drives `nativeTheme.themeSource` from the saved setting, so
- * `prefers-color-scheme` always reflects the chosen theme (system/light/dark).
+ * Resolve and apply the active theme straight from the saved setting — not via
+ * `nativeTheme` propagation, which is why the toggle previously looked inert.
+ * 'system' follows the OS; 'light'/'dark' force it.
  */
-function useThemeClass(): void {
+function useResolvedTheme(): 'light' | 'dark' {
+  const theme = useAppStore((s) => s.settings?.theme ?? 'system');
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = (): void => {
-      document.documentElement.classList.toggle('dark', mq.matches);
-    };
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
+    const onChange = (): void => setSystemDark(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, []);
+  const dark = theme === 'dark' || (theme === 'system' && systemDark);
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+  return dark ? 'dark' : 'light';
 }
 
 export default function App() {
@@ -30,8 +38,7 @@ export default function App() {
   const active = useAppStore((s) => s.active);
   const init = useAppStore((s) => s.init);
   const setPaletteOpen = useAppStore((s) => s.setPaletteOpen);
-
-  useThemeClass();
+  const resolvedTheme = useResolvedTheme();
 
   useEffect(() => {
     void init();
@@ -55,21 +62,24 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <TitleBar />
-      <PanelGroup direction="horizontal" className="min-h-0 flex-1">
-        <Panel defaultSize={20} minSize={14} maxSize={32} className="min-w-0">
-          <Sidebar />
-        </Panel>
-        <PanelResizeHandle className="resize-handle" />
-        <Panel minSize={40} className="min-w-0">
-          <main className="h-full min-w-0 bg-background">
-            {active ? <DetailPane /> : <EmptyState />}
-          </main>
-        </Panel>
-      </PanelGroup>
-      <CommandPalette />
-      <Toaster theme="system" position="bottom-right" richColors closeButton />
-    </div>
+    <TooltipProvider delayDuration={400}>
+      <div className="flex h-full flex-col">
+        <TitleBar />
+        <PanelGroup direction="horizontal" className="min-h-0 flex-1">
+          <Panel defaultSize={20} minSize={15} maxSize={32} className="min-w-0">
+            <Sidebar />
+          </Panel>
+          <PanelResizeHandle className="relative w-px shrink-0 bg-border outline-none transition-colors data-[resize-handle-state=hover]:bg-omk/60 data-[resize-handle-state=drag]:bg-omk after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-['']" />
+          <Panel minSize={40} className="min-w-0">
+            <main className="h-full min-w-0 bg-background">
+              {active ? <DetailPane /> : <EmptyState />}
+            </main>
+          </Panel>
+        </PanelGroup>
+        <CommandPalette />
+        <SettingsDialog />
+        <Toaster theme={resolvedTheme} position="bottom-right" richColors closeButton />
+      </div>
+    </TooltipProvider>
   );
 }

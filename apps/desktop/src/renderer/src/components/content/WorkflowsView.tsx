@@ -4,6 +4,8 @@ import type { WorkflowDoc } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Textarea } from '../ui/textarea';
+import { Tooltip } from '../ui/tooltip';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
 export function WorkflowsView() {
@@ -49,60 +51,69 @@ export function WorkflowsView() {
 
   return (
     <ContentLayout title="Workflows" onNew={() => void create()} newLabel="New workflow">
-      <div className="w-60 shrink-0 overflow-y-auto border-r p-1.5">
-        {workflows.length === 0 && (
-          <p className="px-2 py-6 text-center text-[12px] text-muted-foreground">No workflows yet.</p>
+      <div className="w-60 shrink-0 overflow-y-auto border-r p-2">
+        {workflows.length === 0 ? (
+          <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
+            No workflows yet.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {workflows.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => setSelectedId(w.id)}
+                className={cn(
+                  'block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
+                  selectedId === w.id ? 'bg-accent' : 'hover:bg-accent/50',
+                )}
+              >
+                {w.name}
+              </button>
+            ))}
+          </div>
         )}
-        {workflows.map((w) => (
-          <button
-            key={w.id}
-            onClick={() => setSelectedId(w.id)}
-            className={cn(
-              'block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px]',
-              selectedId === w.id ? 'bg-accent' : 'hover:bg-accent/50',
-            )}
-          >
-            {w.name}
-          </button>
-        ))}
       </div>
       {selected ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b px-4 py-2">
+          <div className="flex h-11 items-center gap-2 border-b px-4">
             <span className="font-mono text-[12px] text-muted-foreground">workflows/{selected.id}.ts</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto gap-1.5 text-muted-foreground hover:text-run"
-              title="Run this workflow (requires Bun)"
-              onClick={() => void startWorkflow(selected.id)}
-            >
-              <Play className="size-3.5" />
-              Run
-            </Button>
-            <Button variant={dirty ? 'omk' : 'ghost'} size="sm" disabled={!dirty} onClick={() => void save()}>
+            <Tooltip content="Run this workflow (requires Bun)">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto gap-1.5 text-muted-foreground hover:text-run"
+                onClick={() => void startWorkflow(selected.id)}
+              >
+                <Play className="size-3.5" />
+                Run
+              </Button>
+            </Tooltip>
+            <Button variant={dirty ? 'omk' : 'outline'} size="sm" disabled={!dirty} onClick={() => void save()}>
               Save
             </Button>
-            <button
-              onClick={() => void remove(selected.id)}
-              className="text-muted-foreground hover:text-destructive"
-              title="Delete workflow"
-            >
-              <Trash2 className="size-4" />
-            </button>
+            <Tooltip content="Delete workflow">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => void remove(selected.id)}
+              >
+                <Trash2 />
+              </Button>
+            </Tooltip>
           </div>
-          <textarea
+          <Textarea
             value={source}
             onChange={(e) => {
               setSource(e.target.value);
               setDirty(true);
             }}
             spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[12px] leading-relaxed outline-none"
+            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[12px] leading-relaxed shadow-none focus-visible:ring-0"
           />
         </div>
       ) : (
-        <EmptyDetail message="Select or create a workflow script." />
+        <EmptyDetail message="Select a workflow script, or create one to orchestrate multi-agent runs." />
       )}
     </ContentLayout>
   );

@@ -28,6 +28,7 @@ interface AppState {
   settings: AppSettings | null;
   nav: NavSection;
   paletteOpen: boolean;
+  settingsOpen: boolean;
 
   // Dev workbench slice
   projects: ProjectInfo[];
@@ -44,6 +45,8 @@ interface AppState {
   init: () => Promise<void>;
   setNav: (nav: NavSection) => void;
   setPaletteOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
+  updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
 
   loadRuns: () => Promise<void>;
   openRun: (id: string) => Promise<void>;
@@ -85,6 +88,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
   nav: 'runs',
   paletteOpen: false,
+  settingsOpen: false,
 
   projects: [],
   sessions: {},
@@ -264,6 +268,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPinned: async (path, pinned) => {
     const workspaces = await api().workspaces.setPinned(path, pinned);
     set({ workspaces });
+  },
+
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  updateSettings: async (partial) => {
+    const settings = await api().settings.set(partial);
+    set({ settings });
   },
 
   setTheme: async (theme) => {

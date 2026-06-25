@@ -2,6 +2,9 @@ import { ExternalLink, Play, RotateCw, Square } from 'lucide-react';
 import type { ScriptStatus } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { Tooltip } from '../ui/tooltip';
 import { StatusDot, type DotStatus } from '../StatusDot';
 
 const DOT: Record<ScriptStatus, DotStatus> = {
@@ -36,9 +39,9 @@ export function ScriptList() {
           <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             <span className="truncate">{project.rel === '.' ? project.name : project.rel}</span>
             {project.type && (
-              <span className="rounded bg-muted px-1 text-[10px] font-normal normal-case text-muted-foreground">
+              <Badge variant="outline" className="normal-case">
                 {project.type}
-              </span>
+              </Badge>
             )}
           </div>
           {project.scripts.map((script) => {
@@ -51,58 +54,70 @@ export function ScriptList() {
                 key={script.id}
                 onClick={() => selectTerminal(script.id)}
                 className={cn(
-                  'group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5',
+                  'group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors',
                   isSelected ? 'bg-accent' : 'hover:bg-accent/50',
                 )}
               >
                 <StatusDot status={DOT[status]} pulse={running} glow={status === 'running'} />
                 <span className="flex-1 truncate font-mono text-[12px]">{script.name}</span>
                 {session?.url && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void window.omakase.shell.openExternal(session.url!);
-                    }}
-                    className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                    title={session.url}
-                  >
-                    <ExternalLink className="size-3.5" />
-                  </button>
+                  <Tooltip content={session.url}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="size-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void window.omakase.shell.openExternal(session.url!);
+                      }}
+                    >
+                      <ExternalLink />
+                    </Button>
+                  </Tooltip>
                 )}
                 {running ? (
                   <>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void restartScript(script.id);
-                      }}
-                      className="text-muted-foreground hover:text-foreground"
-                      title="Restart"
-                    >
-                      <RotateCw className="size-3.5" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void stopScript(script.id);
-                      }}
-                      className="text-muted-foreground hover:text-destructive"
-                      title="Stop"
-                    >
-                      <Square className="size-3.5" />
-                    </button>
+                    <Tooltip content="Restart">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="size-6 text-muted-foreground hover:text-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void restartScript(script.id);
+                        }}
+                      >
+                        <RotateCw />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="Stop">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="size-6 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void stopScript(script.id);
+                        }}
+                      >
+                        <Square />
+                      </Button>
+                    </Tooltip>
                   </>
                 ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void startScript(script.id);
-                    }}
-                    className="text-muted-foreground hover:text-run"
-                    title="Start"
-                  >
-                    <Play className="size-3.5" />
-                  </button>
+                  <Tooltip content="Start">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="size-6 text-muted-foreground hover:text-run"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void startScript(script.id);
+                      }}
+                    >
+                      <Play />
+                    </Button>
+                  </Tooltip>
                 )}
               </div>
             );

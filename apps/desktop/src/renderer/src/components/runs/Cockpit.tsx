@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dialog } from 'radix-ui';
 import { Pause, Play, Send, Square, Trash2, X } from 'lucide-react';
 import type { AutonomyLevel, CockpitEvent, RunMode, SpecDoc } from '@shared/types';
-import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
-import { Button } from '../ui/button';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Tooltip } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusDot, type DotStatus } from '../StatusDot';
 import { CockpitFeed } from './CockpitFeed';
 
@@ -25,7 +36,7 @@ function NewRunComposer() {
   const startRun = useAppStore((s) => s.startRun);
   const settings = useAppStore((s) => s.settings);
   const [prompt, setPrompt] = useState('');
-  const [specId, setSpecId] = useState('');
+  const [specId, setSpecId] = useState('none');
   const [specs, setSpecs] = useState<SpecDoc[]>([]);
   const [mode, setMode] = useState<RunMode>(settings?.defaultMode ?? 'normal');
   const [autonomy, setAutonomy] = useState<AutonomyLevel>(settings?.defaultAutonomy ?? 'low');
@@ -34,65 +45,73 @@ function NewRunComposer() {
     void window.omakase.specs.list().then(setSpecs);
   }, []);
 
-  const canRun = specId !== '' || prompt.trim().length > 0;
+  const usingSpec = specId !== 'none';
+  const canRun = usingSpec || prompt.trim().length > 0;
   const run = (): void => {
     if (!canRun) return;
-    void startRun({ ...(specId ? { specId } : { prompt: prompt.trim() }), mode, autonomy });
+    void startRun({ ...(usingSpec ? { specId } : { prompt: prompt.trim() }), mode, autonomy });
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-4 p-8">
-      <div>
-        <h1 className="text-[18px] font-semibold tracking-tight">Start a run</h1>
-        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+    <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-5 p-8">
+      <div className="space-y-1.5">
+        <h1 className="text-[19px] font-semibold tracking-tight">Start a run</h1>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
           Hand a spec or a task to the loop. It plans, executes, verifies, and reports — you steer.
         </p>
       </div>
+
       {specs.length > 0 && (
-        <label className="block">
-          <span className="mb-1 block text-[12px] text-muted-foreground">From a spec (optional)</span>
-          <select
-            value={specId}
-            onChange={(e) => setSpecId(e.target.value)}
-            className="w-full rounded-md border bg-background px-3 py-2 text-[13px]"
-          >
-            <option value="">— none —</option>
-            {specs.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="space-y-1.5">
+          <Label>From a spec</Label>
+          <Select value={specId} onValueChange={setSpecId}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="None — write a task below" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None — write a task below</SelectItem>
+              {specs.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       )}
-      <textarea
+
+      <Textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        placeholder={specId ? 'Optional extra instructions…' : 'Describe the task…'}
+        placeholder={usingSpec ? 'Optional extra instructions…' : 'Describe the task…'}
         rows={5}
-        className="w-full resize-none rounded-md border bg-background p-3 font-mono text-[13px] outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="resize-none font-mono"
       />
+
       <div className="flex items-center gap-2">
-        <select
-          value={mode}
-          onChange={(e) => setMode(e.target.value as RunMode)}
-          className="rounded-md border bg-background px-2 py-1.5 text-[12px]"
-        >
-          <option value="normal">normal</option>
-          <option value="max-power">max-power</option>
-        </select>
-        <select
-          value={autonomy}
-          onChange={(e) => setAutonomy(e.target.value as AutonomyLevel)}
-          className="rounded-md border bg-background px-2 py-1.5 text-[12px]"
-        >
-          <option value="off">autonomy: off</option>
-          <option value="low">autonomy: low</option>
-          <option value="medium">autonomy: medium</option>
-          <option value="high">autonomy: high</option>
-        </select>
-        <Button variant="omk" size="md" className="ml-auto gap-1.5" disabled={!canRun} onClick={run}>
-          <Play className="size-4" />
+        <Select value={mode} onValueChange={(v) => setMode(v as RunMode)}>
+          <SelectTrigger size="sm" className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="normal">normal</SelectItem>
+            <SelectItem value="max-power">max-power</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={autonomy} onValueChange={(v) => setAutonomy(v as AutonomyLevel)}>
+          <SelectTrigger size="sm" className="w-40 capitalize">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(['off', 'low', 'medium', 'high'] as AutonomyLevel[]).map((a) => (
+              <SelectItem key={a} value={a} className="capitalize">
+                autonomy: {a}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="omk" className="ml-auto" disabled={!canRun} onClick={run}>
+          <Play />
           Run
         </Button>
       </div>
@@ -105,45 +124,44 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
   useEffect(() => setText(''), [gate?.gateId]);
 
   return (
-    <Dialog.Root open={Boolean(gate)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px]" />
-        <Dialog.Content
-          onEscapeKeyDown={(e) => e.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-50 w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-popover p-5 text-popover-foreground shadow-2xl"
-        >
-          <Dialog.Title className="text-[15px] font-semibold tracking-tight">
-            The run needs your decision
-          </Dialog.Title>
-          <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-muted-foreground">
+    <Dialog open={Boolean(gate)}>
+      <DialogContent
+        hideClose
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="max-w-md gap-4"
+      >
+        <DialogHeader>
+          <DialogTitle>The run needs your decision</DialogTitle>
+          <DialogDescription className="whitespace-pre-wrap text-foreground">
             {gate?.detail}
-          </p>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Optional guidance…"
-            rows={3}
-            className="mt-3 w-full resize-none rounded-md border bg-background p-2 text-[13px] outline-none"
-          />
-          <div className="mt-4 flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onAnswer(text.trim() || 'Hold — keep iterating, do not proceed yet.')}
-            >
-              Hold
-            </Button>
-            <Button
-              variant="omk"
-              size="sm"
-              onClick={() => onAnswer(text.trim() ? `Proceed. ${text.trim()}` : 'Proceed.')}
-            >
-              Approve &amp; proceed
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Optional guidance…"
+          rows={3}
+          className="resize-none"
+        />
+        <DialogFooter>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onAnswer(text.trim() || 'Hold — keep iterating, do not proceed yet.')}
+          >
+            Hold
+          </Button>
+          <Button
+            variant="omk"
+            size="sm"
+            onClick={() => onAnswer(text.trim() ? `Proceed. ${text.trim()}` : 'Proceed.')}
+          >
+            Approve &amp; proceed
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -186,23 +204,28 @@ function LiveCockpit({ runId }: { runId: string }) {
         {summary && (summary.spentTokens ?? 0) > 0 && (
           <span className="font-mono text-[11px] text-muted-foreground">{summary.spentTokens} tok</span>
         )}
-        <button
-          onClick={() => void deleteRun(runId)}
-          className="text-muted-foreground hover:text-destructive"
-          title="Delete run"
-        >
-          <Trash2 className="size-4" />
-        </button>
-        <button onClick={closeRun} className="text-muted-foreground hover:text-foreground" title="Close">
-          <X className="size-4" />
-        </button>
+        <Tooltip content="Delete run">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            onClick={() => void deleteRun(runId)}
+          >
+            <Trash2 />
+          </Button>
+        </Tooltip>
+        <Tooltip content="Close">
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={closeRun}>
+            <X />
+          </Button>
+        </Tooltip>
       </header>
 
       <CockpitFeed feed={feed} />
 
       <div className="shrink-0 border-t bg-card/40 p-2">
         <div className="flex items-center gap-1.5">
-          <input
+          <Input
             value={steer}
             onChange={(e) => setSteer(e.target.value)}
             onKeyDown={(e) => {
@@ -210,37 +233,37 @@ function LiveCockpit({ runId }: { runId: string }) {
             }}
             disabled={!live}
             placeholder={live ? 'Queue a steering message…' : 'This run has ended.'}
-            className="flex-1 rounded-md border bg-background px-3 py-1.5 text-[13px] outline-none disabled:opacity-50"
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={!live || !steer.trim()}
-            onClick={sendSteer}
-            title="Queue message"
-          >
-            <Send className="size-4" />
-          </Button>
-          {status === 'running' && (
-            <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'pause' })} title="Pause">
-              <Pause className="size-4" />
+          <Tooltip content="Queue message">
+            <Button variant="ghost" size="icon" disabled={!live || !steer.trim()} onClick={sendSteer}>
+              <Send />
             </Button>
+          </Tooltip>
+          {status === 'running' && (
+            <Tooltip content="Pause">
+              <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'pause' })}>
+                <Pause />
+              </Button>
+            </Tooltip>
           )}
           {status === 'paused' && (
-            <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'resume' })} title="Resume">
-              <Play className="size-4" />
-            </Button>
+            <Tooltip content="Resume">
+              <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'resume' })}>
+                <Play />
+              </Button>
+            </Tooltip>
           )}
           {live && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hover:text-destructive"
-              onClick={() => void controlRun({ command: 'stop' })}
-              title="Stop"
-            >
-              <Square className="size-4" />
-            </Button>
+            <Tooltip content="Stop">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hover:text-destructive"
+                onClick={() => void controlRun({ command: 'stop' })}
+              >
+                <Square />
+              </Button>
+            </Tooltip>
           )}
         </div>
       </div>

@@ -4,6 +4,12 @@ import type { AgentDoc, DetectedAgentDto } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Textarea } from '../ui/textarea';
+import { Tooltip } from '../ui/tooltip';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { StatusDot } from '../StatusDot';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
@@ -58,7 +64,7 @@ export function AgentsView() {
 
   return (
     <ContentLayout title="Agents" onNew={() => void create()} newLabel="New agent">
-      <div className="w-60 shrink-0 overflow-y-auto border-r p-1.5">
+      <div className="w-60 shrink-0 overflow-y-auto border-r p-2">
         <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Detected
         </div>
@@ -66,94 +72,100 @@ export function AgentsView() {
           <p className="px-2 pb-2 text-[11px] text-muted-foreground">No agent CLIs found.</p>
         )}
         {detected.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 px-2 py-1 text-[12px]">
+          <div key={d.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px]">
             <StatusDot status={d.available ? 'run' : 'idle'} />
             <span className="flex-1 truncate">{d.name}</span>
             {d.version && <span className="font-mono text-[10px] text-muted-foreground">{d.version}</span>}
           </div>
         ))}
-        <div className="mt-2 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="mt-3 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Custom
         </div>
         {agents.length === 0 && (
           <p className="px-2 py-2 text-[11px] text-muted-foreground">No custom agents.</p>
         )}
-        {agents.map((a) => (
-          <button
-            key={a.id}
-            onClick={() => setSelectedId(a.id)}
-            className={cn(
-              'block w-full truncate rounded-md px-2 py-1.5 text-left text-[13px]',
-              selectedId === a.id ? 'bg-accent' : 'hover:bg-accent/50',
-            )}
-          >
-            {a.name}
-            <span className="ml-1.5 text-[10px] text-muted-foreground">{a.role}</span>
-          </button>
-        ))}
+        <div className="flex flex-col gap-0.5">
+          {agents.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => setSelectedId(a.id)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
+                selectedId === a.id ? 'bg-accent' : 'hover:bg-accent/50',
+              )}
+            >
+              <span className="flex-1 truncate">{a.name}</span>
+              <Badge variant="outline">{a.role}</Badge>
+            </button>
+          ))}
+        </div>
       </div>
       {draft ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="grid grid-cols-2 gap-3 border-b p-3">
-            <label className="col-span-2 block">
-              <span className="mb-1 block text-[11px] text-muted-foreground">Name</span>
-              <input
+          <div className="grid grid-cols-2 gap-x-3 gap-y-3 border-b p-4">
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <Label htmlFor="agent-name">Name</Label>
+              <Input
+                id="agent-name"
                 value={draft.name}
                 onChange={(e) => update({ name: e.target.value })}
-                className="w-full rounded border bg-background px-2 py-1.5 text-[13px] outline-none"
               />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-muted-foreground">Role</span>
-              <select
-                value={draft.role}
-                onChange={(e) => update({ role: e.target.value })}
-                className="w-full rounded border bg-background px-2 py-1.5 text-[12px]"
-              >
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-muted-foreground">Agent CLI</span>
-              <select
-                value={draft.agentId}
-                onChange={(e) => update({ agentId: e.target.value })}
-                className="w-full rounded border bg-background px-2 py-1.5 text-[12px]"
-              >
-                {[...new Set([draft.agentId, ...agentIds])].map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-muted-foreground">Model</span>
-              <input
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-role">Role</Label>
+              <Select value={draft.role} onValueChange={(v) => update({ role: v })}>
+                <SelectTrigger id="agent-role" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-cli">Agent CLI</Label>
+              <Select value={draft.agentId} onValueChange={(v) => update({ agentId: v })}>
+                <SelectTrigger id="agent-cli" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[...new Set([draft.agentId, ...agentIds])].map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-model">Model</Label>
+              <Input
+                id="agent-model"
                 value={draft.model ?? ''}
                 onChange={(e) => update({ model: e.target.value || null })}
                 placeholder="(default)"
-                className="w-full rounded border bg-background px-2 py-1.5 text-[12px] outline-none"
               />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-muted-foreground">Reasoning</span>
-              <input
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-reasoning">Reasoning</Label>
+              <Input
+                id="agent-reasoning"
                 value={draft.reasoning ?? ''}
                 onChange={(e) => update({ reasoning: e.target.value || null })}
                 placeholder="(default)"
-                className="w-full rounded border bg-background px-2 py-1.5 text-[12px] outline-none"
               />
-            </label>
+            </div>
           </div>
-          <div className="flex items-center gap-2 px-3 py-2">
-            <span className="text-[11px] text-muted-foreground">System prompt</span>
+          <div className="flex items-center gap-2 px-4 py-2.5">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              System prompt
+            </span>
             <Button
-              variant={dirty ? 'omk' : 'ghost'}
+              variant={dirty ? 'omk' : 'outline'}
               size="sm"
               className="ml-auto"
               disabled={!dirty}
@@ -161,23 +173,26 @@ export function AgentsView() {
             >
               Save
             </Button>
-            <button
-              onClick={() => void remove(draft.id)}
-              className="text-muted-foreground hover:text-destructive"
-              title="Delete agent"
-            >
-              <Trash2 className="size-4" />
-            </button>
+            <Tooltip content="Delete agent">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => void remove(draft.id)}
+              >
+                <Trash2 />
+              </Button>
+            </Tooltip>
           </div>
-          <textarea
+          <Textarea
             value={draft.body}
             onChange={(e) => update({ body: e.target.value })}
             spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-transparent px-4 pb-4 font-mono text-[13px] leading-relaxed outline-none"
+            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent px-4 pb-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
           />
         </div>
       ) : (
-        <EmptyDetail message="Select or create an agent definition." />
+        <EmptyDetail message="Select an agent definition, or create one to customize its role, model, and system prompt." />
       )}
     </ContentLayout>
   );

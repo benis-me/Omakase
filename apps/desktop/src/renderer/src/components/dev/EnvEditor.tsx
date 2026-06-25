@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dialog } from 'radix-ui';
 import { FileCog, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Textarea } from '../ui/textarea';
+import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
 
 interface EnvFileRef {
   label: string;
@@ -48,37 +49,36 @@ export function EnvEditor({ open, onOpenChange }: { open: boolean; onOpenChange:
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-[480px] w-[700px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-2xl">
-          <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
-            <FileCog className="size-4 text-muted-foreground" />
-            <Dialog.Title className="text-[13px] font-medium">Environment files</Dialog.Title>
-            <Button
-              variant={dirty ? 'omk' : 'ghost'}
-              size="sm"
-              className="ml-auto gap-1.5"
-              disabled={!selected || !dirty}
-              onClick={() => void save()}
-            >
-              <Save className="size-3.5" />
-              Save
-            </Button>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex h-[480px] w-[700px] max-w-none flex-col gap-0 overflow-hidden p-0">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b pl-4 pr-12">
+          <FileCog className="size-4 text-muted-foreground" />
+          <DialogTitle className="text-[13px] font-medium">Environment files</DialogTitle>
+          <Button
+            variant={dirty ? 'omk' : 'outline'}
+            size="sm"
+            className="ml-auto gap-1.5"
+            disabled={!selected || !dirty}
+            onClick={() => void save()}
+          >
+            <Save className="size-3.5" />
+            Save
+          </Button>
+        </div>
+        {files.length === 0 ? (
+          <div className="grid flex-1 place-items-center p-8 text-center text-[12px] text-muted-foreground">
+            No .env files in this workspace.
           </div>
-          {files.length === 0 ? (
-            <div className="grid flex-1 place-items-center text-[12px] text-muted-foreground">
-              No .env files in this workspace.
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1">
-              <div className="w-52 shrink-0 overflow-y-auto border-r p-1.5">
+        ) : (
+          <div className="flex min-h-0 flex-1">
+            <div className="w-52 shrink-0 overflow-y-auto border-r p-2">
+              <div className="flex flex-col gap-0.5">
                 {files.map((f) => (
                   <button
                     key={f.absPath}
                     onClick={() => setSelected(f.absPath)}
                     className={cn(
-                      'block w-full truncate rounded px-2 py-1.5 text-left font-mono text-[12px]',
+                      'block w-full truncate rounded-md px-2.5 py-1.5 text-left font-mono text-[12px] transition-colors',
                       selected === f.absPath ? 'bg-accent' : 'hover:bg-accent/50',
                     )}
                   >
@@ -86,19 +86,19 @@ export function EnvEditor({ open, onOpenChange }: { open: boolean; onOpenChange:
                   </button>
                 ))}
               </div>
-              <textarea
-                value={content}
-                onChange={(e) => {
-                  setContent(e.target.value);
-                  setDirty(true);
-                }}
-                spellCheck={false}
-                className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-[12px] leading-relaxed outline-none"
-              />
             </div>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+            <Textarea
+              value={content}
+              onChange={(e) => {
+                setContent(e.target.value);
+                setDirty(true);
+              }}
+              spellCheck={false}
+              className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-3 font-mono text-[12px] leading-relaxed shadow-none focus-visible:ring-0"
+            />
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

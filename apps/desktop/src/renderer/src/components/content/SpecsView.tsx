@@ -4,6 +4,11 @@ import type { SpecDoc, SpecPhase, SpecStatus } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { Input } from '../ui/input';
+import { Textarea } from '../ui/textarea';
+import { Tooltip } from '../ui/tooltip';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
 const PHASES: SpecPhase[] = ['idea', 'spec', 'acceptance', 'test-plan', 'tasks', 'done'];
@@ -54,76 +59,87 @@ export function SpecsView() {
 
   return (
     <ContentLayout title="Specs" onNew={() => void create()} newLabel="New spec">
-      <div className="w-64 shrink-0 overflow-y-auto border-r p-1.5">
-        {specs.length === 0 && (
-          <p className="px-2 py-6 text-center text-[12px] text-muted-foreground">No specs yet.</p>
+      <div className="w-64 shrink-0 overflow-y-auto border-r p-2">
+        {specs.length === 0 ? (
+          <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
+            No specs yet.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {specs.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSelectedId(s.id)}
+                className={cn(
+                  'block w-full rounded-md px-2.5 py-2 text-left transition-colors',
+                  selectedId === s.id ? 'bg-accent' : 'hover:bg-accent/50',
+                )}
+              >
+                <div className="truncate text-[13px]">{s.title}</div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <Badge variant="outline">{s.phase}</Badge>
+                  <Badge variant={s.status === 'running' ? 'run' : 'default'}>{s.status}</Badge>
+                </div>
+              </button>
+            ))}
+          </div>
         )}
-        {specs.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setSelectedId(s.id)}
-            className={cn(
-              'block w-full rounded-md px-2 py-1.5 text-left',
-              selectedId === s.id ? 'bg-accent' : 'hover:bg-accent/50',
-            )}
-          >
-            <div className="truncate text-[13px]">{s.title}</div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className="uppercase">{s.phase}</span>·<span>{s.status}</span>
-            </div>
-          </button>
-        ))}
       </div>
       {draft ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b p-3">
-            <input
+            <Input
               value={draft.title}
               onChange={(e) => update({ title: e.target.value })}
-              className="flex-1 bg-transparent text-[15px] font-semibold outline-none"
+              className="h-9 flex-1 border-transparent bg-transparent px-2 text-[15px] font-semibold shadow-none focus-visible:border-input"
             />
-            <select
-              value={draft.phase}
-              onChange={(e) => update({ phase: e.target.value as SpecPhase })}
-              className="rounded border bg-background px-2 py-1 text-[12px]"
-            >
-              {PHASES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <select
-              value={draft.status}
-              onChange={(e) => update({ status: e.target.value as SpecStatus })}
-              className="rounded border bg-background px-2 py-1 text-[12px]"
-            >
-              {STATUSES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <Button variant={dirty ? 'omk' : 'ghost'} size="sm" disabled={!dirty} onClick={() => void save()}>
+            <Select value={draft.phase} onValueChange={(v) => update({ phase: v as SpecPhase })}>
+              <SelectTrigger size="sm" className="w-32 capitalize">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PHASES.map((p) => (
+                  <SelectItem key={p} value={p} className="capitalize">
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={draft.status} onValueChange={(v) => update({ status: v as SpecStatus })}>
+              <SelectTrigger size="sm" className="w-28 capitalize">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUSES.map((p) => (
+                  <SelectItem key={p} value={p} className="capitalize">
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant={dirty ? 'omk' : 'outline'} size="sm" disabled={!dirty} onClick={() => void save()}>
               Save
             </Button>
-            <button
-              onClick={() => void remove(draft.id)}
-              className="text-muted-foreground hover:text-destructive"
-              title="Delete spec"
-            >
-              <Trash2 className="size-4" />
-            </button>
+            <Tooltip content="Delete spec">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => void remove(draft.id)}
+              >
+                <Trash2 />
+              </Button>
+            </Tooltip>
           </div>
-          <textarea
+          <Textarea
             value={draft.body}
             onChange={(e) => update({ body: e.target.value })}
             spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
           />
         </div>
       ) : (
-        <EmptyDetail message="Select or create a spec." />
+        <EmptyDetail message="Select a spec from the list, or create a new one to start capturing requirements." />
       )}
     </ContentLayout>
   );

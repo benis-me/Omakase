@@ -2,7 +2,7 @@
  * Wire the renderer's `window.omakase` calls to the {@link WorkspaceHost}.
  * Handlers are thin: validate args, call the host, broadcast change events.
  */
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { IPC } from '@shared/ipc';
 import type { AgentDoc, AutonomyLevel, RunControl, RunStartInput, SpecDoc } from '@shared/types';
 import type { WorkspaceHost } from '../workspace-host.js';
@@ -80,6 +80,7 @@ export function registerIpc(
   ipcMain.handle(IPC.SettingsGet, () => host.getSettings());
   ipcMain.handle(IPC.SettingsSet, (_e, partial) => {
     const settings = host.setSettings(partial);
+    nativeTheme.themeSource = settings.theme;
     emitSettings();
     return settings;
   });

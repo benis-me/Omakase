@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { FileCog, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
+import { Tooltip } from '../ui/tooltip';
 import { ScriptList } from './ScriptList';
 import { DevTerminal } from './DevTerminal';
 import { GitBadge } from './GitBadge';
@@ -34,15 +35,16 @@ export function DevWorkbench() {
             Env
           </Button>
           <OpenWithMenu />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
-            title="Rescan scripts"
-            onClick={() => void scanDev()}
-          >
-            <RefreshCw className="size-3.5" />
-          </Button>
+          <Tooltip content="Rescan scripts">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => void scanDev()}
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+          </Tooltip>
         </div>
       </header>
       <PanelGroup direction="horizontal" className="min-h-0 flex-1">

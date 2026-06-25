@@ -1,14 +1,18 @@
 import { useState } from 'react';
-import { DropdownMenu } from 'radix-ui';
 import { ChevronsUpDown, FolderGit2, FolderOpen, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { NAV_SECTIONS } from './nav';
 import { StatusDot } from './StatusDot';
 import { NewWorkspaceDialog } from './NewWorkspaceDialog';
-
-const menuItem =
-  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground';
 
 function WorkspacePicker({ onNew }: { onNew: () => void }) {
   const active = useAppStore((s) => s.active);
@@ -17,10 +21,10 @@ function WorkspacePicker({ onNew }: { onNew: () => void }) {
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
 
   return (
-    <div className="no-drag border-b px-2 py-2">
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent">
+    <div className="no-drag p-2">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left outline-none transition-colors hover:border-border hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40">
             <div className="grid size-6 shrink-0 place-items-center rounded bg-omk/15 text-omk">
               <FolderGit2 className="size-3.5" />
             </div>
@@ -29,41 +33,27 @@ function WorkspacePicker({ onNew }: { onNew: () => void }) {
             </span>
             <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
           </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            align="start"
-            sideOffset={4}
-            className="z-50 min-w-[230px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
-          >
-            {workspaces.length > 0 && (
-              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                Workspaces
-              </DropdownMenu.Label>
-            )}
-            {workspaces.map((w) => (
-              <DropdownMenu.Item
-                key={w.path}
-                onSelect={() => void openWorkspace(w.path)}
-                className={menuItem}
-              >
-                <StatusDot status={active?.path === w.path ? 'omk' : 'idle'} />
-                <span className="flex-1 truncate">{w.name}</span>
-                {w.missing && <span className="text-[11px] text-destructive">missing</span>}
-              </DropdownMenu.Item>
-            ))}
-            <DropdownMenu.Separator className="my-1 h-px bg-border" />
-            <DropdownMenu.Item onSelect={() => void browseAndAdd()} className={menuItem}>
-              <FolderOpen className="size-3.5 text-muted-foreground" />
-              Open folder…
-            </DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={onNew} className={menuItem}>
-              <Plus className="size-3.5 text-muted-foreground" />
-              New project…
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
+          {workspaces.length > 0 && <DropdownMenuLabel>Workspaces</DropdownMenuLabel>}
+          {workspaces.map((w) => (
+            <DropdownMenuItem key={w.path} onSelect={() => void openWorkspace(w.path)}>
+              <StatusDot status={active?.path === w.path ? 'omk' : 'idle'} />
+              <span className="flex-1 truncate">{w.name}</span>
+              {w.missing && <span className="text-[11px] text-destructive">missing</span>}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => void browseAndAdd()}>
+            <FolderOpen />
+            Open folder…
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onNew}>
+            <Plus />
+            New project…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -73,7 +63,7 @@ function NavList() {
   const setNav = useAppStore((s) => s.setNav);
 
   return (
-    <div className="space-y-0.5">
+    <nav className="space-y-0.5 px-2">
       {NAV_SECTIONS.map((item) => {
         const Icon = item.icon;
         const isActive = nav === item.id;
@@ -83,18 +73,18 @@ function NavList() {
             onClick={() => setNav(item.id)}
             title={item.hint}
             className={cn(
-              'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors',
+              'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
               isActive
                 ? 'bg-accent font-medium text-foreground'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             )}
           >
-            <Icon className="size-4 shrink-0" />
+            <Icon className={cn('size-4 shrink-0', isActive && 'text-omk')} />
             {item.label}
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }
 
@@ -105,17 +95,16 @@ export function Sidebar() {
   return (
     <aside className="flex h-full flex-col bg-sidebar/50">
       <WorkspacePicker onNew={() => setDialogOpen(true)} />
-      <nav className="flex-1 overflow-y-auto px-2 py-2">
+      <div className="h-px bg-border" />
+      <div className="flex-1 overflow-y-auto py-2">
         {active ? (
           <NavList />
         ) : (
-          <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            No workspace open.
-            <br />
-            Pick one above to begin.
+          <p className="px-4 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
+            No workspace open. Pick one above to begin.
           </p>
         )}
-      </nav>
+      </div>
       <NewWorkspaceDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </aside>
   );

@@ -249,6 +249,26 @@ body:has([data-radix-popper-content-wrapper]) .drag {
   display: none;
 }
 
+/* resizable panel drag handles (react-resizable-panels): a visible 1px divider
+   that brightens to the accent on hover/drag, with a wider invisible grab area. */
+.resize-handle {
+  position: relative;
+  flex: 0 0 1px;
+  background-color: var(--color-border);
+  outline: none;
+  transition: background-color 0.12s ease;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: -3px;
+}
+.resize-handle[data-resize-handle-state="hover"],
+.resize-handle[data-resize-handle-state="drag"] {
+  background-color: color-mix(in oklab, var(--color-omk) 70%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
