@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { ActiveWorkspace, AppSettings, ThemeMode, WorkspaceInfo } from '@shared/types';
+import type {
+  ActiveWorkspace,
+  AppSettings,
+  ProjectInfo,
+  ScriptSession,
+  ThemeMode,
+  WorkspaceInfo,
+} from '@shared/types';
 
 export type NavSection = 'runs' | 'specs' | 'agents' | 'memory' | 'workflows' | 'dev';
 
@@ -13,9 +20,20 @@ interface AppState {
   nav: NavSection;
   paletteOpen: boolean;
 
+  // Dev workbench slice
+  projects: ProjectInfo[];
+  sessions: Record<string, ScriptSession>;
+  selectedTerminal: string | null;
+
   init: () => Promise<void>;
   setNav: (nav: NavSection) => void;
   setPaletteOpen: (open: boolean) => void;
+
+  scanDev: () => Promise<void>;
+  startScript: (id: string) => Promise<void>;
+  stopScript: (id: string) => Promise<void>;
+  restartScript: (id: string) => Promise<void>;
+  selectTerminal: (id: string | null) => void;
 
   browseAndAdd: () => Promise<void>;
   createWorkspace: (parentDir: string, name: string) => Promise<void>;
@@ -36,6 +54,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   nav: 'runs',
   paletteOpen: false,
 
+  projects: [],
+  sessions: {},
+  selectedTerminal: null,
+
   init: async () => {
     const [workspaces, active, settings] = await Promise.all([
       api().workspaces.list(),
@@ -45,12 +67,47 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ workspaces, active, settings, ready: true });
 
     api().onWorkspacesChanged((list) => set({ workspaces: list }));
-    api().onActiveWorkspaceChanged((ws) => set({ active: ws }));
+    api().onActiveWorkspaceChanged((ws) =>
+      set({ active: ws, projects: [], sessions: {}, selectedTerminal: null }),
+    );
     api().onSettingsChanged((s) => set({ settings: s }));
+
+    api().onProjectsUpdated((projects) => set({ projects }));
+    api().onScriptStatus((session) =>
+      set((s) => ({ sessions: { ...s.sessions, [session.id]: session } })),
+    );
+    api().onScriptUrl(({ id, url }) =>
+      set((s) => {
+        const prev = s.sessions[id];
+        return prev ? { sessions: { ...s.sessions, [id]: { ...prev, url } } } : {};
+      }),
+    );
+
+    if (active) void get().scanDev();
   },
 
   setNav: (nav) => set({ nav }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+
+  scanDev: async () => {
+    const [projects, sessions] = await Promise.all([api().dev.scan(), api().scripts.sessions()]);
+    const byId: Record<string, ScriptSession> = {};
+    for (const s of sessions) byId[s.id] = s;
+    set({ projects, sessions: byId });
+  },
+
+  startScript: async (id) => {
+    set({ selectedTerminal: id });
+    await api().scripts.start(id);
+  },
+  stopScript: async (id) => {
+    await api().scripts.stop(id);
+  },
+  restartScript: async (id) => {
+    set({ selectedTerminal: id });
+    await api().scripts.restart(id);
+  },
+  selectTerminal: (id) => set({ selectedTerminal: id }),
 
   browseAndAdd: async () => {
     const folder = await api().workspaces.pickFolder();

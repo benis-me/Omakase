@@ -25,10 +25,16 @@ import {
 export class WorkspaceHost {
   private readonly registry: Registry;
   private active: OpenWorkspace | null = null;
+  private activeListener?: (ws: OpenWorkspace | null) => void;
 
   constructor(registryFile: string) {
     mkdirSync(path.dirname(registryFile), { recursive: true });
     this.registry = Registry.open(registryFile);
+  }
+
+  /** Notified whenever the active workspace changes (e.g. so Dev re-scans). */
+  setActiveListener(cb: (ws: OpenWorkspace | null) => void): void {
+    this.activeListener = cb;
   }
 
   listWorkspaces(): WorkspaceInfo[] {
@@ -75,6 +81,7 @@ export class WorkspaceHost {
     this.active?.close();
     this.active = null;
     this.registry.setSetting('lastWorkspace', null);
+    this.activeListener?.(null);
   }
 
   remove(targetPath: string): WorkspaceInfo[] {
@@ -140,6 +147,7 @@ export class WorkspaceHost {
     this.active = ws;
     this.registry.touch(ws.root);
     this.registry.setSetting('lastWorkspace', ws.root);
+    this.activeListener?.(ws);
     return toActiveDto(ws);
   }
 }

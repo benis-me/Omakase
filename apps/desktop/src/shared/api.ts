@@ -7,6 +7,8 @@ import type {
   AppSettings,
   AppVersions,
   LegacyImportSummary,
+  ProjectInfo,
+  ScriptSession,
   WorkspaceInfo,
 } from './types.js';
 
@@ -37,11 +39,31 @@ export interface OmakaseApi {
     openPath(path: string): Promise<void>;
     openExternal(url: string): Promise<void>;
   };
+  dev: {
+    scan(): Promise<ProjectInfo[]>;
+  };
+  scripts: {
+    start(scriptId: string): Promise<void>;
+    stop(scriptId: string): Promise<void>;
+    restart(scriptId: string): Promise<void>;
+    sessions(): Promise<ScriptSession[]>;
+  };
+  terminal: {
+    write(scriptId: string, data: string): Promise<void>;
+    resize(scriptId: string, cols: number, rows: number): Promise<void>;
+    getBuffer(scriptId: string): Promise<string>;
+    clear(scriptId: string): Promise<void>;
+  };
   versions: AppVersions;
 
   onWorkspacesChanged(cb: (list: WorkspaceInfo[]) => void): () => void;
   onActiveWorkspaceChanged(cb: (ws: ActiveWorkspace | null) => void): () => void;
   onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
+  onScriptData(cb: (payload: { id: string; chunk: string }) => void): () => void;
+  onScriptStatus(cb: (session: ScriptSession) => void): () => void;
+  onScriptUrl(cb: (payload: { id: string; url: string }) => void): () => void;
+  onProjectsUpdated(cb: (projects: ProjectInfo[]) => void): () => void;
+  onPortConflict(cb: (payload: { id: string; port: number }) => void): () => void;
 }
 
 declare global {

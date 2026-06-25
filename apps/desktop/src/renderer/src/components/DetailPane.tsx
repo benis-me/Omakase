@@ -1,12 +1,15 @@
 import { FolderOpen } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { NAV_SECTIONS } from './nav';
+import { DevWorkbench } from './dev/DevWorkbench';
 
 export function DetailPane() {
   const nav = useAppStore((s) => s.nav);
   const active = useAppStore((s) => s.active);
   const item = NAV_SECTIONS.find((n) => n.id === nav) ?? NAV_SECTIONS[0];
   const Icon = item.icon;
+
+  if (nav === 'dev') return <DevWorkbench />;
 
   return (
     <div className="flex h-full flex-col">

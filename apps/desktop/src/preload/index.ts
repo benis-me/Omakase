@@ -31,6 +31,21 @@ const api: OmakaseApi = {
     openPath: (path) => ipcRenderer.invoke(IPC.ShellOpenPath, path),
     openExternal: (url) => ipcRenderer.invoke(IPC.ShellOpenExternal, url),
   },
+  dev: {
+    scan: () => ipcRenderer.invoke(IPC.DevScan),
+  },
+  scripts: {
+    start: (scriptId) => ipcRenderer.invoke(IPC.ScriptsStart, scriptId),
+    stop: (scriptId) => ipcRenderer.invoke(IPC.ScriptsStop, scriptId),
+    restart: (scriptId) => ipcRenderer.invoke(IPC.ScriptsRestart, scriptId),
+    sessions: () => ipcRenderer.invoke(IPC.ScriptsSessions),
+  },
+  terminal: {
+    write: (scriptId, data) => ipcRenderer.invoke(IPC.TerminalWrite, scriptId, data),
+    resize: (scriptId, cols, rows) => ipcRenderer.invoke(IPC.TerminalResize, scriptId, cols, rows),
+    getBuffer: (scriptId) => ipcRenderer.invoke(IPC.TerminalGetBuffer, scriptId),
+    clear: (scriptId) => ipcRenderer.invoke(IPC.TerminalClear, scriptId),
+  },
   versions: {
     electron: process.versions.electron ?? '',
     node: process.versions.node ?? '',
@@ -40,6 +55,11 @@ const api: OmakaseApi = {
   onWorkspacesChanged: (cb) => sub(IPC.EvtWorkspacesChanged, cb),
   onActiveWorkspaceChanged: (cb) => sub(IPC.EvtActiveWorkspaceChanged, cb),
   onSettingsChanged: (cb) => sub(IPC.EvtSettingsChanged, cb),
+  onScriptData: (cb) => sub(IPC.EvtScriptData, cb),
+  onScriptStatus: (cb) => sub(IPC.EvtScriptStatus, cb),
+  onScriptUrl: (cb) => sub(IPC.EvtScriptUrl, cb),
+  onProjectsUpdated: (cb) => sub(IPC.EvtProjectsUpdated, cb),
+  onPortConflict: (cb) => sub(IPC.EvtPortConflict, cb),
 };
 
 contextBridge.exposeInMainWorld('omakase', api);

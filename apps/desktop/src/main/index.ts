@@ -1,10 +1,13 @@
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { join } from 'node:path';
+import { IPC } from '@shared/ipc';
 import { WorkspaceHost } from './workspace-host.js';
+import { DevController } from './dev-controller.js';
 import { registerIpc } from './ipc/register.js';
 
 let mainWindow: BrowserWindow | null = null;
 let host: WorkspaceHost;
+let dev: DevController;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -37,10 +40,22 @@ app.whenReady().then(() => {
   const registryFile = join(app.getPath('userData'), 'registry.db');
   host = new WorkspaceHost(registryFile);
 
+  const send = (channel: string, payload: unknown): void => {
+    mainWindow?.webContents.send(channel, payload);
+  };
+  dev = new DevController({
+    scriptData: (id, chunk) => send(IPC.EvtScriptData, { id, chunk }),
+    scriptStatus: (session) => send(IPC.EvtScriptStatus, session),
+    scriptUrl: (id, url) => send(IPC.EvtScriptUrl, { id, url }),
+    projectsUpdated: (projects) => send(IPC.EvtProjectsUpdated, projects),
+    portConflict: (id, port) => send(IPC.EvtPortConflict, { id, port }),
+  });
+  host.setActiveListener((ws) => void dev.setWorkspace(ws));
+
   const settings = host.getSettings();
   nativeTheme.themeSource = settings.theme;
 
-  registerIpc(host, () => mainWindow);
+  registerIpc(host, dev, () => mainWindow);
 
   // Restore the last workspace (best-effort; a deleted folder is just skipped).
   if (settings.lastWorkspace) {
@@ -62,4 +77,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => host?.shutdown());
+app.on('before-quit', () => {
+  dev?.shutdown();
+  host?.shutdown();
+});

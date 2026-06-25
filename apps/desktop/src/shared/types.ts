@@ -61,3 +61,63 @@ export interface AppVersions {
   chrome: string;
   app: string;
 }
+
+// ── Dev workbench (DevDock-parity) ───────────────────────────────────────────
+
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | null;
+export type ScriptKind = 'long-running' | 'one-shot';
+export type ScriptStatus = 'idle' | 'starting' | 'running' | 'exited' | 'errored';
+
+export interface ScriptInfo {
+  /** Stable id: `${projectRel}::${name}`. */
+  id: string;
+  name: string;
+  command: string;
+  /** Absolute directory the script runs in. */
+  cwd: string;
+  /** Project-relative path within the workspace ('.' = root). */
+  projectRel: string;
+  kind: ScriptKind;
+}
+
+export interface ProjectInfo {
+  rel: string;
+  name: string;
+  path: string;
+  packageManager: PackageManager;
+  type: string | null;
+  scripts: ScriptInfo[];
+  /** Relative paths of `.env*` files under the project. */
+  envFiles: string[];
+}
+
+export interface ScriptSession {
+  id: string;
+  status: ScriptStatus;
+  pid: number | null;
+  url: string | null;
+  startedAt: number | null;
+  exitCode: number | null;
+}
+
+export interface PortInfo {
+  port: number;
+  pid: number;
+  command: string;
+}
+
+export interface GitInfo {
+  branch: string | null;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  changes: number;
+}
+
+export interface AppInfo {
+  id: string;
+  name: string;
+  path: string;
+  kind: 'editor' | 'terminal';
+  icon: string | null;
+}
