@@ -5,7 +5,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { StatusDot } from '../StatusDot';
-import { Cockpit, RUN_DOT } from './Cockpit';
+import { Cockpit } from './Cockpit';
+import { RUN_DOT } from './run-status';
 
 export function RunsView() {
   const activePath = useAppStore((s) => s.active?.path);

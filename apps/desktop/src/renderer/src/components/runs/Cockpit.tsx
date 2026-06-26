@@ -16,21 +16,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { StatusDot, type DotStatus } from '../StatusDot';
+import { StatusDot } from '../StatusDot';
 import { CockpitTabs } from './CockpitTabs';
-
-export const RUN_DOT: Record<string, DotStatus> = {
-  running: 'omk',
-  paused: 'warn',
-  pending: 'warn',
-  'waiting-for-user': 'warn',
-  incomplete: 'warn',
-  succeeded: 'run',
-  failed: 'fail',
-  cancelled: 'idle',
-};
-
-const LIVE = new Set(['running', 'paused', 'pending', 'waiting-for-user']);
+import { LIVE_STATUSES, RUN_DOT } from './run-status';
 
 function NewRunComposer() {
   const startRun = useAppStore((s) => s.startRun);
@@ -175,7 +163,7 @@ function LiveCockpit({ runId }: { runId: string }) {
 
   const summary = runs.find((r) => r.id === runId);
   const status = summary?.status ?? 'running';
-  const live = LIVE.has(status);
+  const live = LIVE_STATUSES.has(status);
 
   const openGate = useMemo(() => {
     const answered = new Set(
