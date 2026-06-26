@@ -94,4 +94,28 @@ describe('orchestrator validation gate', () => {
     expect(verifyCalls).toBe(2);
     expect(result.plan.tasks.some((t) => t.tags.includes('verify-fix'))).toBe(true);
   });
+
+  it('marks the run incomplete (not succeeded) when verification never passes', async () => {
+    let verifyCalls = 0;
+    const exec = createScriptedAgent(() => [{ type: 'text_delta', delta: 'done' }]);
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      verifier: async () => {
+        verifyCalls += 1;
+        return { passed: false, summary: 'still red' };
+      },
+      maxValidationRounds: 2,
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const result = await orch.start({ prompt: 'build a thing' }).result;
+
+    // Tasks all ran, but the objective check never went green — not a true success.
+    expect(result.status).toBe('incomplete');
+    expect(verifyCalls).toBe(2); // bounded by maxValidationRounds
+  });
 });

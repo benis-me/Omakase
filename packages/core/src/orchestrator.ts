@@ -361,6 +361,10 @@ class RunController implements RunHandle {
   private readonly validateEnabled: boolean;
   private readonly maxValidationRounds: number;
   private readonly verifier?: RunVerifier;
+  /** Set when closed-loop verification never passed within maxValidationRounds —
+   * the run did its tasks but its objective check is still red, so it isn't a
+   * true success. */
+  private verificationFailed = false;
   private readonly maxAttempts: number;
   private readonly maxConcurrency: number;
   private readonly budget: RunBudget | undefined;
@@ -784,6 +788,7 @@ class RunController implements RunHandle {
   private async validationGate(): Promise<void> {
     if (!this.validateEnabled && !this.verifier) return;
     let round = 0;
+    let lastVerifierPassed = true;
     while (round < this.maxValidationRounds && !this.cancelled && !this.budgetExhausted) {
       this.applyImplicitAcceptanceIfNeeded();
       // Only gate a run that would otherwise succeed — nothing to validate otherwise.
@@ -794,6 +799,7 @@ class RunController implements RunHandle {
       // 1. Closed-loop verification (real tests/build) — an objective HARD gate.
       if (this.verifier) {
         const result = await this.verifier();
+        lastVerifierPassed = result.passed;
         this.wiki.addNote({
           title: `Verification — ${result.passed ? 'passed' : 'failed'}`,
           body: result.summary || (result.passed ? 'All checks passed.' : 'Verification failed.'),
@@ -834,6 +840,9 @@ class RunController implements RunHandle {
       await this.loop();
       round += 1;
     }
+    // Exhausted the rounds. If the objective verifier is still red, this isn't a
+    // true success — computeFinalStatus() will downgrade it to 'incomplete'.
+    this.verificationFailed = this.verifier ? !lastVerifierPassed : false;
   }
 
   private async runValidator(): Promise<ReturnType<typeof parseValidationVerdict>> {
@@ -2230,6 +2239,8 @@ class RunController implements RunHandle {
     if (tasks.length === 0) return 'succeeded';
     if (tasks.every((t) => t.status === 'succeeded')) {
       if (this.requiresExplicitAcceptance() && !this.acceptance.progress.complete) return 'incomplete';
+      // Objective verification (tests) never went green within the gate's rounds.
+      if (this.verificationFailed) return 'incomplete';
       return 'succeeded';
     }
     if (tasks.some((t) => t.status === 'failed' || t.status === 'blocked')) return 'failed';
