@@ -144,7 +144,18 @@ export interface OrchestratorOptions {
   validate?: boolean;
   /** Max validate → fix → re-loop rounds before finishing anyway (default 2). */
   maxValidationRounds?: number;
+  /**
+   * Closed-loop verification: a real, deterministic check (run the test/build
+   * command) used as a HARD gate at the finish line, ahead of the LLM validator.
+   * When it fails, its output becomes a fix-task and the loop re-runs (bounded by
+   * {@link maxValidationRounds}). This is the "verification is the differentiator"
+   * upgrade — objective pass/fail, not agent self-assessment. Omit to skip.
+   */
+  verifier?: RunVerifier;
 }
+
+/** A deterministic finish-line check — typically running the workspace's tests. */
+export type RunVerifier = () => Promise<{ passed: boolean; summary: string }>;
 
 const REVIEW_REJECTS =
   /\b(reject|rejected|needs work|needs more|incomplete|not done|insufficient|revise|fail(?:ed|s)?)\b/;
@@ -349,6 +360,7 @@ class RunController implements RunHandle {
   private readonly maxIterations: number;
   private readonly validateEnabled: boolean;
   private readonly maxValidationRounds: number;
+  private readonly verifier?: RunVerifier;
   private readonly maxAttempts: number;
   private readonly maxConcurrency: number;
   private readonly budget: RunBudget | undefined;
@@ -436,6 +448,7 @@ class RunController implements RunHandle {
     this.maxIterations = options.maxIterations ?? 50;
     this.validateEnabled = options.validate ?? false;
     this.maxValidationRounds = options.maxValidationRounds ?? 2;
+    this.verifier = options.verifier;
     this.maxAttempts = options.maxAttemptsPerTask ?? 3;
     this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 4);
     this.budget = options.budget;
@@ -769,29 +782,52 @@ class RunController implements RunHandle {
    * {@link maxValidationRounds}. A no-op unless {@link validateEnabled}.
    */
   private async validationGate(): Promise<void> {
-    if (!this.validateEnabled) return;
+    if (!this.validateEnabled && !this.verifier) return;
     let round = 0;
     while (round < this.maxValidationRounds && !this.cancelled && !this.budgetExhausted) {
       this.applyImplicitAcceptanceIfNeeded();
       // Only gate a run that would otherwise succeed — nothing to validate otherwise.
       if (this.computeFinalStatus() !== 'succeeded') return;
-      const verdict = await this.runValidator();
-      this.wiki.addNote({
-        title: `Validation — ${verdict.passed ? 'passed' : 'gaps found'}`,
-        body: verdict.notes || (verdict.gaps.length ? verdict.gaps.join('\n') : 'No gaps.'),
-        tags: ['validation', verdict.passed ? 'passed' : 'rejected'],
-        source: `validator:${this.id}`,
-      });
-      if (verdict.passed) return;
-      const gaps = verdict.gaps.filter((g) => g.trim()).slice(0, 8);
-      if (gaps.length === 0) return; // rejected but no actionable gaps — don't livelock
-      for (const gap of gaps) {
-        this.graph.addTask({
-          title: `Fix: ${gap.slice(0, 70)}`,
-          description: gap,
-          role: 'worker',
-          tags: ['validator-fix'],
+
+      const fixes: { title: string; description: string; tag: string }[] = [];
+
+      // 1. Closed-loop verification (real tests/build) — an objective HARD gate.
+      if (this.verifier) {
+        const result = await this.verifier();
+        this.wiki.addNote({
+          title: `Verification — ${result.passed ? 'passed' : 'failed'}`,
+          body: result.summary || (result.passed ? 'All checks passed.' : 'Verification failed.'),
+          tags: ['verification', result.passed ? 'passed' : 'failed'],
+          source: `verifier:${this.id}`,
         });
+        if (!result.passed) {
+          fixes.push({
+            title: 'Fix failing verification',
+            description: `The verification command failed:\n${result.summary}`.slice(0, 2000),
+            tag: 'verify-fix',
+          });
+        }
+      }
+
+      // 2. Independent LLM validator — only once verification is clean.
+      if (this.validateEnabled && fixes.length === 0) {
+        const verdict = await this.runValidator();
+        this.wiki.addNote({
+          title: `Validation — ${verdict.passed ? 'passed' : 'gaps found'}`,
+          body: verdict.notes || (verdict.gaps.length ? verdict.gaps.join('\n') : 'No gaps.'),
+          tags: ['validation', verdict.passed ? 'passed' : 'rejected'],
+          source: `validator:${this.id}`,
+        });
+        if (!verdict.passed) {
+          for (const gap of verdict.gaps.filter((g) => g.trim()).slice(0, 8)) {
+            fixes.push({ title: `Fix: ${gap.slice(0, 70)}`, description: gap, tag: 'validator-fix' });
+          }
+        }
+      }
+
+      if (fixes.length === 0) return; // every gate is clean (or rejected with no actionable fix)
+      for (const fix of fixes) {
+        this.graph.addTask({ title: fix.title, description: fix.description, role: 'worker', tags: [fix.tag] });
       }
       await this.replan('validation-rejected');
       await this.checkpoint();

@@ -5,7 +5,8 @@
  * detached daemon would use (Phase 5), so the model is uniform. The autonomy
  * dial governs how far a run proceeds before a risk gate pauses for the user.
  */
-import { mkdirSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
 import {
@@ -22,6 +23,7 @@ import {
   type OrchestratorOptions,
   type RunRecord,
   type RunStatus,
+  type RunVerifier,
 } from '@omakase/core';
 import type { OpenWorkspace } from '@omakase/storage';
 import { readSpec, readWorkflow, type RunSummary } from '@omakase/storage';
@@ -250,6 +252,8 @@ export class RunHost {
       return () => clearInterval(timer);
     };
     const control: ControlSource = new FileControlSource(controlDir);
+    // Spec runs that have a test command get a closed-loop verifier as a hard gate.
+    const verifier = validate ? this.buildVerifier(ws) : undefined;
     return new Orchestrator({
       runtime: this.runtime,
       store: ws.runStore,
@@ -260,8 +264,51 @@ export class RunHost {
       validate,
       // A run-level CLI choice pins every role to that agent.
       ...(agentId ? { policy: createModelPolicy('custom', { custom: { default: { agentId } } }) } : {}),
+      ...(verifier ? { verifier } : {}),
       ...this.overrides,
     });
+  }
+
+  /**
+   * A closed-loop verifier that runs the workspace's `test` script — an objective
+   * finish-line gate (failing tests inject a fix-task and re-run the loop).
+   * Returns undefined when there's no test script to run.
+   */
+  private buildVerifier(ws: OpenWorkspace): RunVerifier | undefined {
+    let hasTest = false;
+    try {
+      const pkg = JSON.parse(readFileSync(join(ws.root, 'package.json'), 'utf8')) as {
+        scripts?: Record<string, string>;
+      };
+      hasTest = Boolean(pkg.scripts?.test);
+    } catch {
+      return undefined;
+    }
+    if (!hasTest) return undefined;
+    const pm = existsSync(join(ws.root, 'pnpm-lock.yaml'))
+      ? 'pnpm'
+      : existsSync(join(ws.root, 'yarn.lock'))
+        ? 'yarn'
+        : existsSync(join(ws.root, 'bun.lockb'))
+          ? 'bun'
+          : 'npm';
+    return () =>
+      new Promise((resolve) => {
+        execFile(
+          pm,
+          ['test'],
+          { cwd: ws.root, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+          (err, stdout, stderr) => {
+            // Don't fail the gate just because the runner isn't on PATH.
+            if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+              resolve({ passed: true, summary: `${pm} not found — verification skipped` });
+              return;
+            }
+            const tail = `${stdout}\n${stderr}`.trim().split('\n').slice(-40).join('\n').slice(0, 4000);
+            resolve({ passed: !err, summary: tail || (err ? 'test command failed' : 'tests passed') });
+          },
+        );
+      });
   }
 
   private track(handle: LiveHandle, autonomy: AutonomyLevel, controlDir: string, seqBase: number): void {

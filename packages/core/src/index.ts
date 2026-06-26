@@ -143,6 +143,7 @@ export type {
   RunHandle,
   RunResult,
   RunBudget,
+  RunVerifier,
   StructuredReview,
 } from './orchestrator.js';
 

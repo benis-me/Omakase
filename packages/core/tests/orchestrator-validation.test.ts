@@ -68,4 +68,30 @@ describe('orchestrator validation gate', () => {
     expect(result.status).toBe('succeeded');
     expect(validatorCalls).toBe(0);
   });
+
+  it('runs a closed-loop verifier as a hard gate: fail → fix → pass', async () => {
+    let verifyCalls = 0;
+    const exec = createScriptedAgent(() => [{ type: 'text_delta', delta: 'done' }]);
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      // First check fails (tests red), second passes — an objective gate, no LLM.
+      verifier: async () => {
+        verifyCalls += 1;
+        return verifyCalls === 1
+          ? { passed: false, summary: '2 tests failing' }
+          : { passed: true, summary: 'all green' };
+      },
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+
+    const result = await orch.start({ prompt: 'build a thing' }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(verifyCalls).toBe(2);
+    expect(result.plan.tasks.some((t) => t.tags.includes('verify-fix'))).toBe(true);
+  });
 });
