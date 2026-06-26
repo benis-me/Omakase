@@ -190,6 +190,43 @@ export default async function tdd(w) {
 }
 `;
 
+// A minimal starter that documents the workflow API inline.
+const BLANK_TEMPLATE = String.raw`// name: Workflow
+// The host calls your default export with the workflow API \`w\`:
+//   w.phase(name, fn) · w.agent({ role, title, prompt }) -> { text, status }
+//   w.parallel([...]) · w.pipeline(items, ...stages) · w.loopUntil(fn, { maxRounds })
+//   w.budget() · w.requestReport(...) · w.updateWiki(...) · w.checkpoint(label) · w.log(msg)
+export default async function workflow(w) {
+  await w.phase('Main', async () => {
+    const res = await w.agent({ title: 'Do the thing', prompt: 'Describe the task here.' });
+    await w.log(res.text.slice(0, 80));
+  });
+}
+`;
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+}
+
+/** Starter workflows surfaced in the "New workflow" menu. */
+export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
+  { id: 'blank', name: 'Workflow', description: 'A minimal starter you fill in.', source: BLANK_TEMPLATE },
+  {
+    id: 'mission',
+    name: 'Mission',
+    description: 'Plan → build+review pipeline → loop-until-dry validation.',
+    source: MISSION_TEMPLATE,
+  },
+  { id: 'tdd', name: 'TDD', description: 'Red → green → refactor for each behaviour.', source: TDD_TEMPLATE },
+];
+
+export function workflowTemplateSource(id: string): string | undefined {
+  return WORKFLOW_TEMPLATES.find((t) => t.id === id)?.source;
+}
+
 export interface EnsureWorkspaceOptions {
   name?: string;
   now?: number;

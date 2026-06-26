@@ -89,8 +89,9 @@ const api: OmakaseApi = {
   },
   workflows: {
     list: () => ipcRenderer.invoke(IPC.WorkflowsList),
+    templates: () => ipcRenderer.invoke(IPC.WorkflowsTemplates),
     get: (id) => ipcRenderer.invoke(IPC.WorkflowsGet, id),
-    create: (name) => ipcRenderer.invoke(IPC.WorkflowsCreate, name),
+    create: (name, templateId) => ipcRenderer.invoke(IPC.WorkflowsCreate, name, templateId),
     save: (id, source) => ipcRenderer.invoke(IPC.WorkflowsSave, id, source),
     delete: (id) => ipcRenderer.invoke(IPC.WorkflowsDelete, id),
   },

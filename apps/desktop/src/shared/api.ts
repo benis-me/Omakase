@@ -24,6 +24,7 @@ import type {
   ScriptSession,
   SpecDoc,
   WorkflowDoc,
+  WorkflowTemplateDto,
   WorkspaceInfo,
 } from './types.js';
 
@@ -112,8 +113,9 @@ export interface OmakaseApi {
   };
   workflows: {
     list(): Promise<WorkflowDoc[]>;
+    templates(): Promise<WorkflowTemplateDto[]>;
     get(id: string): Promise<WorkflowDoc | null>;
-    create(name: string): Promise<WorkflowDoc | null>;
+    create(name: string, templateId?: string): Promise<WorkflowDoc | null>;
     save(id: string, source: string): Promise<void>;
     delete(id: string): Promise<void>;
   };

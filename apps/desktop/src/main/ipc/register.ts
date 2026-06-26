@@ -137,8 +137,11 @@ export function registerIpc(
 
   // Workflows
   ipcMain.handle(IPC.WorkflowsList, () => content.listWorkflows());
+  ipcMain.handle(IPC.WorkflowsTemplates, () => content.workflowTemplates());
   ipcMain.handle(IPC.WorkflowsGet, (_e, id: string) => content.getWorkflow(id));
-  ipcMain.handle(IPC.WorkflowsCreate, (_e, name: string) => content.createWorkflow(name));
+  ipcMain.handle(IPC.WorkflowsCreate, (_e, name: string, templateId?: string) =>
+    content.createWorkflow(name, templateId),
+  );
   ipcMain.handle(IPC.WorkflowsSave, (_e, id: string, source: string) => content.saveWorkflow(id, source));
   ipcMain.handle(IPC.WorkflowsDelete, (_e, id: string) => content.deleteWorkflow(id));
 

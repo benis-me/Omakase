@@ -71,6 +71,7 @@ export const IPC = {
 
   // Workflows
   WorkflowsList: 'workflows:list',
+  WorkflowsTemplates: 'workflows:templates',
   WorkflowsGet: 'workflows:get',
   WorkflowsCreate: 'workflows:create',
   WorkflowsSave: 'workflows:save',

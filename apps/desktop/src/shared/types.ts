@@ -158,6 +158,13 @@ export interface WorkflowDoc {
   path: string;
 }
 
+/** A starter workflow offered in the "New workflow" menu (source resolved in main). */
+export interface WorkflowTemplateDto {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface RuleDoc {
   name: string;
   body: string;

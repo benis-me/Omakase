@@ -25,12 +25,19 @@ import {
   writeRule,
   writeSpec,
   writeWorkflow,
+  WORKFLOW_TEMPLATES,
+  workflowTemplateSource,
   type AgentDoc,
   type SpecDoc,
   type WorkflowDoc,
 } from '@omakase/storage';
 import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
-import type { DetectedAgentDto, KnowledgeEventDto, RuleDoc } from '@shared/types';
+import type {
+  DetectedAgentDto,
+  KnowledgeEventDto,
+  RuleDoc,
+  WorkflowTemplateDto,
+} from '@shared/types';
 import type { WorkspaceHost } from './workspace-host.js';
 
 export class ContentController {
@@ -141,9 +148,14 @@ export class ContentController {
     const root = this.root();
     return root ? readWorkflow(root, id) : null;
   }
-  createWorkflow(name: string): WorkflowDoc | null {
+  workflowTemplates(): WorkflowTemplateDto[] {
+    return WORKFLOW_TEMPLATES.map(({ id, name, description }) => ({ id, name, description }));
+  }
+  createWorkflow(name: string, templateId?: string): WorkflowDoc | null {
     const root = this.root();
-    return root ? createWorkflow(root, name) : null;
+    if (!root) return null;
+    const source = templateId ? workflowTemplateSource(templateId) : undefined;
+    return createWorkflow(root, name, source);
   }
   saveWorkflow(id: string, source: string): void {
     const root = this.root();

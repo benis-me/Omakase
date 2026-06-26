@@ -30,6 +30,8 @@ export {
   writeWorkspace,
   ensureWorkspace,
   openWorkspace,
+  WORKFLOW_TEMPLATES,
+  workflowTemplateSource,
 } from './omks/workspace.js';
 export type {
   WorkspaceManifest,
@@ -37,6 +39,7 @@ export type {
   EnsureWorkspaceOptions,
   OpenWorkspace,
   OpenWorkspaceOptions,
+  WorkflowTemplate,
 } from './omks/workspace.js';
 
 // ── Authored documents ───────────────────────────────────────────────────────
