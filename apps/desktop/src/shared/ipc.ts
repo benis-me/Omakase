@@ -51,6 +51,7 @@ export const IPC = {
   SpecsCreate: 'specs:create',
   SpecsSave: 'specs:save',
   SpecsDelete: 'specs:delete',
+  SpecsAdvance: 'specs:advance',
 
   // Agents (authored definitions + local detection)
   AgentsList: 'agents:list',

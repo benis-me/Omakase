@@ -69,6 +69,7 @@ const api: OmakaseApi = {
     create: (title) => ipcRenderer.invoke(IPC.SpecsCreate, title),
     save: (doc) => ipcRenderer.invoke(IPC.SpecsSave, doc),
     delete: (id) => ipcRenderer.invoke(IPC.SpecsDelete, id),
+    advance: (id) => ipcRenderer.invoke(IPC.SpecsAdvance, id),
   },
   agents: {
     list: () => ipcRenderer.invoke(IPC.AgentsList),

@@ -31,6 +31,7 @@ import {
   type SpecDoc,
   type WorkflowDoc,
 } from '@omakase/storage';
+import { SpecWorkflow } from '@omakase/core';
 import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
 import type {
   DetectedAgentDto,
@@ -69,6 +70,37 @@ export class ContentController {
   deleteSpec(id: string): void {
     const root = this.root();
     if (root) deleteSpec(root, id);
+  }
+  /**
+   * Drive the spec one phase forward through the core SpecWorkflow guard.
+   * Returns the merged doc on success, or null if the workspace/spec is missing
+   * or the current phase fails its content guard (the workflow throws).
+   */
+  advanceSpec(id: string): SpecDoc | null {
+    const root = this.root();
+    if (!root) return null;
+    const doc = readSpec(root, id);
+    if (!doc) return null;
+    const workflow = SpecWorkflow.fromJSON({
+      phase: doc.phase,
+      idea: doc.title,
+      spec: doc.body,
+      acceptanceCriteria: doc.acceptanceCriteria,
+      testPlan: doc.testPlan,
+      tasks: doc.tasks,
+      history: doc.history,
+    });
+    let state;
+    try {
+      state = workflow.advance();
+    } catch {
+      return null;
+    }
+    doc.phase = state.phase;
+    doc.history = state.history;
+    doc.updatedAt = Date.now();
+    writeSpec(root, doc);
+    return doc;
   }
 
   // ── Agents ──────────────────────────────────────────────────────────────

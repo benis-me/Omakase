@@ -115,8 +115,14 @@ export function registerIpc(
   ipcMain.handle(IPC.SpecsList, () => content.listSpecs());
   ipcMain.handle(IPC.SpecsGet, (_e, id: string) => content.getSpec(id));
   ipcMain.handle(IPC.SpecsCreate, (_e, title: string) => content.createSpec(title));
-  ipcMain.handle(IPC.SpecsSave, (_e, doc: SpecDoc) => content.saveSpec(doc));
+  // The wire DTO types `history[].from/to` as plain strings (no core import in the
+  // renderer); the values always originate from a core advance, and storage
+  // re-validates them to SpecPhase on the next read (coerceSpec/asTransitions).
+  ipcMain.handle(IPC.SpecsSave, (_e, doc: SpecDoc) =>
+    content.saveSpec(doc as unknown as Parameters<typeof content.saveSpec>[0]),
+  );
   ipcMain.handle(IPC.SpecsDelete, (_e, id: string) => content.deleteSpec(id));
+  ipcMain.handle(IPC.SpecsAdvance, (_e, id: string) => content.advanceSpec(id));
 
   // Agents
   ipcMain.handle(IPC.AgentsList, () => content.listAgents());

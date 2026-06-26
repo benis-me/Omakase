@@ -127,6 +127,13 @@ export interface AppInfo {
 export type SpecPhase = 'idea' | 'spec' | 'acceptance' | 'test-plan' | 'tasks' | 'done';
 export type SpecStatus = 'draft' | 'ready' | 'running' | 'done' | 'archived';
 
+/** One recorded phase advance — mirrors @omakase/core's SpecTransition (kept local to avoid a core import in the renderer bundle). */
+export interface SpecTransition {
+  from: string;
+  to: string;
+  at: number;
+}
+
 export interface SpecDoc {
   id: string;
   title: string;
@@ -136,6 +143,10 @@ export interface SpecDoc {
   createdAt: number;
   updatedAt: number;
   body: string;
+  acceptanceCriteria: string[];
+  testPlan: string[];
+  tasks: string[];
+  history: SpecTransition[];
 }
 
 export interface AgentDoc {

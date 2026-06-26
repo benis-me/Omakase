@@ -101,6 +101,46 @@ describe('omks authored documents', () => {
     expect(readSpec(root, spec.id)).toBeNull();
   });
 
+  it('round-trips the structured phase artifacts and transition history', () => {
+    const spec = createSpec(root, { title: 'Add Search', now: 1000 });
+    // A freshly created spec starts with empty artifacts and no history.
+    expect(spec.acceptanceCriteria).toEqual([]);
+    expect(spec.testPlan).toEqual([]);
+    expect(spec.tasks).toEqual([]);
+    expect(spec.history).toEqual([]);
+
+    // Persist the structured state a guided advance would produce.
+    const populated = {
+      ...spec,
+      phase: 'tasks' as const,
+      acceptanceCriteria: ['Results appear within 200ms', 'Empty query shows recents'],
+      testPlan: ['unit: tokenizer', 'e2e: type-and-see'],
+      tasks: ['Build index', 'Wire the input'],
+      history: [
+        { from: 'idea' as const, to: 'spec' as const, at: 1100 },
+        { from: 'spec' as const, to: 'acceptance' as const, at: 1200 },
+      ],
+      updatedAt: 2000,
+    };
+    writeSpec(root, populated);
+
+    const reloaded = readSpec(root, spec.id);
+    expect(reloaded?.phase).toBe('tasks');
+    expect(reloaded?.acceptanceCriteria).toEqual(populated.acceptanceCriteria);
+    expect(reloaded?.testPlan).toEqual(populated.testPlan);
+    expect(reloaded?.tasks).toEqual(populated.tasks);
+    expect(reloaded?.history).toEqual(populated.history);
+    // The arrays/history are human-readable in the frontmatter.
+    const raw = readFileSync(join(root, '.omks', 'specs', `${spec.id}.md`), 'utf8');
+    expect(raw).toContain('acceptanceCriteria:');
+    expect(raw).toContain('history:');
+
+    // Malformed history entries are filtered defensively on read.
+    const corrupted = { ...populated, history: [{ from: 'bogus', to: 'spec', at: 5 }] as never };
+    writeSpec(root, corrupted);
+    expect(readSpec(root, spec.id)?.history).toEqual([]);
+  });
+
   it('creates and reads agent definitions, preserving null model/reasoning', () => {
     const agent = createAgent(root, { name: 'Reviewer', role: 'reviewer', agentId: 'claude', now: 1000 });
     const loaded = readAgent(root, agent.id);

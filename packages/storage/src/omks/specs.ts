@@ -6,7 +6,7 @@
  */
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { SpecPhase } from '@omakase/core';
+import type { SpecPhase, SpecTransition } from '@omakase/core';
 import { specsDir } from './workspace.js';
 import {
   asNumber,
@@ -29,12 +29,36 @@ export interface SpecDoc {
   createdAt: number;
   updatedAt: number;
   body: string;
+  /** Structured phase artifacts (the SpecWorkflow's idea=title, spec=body live implicitly). */
+  acceptanceCriteria: string[];
+  testPlan: string[];
+  tasks: string[];
+  /** Audit log of phase transitions, mirroring SpecWorkflow.history. */
+  history: SpecTransition[];
 }
 
 const VALID_PHASES: readonly SpecPhase[] = ['idea', 'spec', 'acceptance', 'test-plan', 'tasks', 'done'];
 const VALID_STATUS: readonly SpecStatus[] = ['draft', 'ready', 'running', 'done', 'archived'];
 
 const specFile = (root: string, id: string): string => path.join(specsDir(root), `${id}.md`);
+
+/**
+ * Coerce a hand-editable `history` frontmatter value into well-formed transitions:
+ * keep only objects whose `from`/`to` are valid phases and whose `at` is numeric.
+ */
+function asTransitions(value: unknown): SpecTransition[] {
+  if (!Array.isArray(value)) return [];
+  const out: SpecTransition[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { from, to, at } = entry as { from?: unknown; to?: unknown; at?: unknown };
+    if (typeof from !== 'string' || !VALID_PHASES.includes(from as SpecPhase)) continue;
+    if (typeof to !== 'string' || !VALID_PHASES.includes(to as SpecPhase)) continue;
+    if (typeof at !== 'number' || !Number.isFinite(at)) continue;
+    out.push({ from: from as SpecPhase, to: to as SpecPhase, at });
+  }
+  return out;
+}
 
 function coerceSpec(id: string, doc: FrontmatterDoc): SpecDoc {
   const phase = asString(doc.data.phase) as SpecPhase;
@@ -48,6 +72,10 @@ function coerceSpec(id: string, doc: FrontmatterDoc): SpecDoc {
     createdAt: asNumber(doc.data.createdAt),
     updatedAt: asNumber(doc.data.updatedAt),
     body: doc.body,
+    acceptanceCriteria: asStringArray(doc.data.acceptanceCriteria),
+    testPlan: asStringArray(doc.data.testPlan),
+    tasks: asStringArray(doc.data.tasks),
+    history: asTransitions(doc.data.history),
   };
 }
 
@@ -88,6 +116,10 @@ export function writeSpec(root: string, spec: SpecDoc): void {
         tags: spec.tags,
         createdAt: spec.createdAt,
         updatedAt: spec.updatedAt,
+        acceptanceCriteria: spec.acceptanceCriteria,
+        testPlan: spec.testPlan,
+        tasks: spec.tasks,
+        history: spec.history.map((h) => ({ from: h.from, to: h.to, at: h.at })),
       },
       spec.body,
     ),
@@ -115,6 +147,10 @@ export function createSpec(root: string, input: CreateSpecInput): SpecDoc {
     createdAt: now,
     updatedAt: now,
     body: input.body ?? defaultSpecBody(input.title),
+    acceptanceCriteria: [],
+    testPlan: [],
+    tasks: [],
+    history: [],
   };
   writeSpec(root, spec);
   return spec;

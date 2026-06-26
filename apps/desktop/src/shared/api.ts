@@ -93,6 +93,8 @@ export interface OmakaseApi {
     create(title: string): Promise<SpecDoc | null>;
     save(doc: SpecDoc): Promise<void>;
     delete(id: string): Promise<void>;
+    /** Drive the spec one phase forward via the core SpecWorkflow guard; null if the guard blocks. */
+    advance(id: string): Promise<SpecDoc | null>;
   };
   agents: {
     list(): Promise<AgentDoc[]>;
