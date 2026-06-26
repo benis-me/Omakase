@@ -14,7 +14,7 @@ import type {
   WorkspaceInfo,
 } from '@shared/types';
 
-export type NavSection = 'runs' | 'specs' | 'agents' | 'memory' | 'workflows' | 'dev';
+export type NavSection = 'runs' | 'specs' | 'agents' | 'automations' | 'memory' | 'workflows' | 'dev';
 
 const api = (): typeof window.omakase => window.omakase;
 

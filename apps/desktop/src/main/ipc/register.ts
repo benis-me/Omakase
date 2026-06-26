@@ -4,17 +4,26 @@
  */
 import { BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { AgentDoc, AutonomyLevel, RunControl, RunStartInput, SpecDoc } from '@shared/types';
+import type {
+  AgentDoc,
+  AutonomyLevel,
+  RunControl,
+  RunStartInput,
+  SaveTriggerInput,
+  SpecDoc,
+} from '@shared/types';
 import type { WorkspaceHost } from '../workspace-host.js';
 import type { DevController } from '../dev-controller.js';
 import type { ContentController } from '../content-controller.js';
 import type { RunHost } from '../run-host.js';
+import type { RunScheduler } from '../run-scheduler.js';
 
 export function registerIpc(
   host: WorkspaceHost,
   dev: DevController,
   content: ContentController,
   runs: RunHost,
+  scheduler: RunScheduler,
   getWindow: () => BrowserWindow | null,
 ): void {
   const send = (channel: string, payload: unknown): void => {
@@ -161,4 +170,16 @@ export function registerIpc(
   ipcMain.handle(IPC.RunsResume, (_e, id: string, autonomy: AutonomyLevel) => runs.resumeRun(id, autonomy));
   ipcMain.handle(IPC.RunsControl, (_e, id: string, command: RunControl) => runs.control(id, command));
   ipcMain.handle(IPC.RunsDelete, (_e, id: string) => runs.deleteRun(id));
+
+  // Triggers (automations) — re-arm the scheduler after any mutation.
+  ipcMain.handle(IPC.TriggersList, () => content.listTriggers());
+  ipcMain.handle(IPC.TriggersSave, (_e, input: SaveTriggerInput) => {
+    const trigger = content.saveTrigger(input);
+    scheduler.reconfigure();
+    return trigger;
+  });
+  ipcMain.handle(IPC.TriggersDelete, (_e, id: string) => {
+    content.deleteTrigger(id);
+    scheduler.reconfigure();
+  });
 }

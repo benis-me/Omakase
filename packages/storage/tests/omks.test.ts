@@ -7,12 +7,15 @@ import {
   createSpec,
   createWorkflow,
   deleteSpec,
+  deleteTrigger,
   ensureWorkspace,
   isWorkspace,
   listAgents,
   listSpecs,
+  listTriggers,
   listWorkflows,
   openWorkspace,
+  saveTrigger,
   readAgent,
   readAgentsMd,
   readCommand,
@@ -53,6 +56,31 @@ describe('omks workspace', () => {
       expect(source).toMatch(/export default async function/);
       expect(() => validateWorkflowScriptSource(source)).not.toThrow();
     }
+  });
+
+  it('persists triggers (automations) with defaults, upserts, and deletes', () => {
+    ensureWorkspace(root, { now: 1 });
+    expect(listTriggers(root)).toEqual([]);
+
+    const t = saveTrigger(root, { name: 'Nightly', kind: 'interval', specId: 's1' });
+    expect(t.enabled).toBe(false); // disabled until armed
+    expect(t.intervalMinutes).toBe(30);
+    expect(t.autonomy).toBe('medium');
+    expect(listTriggers(root)).toHaveLength(1);
+
+    const updated = saveTrigger(root, {
+      id: t.id,
+      name: 'Nightly',
+      kind: 'interval',
+      enabled: true,
+      intervalMinutes: 15,
+    });
+    expect(updated.enabled).toBe(true);
+    expect(updated.intervalMinutes).toBe(15);
+    expect(listTriggers(root)).toHaveLength(1); // upsert, not append
+
+    deleteTrigger(root, t.id);
+    expect(listTriggers(root)).toEqual([]);
   });
 
   it('opens a workspace, persists runs in omks.db, and reopens with the same id', async () => {

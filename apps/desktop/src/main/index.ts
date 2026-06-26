@@ -5,6 +5,7 @@ import { WorkspaceHost } from './workspace-host.js';
 import { DevController } from './dev-controller.js';
 import { ContentController } from './content-controller.js';
 import { RunHost } from './run-host.js';
+import { RunScheduler } from './run-scheduler.js';
 import { TrayController } from './tray.js';
 import { registerIpc } from './ipc/register.js';
 
@@ -12,6 +13,7 @@ let mainWindow: BrowserWindow | null = null;
 let host: WorkspaceHost;
 let dev: DevController;
 let runs: RunHost;
+let scheduler: RunScheduler;
 let tray: TrayController | null = null;
 
 function showMainWindow(): void {
@@ -65,18 +67,23 @@ app.whenReady().then(() => {
     projectsUpdated: (projects) => send(IPC.EvtProjectsUpdated, projects),
     portConflict: (id, port) => send(IPC.EvtPortConflict, { id, port }),
   });
-  host.setActiveListener((ws) => void dev.setWorkspace(ws));
   const content = new ContentController(host);
   runs = new RunHost(host, {
     cockpitEvent: (runId, event) => send(IPC.EvtRunEvent, { runId, event }),
     runStatus: (runId) => send(IPC.EvtRunStatus, runId),
     liveChanged: (count) => tray?.update(count),
   });
+  scheduler = new RunScheduler(host, runs);
+  // The active workspace drives both the dev workbench and the trigger scheduler.
+  host.setActiveListener((ws) => {
+    void dev.setWorkspace(ws);
+    scheduler.reconfigure();
+  });
 
   const settings = host.getSettings();
   nativeTheme.themeSource = settings.theme;
 
-  registerIpc(host, dev, content, runs, () => mainWindow);
+  registerIpc(host, dev, content, runs, scheduler, () => mainWindow);
 
   // Restore the last workspace (best-effort; a deleted folder is just skipped).
   if (settings.lastWorkspace) {
@@ -103,6 +110,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  scheduler?.shutdown();
   runs?.shutdown();
   dev?.shutdown();
   host?.shutdown();

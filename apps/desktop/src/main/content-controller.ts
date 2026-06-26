@@ -27,8 +27,13 @@ import {
   writeWorkflow,
   WORKFLOW_TEMPLATES,
   workflowTemplateSource,
+  listTriggers,
+  saveTrigger,
+  deleteTrigger,
   type AgentDoc,
+  type SaveTriggerInput,
   type SpecDoc,
+  type Trigger,
   type WorkflowDoc,
 } from '@omakase/storage';
 import { SpecWorkflow } from '@omakase/core';
@@ -196,5 +201,19 @@ export class ContentController {
   deleteWorkflow(id: string): void {
     const root = this.root();
     if (root) deleteWorkflow(root, id);
+  }
+
+  // ── Triggers (automations) ───────────────────────────────────────────────
+  listTriggers(): Trigger[] {
+    const root = this.root();
+    return root ? listTriggers(root) : [];
+  }
+  saveTrigger(input: SaveTriggerInput): Trigger | null {
+    const root = this.root();
+    return root ? saveTrigger(root, input) : null;
+  }
+  deleteTrigger(id: string): void {
+    const root = this.root();
+    if (root) deleteTrigger(root, id);
   }
 }

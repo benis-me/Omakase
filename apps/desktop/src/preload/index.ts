@@ -105,6 +105,11 @@ const api: OmakaseApi = {
     control: (id, command) => ipcRenderer.invoke(IPC.RunsControl, id, command),
     delete: (id) => ipcRenderer.invoke(IPC.RunsDelete, id),
   },
+  triggers: {
+    list: () => ipcRenderer.invoke(IPC.TriggersList),
+    save: (input) => ipcRenderer.invoke(IPC.TriggersSave, input),
+    delete: (id) => ipcRenderer.invoke(IPC.TriggersDelete, id),
+  },
   versions: {
     electron: process.versions.electron ?? '',
     node: process.versions.node ?? '',

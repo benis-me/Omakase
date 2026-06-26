@@ -87,6 +87,11 @@ export const IPC = {
   RunsControl: 'runs:control',
   RunsDelete: 'runs:delete',
 
+  // Triggers (automations)
+  TriggersList: 'triggers:list',
+  TriggersSave: 'triggers:save',
+  TriggersDelete: 'triggers:delete',
+
   // Events (main → renderer)
   EvtWorkspacesChanged: 'evt:workspacesChanged',
   EvtActiveWorkspaceChanged: 'evt:activeWorkspaceChanged',

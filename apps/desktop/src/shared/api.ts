@@ -21,8 +21,10 @@ import type {
   RunDetailDto,
   RunStartInput,
   RunSummaryDto,
+  SaveTriggerInput,
   ScriptSession,
   SpecDoc,
+  TriggerDto,
   WorkflowDoc,
   WorkflowTemplateDto,
   WorkspaceInfo,
@@ -128,6 +130,11 @@ export interface OmakaseApi {
     startWorkflow(workflowId: string, autonomy: AutonomyLevel): Promise<string>;
     resume(id: string, autonomy: AutonomyLevel): Promise<boolean>;
     control(id: string, command: RunControl): Promise<void>;
+    delete(id: string): Promise<void>;
+  };
+  triggers: {
+    list(): Promise<TriggerDto[]>;
+    save(input: SaveTriggerInput): Promise<TriggerDto | null>;
     delete(id: string): Promise<void>;
   };
   versions: AppVersions;

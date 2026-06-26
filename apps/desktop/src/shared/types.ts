@@ -212,6 +212,40 @@ export interface RunStartInput {
   agentId?: string;
 }
 
+// ── Triggers (automations) ───────────────────────────────────────────────────
+
+export type TriggerKind = 'interval' | 'watch';
+
+/** A saved automation that starts a run on an interval or on file changes. */
+export interface TriggerDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: TriggerKind;
+  specId?: string;
+  prompt?: string;
+  mode: 'normal' | 'max-power';
+  autonomy: AutonomyLevel;
+  agentId?: string;
+  intervalMinutes?: number;
+  debounceMs?: number;
+  lastFiredAt?: number;
+}
+
+export interface SaveTriggerInput {
+  id?: string;
+  name: string;
+  enabled?: boolean;
+  kind: TriggerKind;
+  specId?: string;
+  prompt?: string;
+  mode?: 'normal' | 'max-power';
+  autonomy?: AutonomyLevel;
+  agentId?: string;
+  intervalMinutes?: number;
+  debounceMs?: number;
+}
+
 export interface RunSummaryDto {
   id: string;
   mode: string;
