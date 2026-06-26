@@ -34,9 +34,20 @@ export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEv
       return make(seq, 'task', event.title, {
         detail: `${event.from} → ${event.to}`,
         status: event.to,
+        taskId: event.taskId,
         level,
       });
     }
+    case 'agent-assigned':
+      // A sub-agent the orchestrator just spawned — feeds the live agent roster.
+      return make(seq, 'agent', event.title ?? event.role, {
+        role: event.role,
+        status: 'running',
+        agentRunId: event.agentRunId,
+        agentId: event.assignment.agentId,
+        model: event.assignment.model,
+        ...(event.taskId ? { taskId: event.taskId } : {}),
+      });
     case 'agent-event': {
       const ae = event.event;
       if (ae.type === 'tool_use') {

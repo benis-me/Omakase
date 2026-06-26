@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Bot,
   Brain,
   CheckCircle2,
   Circle,
@@ -22,6 +23,7 @@ const ICON: Record<CockpitEventKind, LucideIcon> = {
   route: GitBranch,
   plan: ListTree,
   task: Circle,
+  agent: Bot,
   tool: Wrench,
   review: CheckCircle2,
   report: FileText,

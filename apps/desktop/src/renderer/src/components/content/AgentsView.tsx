@@ -1,198 +1,194 @@
-import { useEffect, useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { AgentDoc, DetectedAgentDto } from '@shared/types';
+import { useEffect, useMemo, useState } from 'react';
+import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
-import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { CodeEditor } from '../ui/code-editor';
-import { Tooltip } from '../ui/tooltip';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { StatusDot } from '../StatusDot';
+import { StatusDot, type DotStatus } from '../StatusDot';
+import { RUN_DOT } from '../runs/run-status';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
-const ROLES = ['custom', 'router', 'planner', 'worker', 'reviewer', 'reporter', 'wiki-curator'];
+const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'incomplete']);
+
+interface AgentRow {
+  agentRunId: string;
+  role: string;
+  agentId: string;
+  model: string | null;
+  taskId?: string;
+  title: string;
+  status: 'running' | 'done' | 'failed';
+}
+
+const AGENT_DOT: Record<AgentRow['status'], DotStatus> = {
+  running: 'omk',
+  done: 'run',
+  failed: 'fail',
+};
+
+/** Reconstruct the run's sub-agent roster from its cockpit feed. */
+function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
+  const finished = new Set<string>();
+  const failed = new Set<string>();
+  for (const e of feed) {
+    if (e.kind === 'task' && e.taskId) {
+      if (e.status === 'succeeded') finished.add(e.taskId);
+      else if (e.status === 'failed' || e.status === 'cancelled') {
+        finished.add(e.taskId);
+        failed.add(e.taskId);
+      }
+    }
+  }
+  const byAgent = new Map<string, Omit<AgentRow, 'status'>>();
+  for (const e of feed) {
+    if (e.kind === 'agent' && e.agentRunId) {
+      byAgent.set(e.agentRunId, {
+        agentRunId: e.agentRunId,
+        role: e.role ?? 'worker',
+        agentId: e.agentId ?? 'builtin',
+        model: e.model ?? null,
+        taskId: e.taskId,
+        title: e.title,
+      });
+    }
+  }
+  return [...byAgent.values()].map((a) => {
+    let status: AgentRow['status'];
+    if (a.taskId && failed.has(a.taskId)) status = 'failed';
+    else if (a.taskId && finished.has(a.taskId)) status = 'done';
+    else if (runTerminal) status = 'done';
+    else status = 'running';
+    return { ...a, status };
+  });
+}
 
 export function AgentsView() {
   const activePath = useAppStore((s) => s.active?.path);
-  const [agents, setAgents] = useState<AgentDoc[]>([]);
-  const [detected, setDetected] = useState<DetectedAgentDto[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<AgentDoc | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const runs = useAppStore((s) => s.runs);
+  const currentRunId = useAppStore((s) => s.currentRunId);
+  const liveFeed = useAppStore((s) => s.feed);
+  const loadRuns = useAppStore((s) => s.loadRuns);
+
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [snapshotFeed, setSnapshotFeed] = useState<CockpitEvent[]>([]);
 
   useEffect(() => {
-    void window.omakase.agents.list().then((list) => {
-      setAgents(list);
-      setSelectedId((cur) => (cur && list.some((a) => a.id === cur) ? cur : (list[0]?.id ?? null)));
+    void loadRuns();
+  }, [activePath, loadRuns]);
+
+  // Default the selection to the open run, else the most recent.
+  useEffect(() => {
+    setSelectedRunId((cur) => {
+      if (cur && runs.some((r) => r.id === cur)) return cur;
+      return currentRunId ?? runs[0]?.id ?? null;
     });
-    void window.omakase.agents.detect().then(setDetected);
-  }, [activePath]);
+  }, [runs, currentRunId]);
 
+  // A non-current run shows a snapshot of its persisted feed; the current run streams live.
+  const isCurrent = selectedRunId != null && selectedRunId === currentRunId;
   useEffect(() => {
-    const agent = agents.find((a) => a.id === selectedId) ?? null;
-    setDraft(agent ? { ...agent } : null);
-    setDirty(false);
-  }, [selectedId, agents]);
+    if (!selectedRunId || isCurrent) return;
+    let cancelled = false;
+    void window.omakase.runs.get(selectedRunId).then((detail) => {
+      if (!cancelled) setSnapshotFeed(detail?.events ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId, isCurrent]);
 
-  const create = async (): Promise<void> => {
-    const doc = await window.omakase.agents.create('New agent');
-    if (doc) {
-      setAgents((p) => [...p, doc]);
-      setSelectedId(doc.id);
-    }
-  };
-  const save = async (): Promise<void> => {
-    if (!draft) return;
-    await window.omakase.agents.save(draft);
-    setDirty(false);
-    setAgents((p) => p.map((a) => (a.id === draft.id ? draft : a)));
-  };
-  const remove = async (id: string): Promise<void> => {
-    await window.omakase.agents.delete(id);
-    setAgents((p) => p.filter((a) => a.id !== id));
-    if (selectedId === id) setSelectedId(null);
-  };
-  const update = (patch: Partial<AgentDoc>): void => {
-    setDraft((d) => (d ? { ...d, ...patch } : d));
-    setDirty(true);
-  };
-
-  const agentIds = ['builtin', ...detected.map((d) => d.id)];
+  const selectedRun = runs.find((r) => r.id === selectedRunId);
+  const feed = isCurrent ? liveFeed : snapshotFeed;
+  const roster = useMemo(
+    () => deriveRoster(feed, selectedRun ? TERMINAL.has(selectedRun.status) : false),
+    [feed, selectedRun],
+  );
+  const liveCount = roster.filter((a) => a.status === 'running').length;
 
   return (
-    <ContentLayout title="Agents" onNew={() => void create()} newLabel="New agent">
-      <div className="w-60 shrink-0 overflow-y-auto border-r p-2">
-        <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Detected
+    <ContentLayout title="Agents">
+      <div className="flex w-64 shrink-0 flex-col border-r">
+        <div className="px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Runs
         </div>
-        {detected.length === 0 && (
-          <p className="px-2 pb-2 text-[11px] text-muted-foreground">No agent CLIs found.</p>
-        )}
-        {detected.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px]">
-            <StatusDot status={d.available ? 'run' : 'idle'} />
-            <span className="flex-1 truncate">{d.name}</span>
-            {d.version && <span className="font-mono text-[10px] text-muted-foreground">{d.version}</span>}
-          </div>
-        ))}
-        <div className="mt-3 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Custom
-        </div>
-        {agents.length === 0 && (
-          <p className="px-2 py-2 text-[11px] text-muted-foreground">No custom agents.</p>
-        )}
-        <div className="flex flex-col gap-0.5">
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => setSelectedId(a.id)}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors',
-                selectedId === a.id ? 'bg-accent' : 'hover:bg-accent/50',
-              )}
-            >
-              <span className="flex-1 truncate">{a.name}</span>
-              <Badge variant="outline">{a.role}</Badge>
-            </button>
-          ))}
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          {runs.length === 0 ? (
+            <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
+              No runs yet. Agents appear here as a run spawns them.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {runs.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setSelectedRunId(r.id)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors',
+                    selectedRunId === r.id ? 'bg-accent' : 'hover:bg-accent/50',
+                  )}
+                >
+                  <StatusDot
+                    status={RUN_DOT[r.status] ?? 'idle'}
+                    pulse={r.status === 'running'}
+                    glow={r.live && r.status === 'running'}
+                  />
+                  <span className="flex-1 truncate text-[13px]">{r.summary || 'Run'}</span>
+                  {r.live && <span className="text-[10px] uppercase tracking-wide text-run">live</span>}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-      {draft ? (
+
+      {selectedRun ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="grid grid-cols-2 gap-x-3 gap-y-3 border-b p-4">
-            <div className="col-span-2 flex flex-col gap-1.5">
-              <Label htmlFor="agent-name">Name</Label>
-              <Input
-                id="agent-name"
-                value={draft.name}
-                onChange={(e) => update({ name: e.target.value })}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-role">Role</Label>
-              <Select value={draft.role} onValueChange={(v) => update({ role: v })}>
-                <SelectTrigger id="agent-role" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ROLES.map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {r}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-cli">Agent CLI</Label>
-              <Select value={draft.agentId} onValueChange={(v) => update({ agentId: v })}>
-                <SelectTrigger id="agent-cli" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[...new Set([draft.agentId, ...agentIds])].map((id) => (
-                    <SelectItem key={id} value={id}>
-                      {id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-model">Model</Label>
-              <Input
-                id="agent-model"
-                value={draft.model ?? ''}
-                onChange={(e) => update({ model: e.target.value || null })}
-                placeholder="(default)"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-reasoning">Reasoning</Label>
-              <Input
-                id="agent-reasoning"
-                value={draft.reasoning ?? ''}
-                onChange={(e) => update({ reasoning: e.target.value || null })}
-                placeholder="(default)"
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-2 px-4 py-2.5">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              System prompt
+          <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
+            <span className="truncate text-[13px] font-medium">{selectedRun.summary || 'Run'}</span>
+            <Badge variant={selectedRun.live ? 'run' : 'outline'}>{selectedRun.status}</Badge>
+            <span className="ml-auto text-[12px] text-muted-foreground">
+              {roster.length} agent{roster.length === 1 ? '' : 's'}
+              {liveCount > 0 && <span className="text-run"> · {liveCount} live</span>}
             </span>
-            <Button
-              variant={dirty ? 'omk' : 'outline'}
-              size="sm"
-              className="ml-auto"
-              disabled={!dirty}
-              onClick={() => void save()}
-            >
-              Save
-            </Button>
-            <Tooltip content="Delete agent">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground hover:text-destructive"
-                onClick={() => void remove(draft.id)}
-              >
-                <Trash2 />
-              </Button>
-            </Tooltip>
           </div>
-          <CodeEditor
-            language="markdown"
-            value={draft.body}
-            onChange={(body) => update({ body })}
-            className="min-h-0 flex-1 px-2 py-1"
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {roster.length === 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
+                  No sub-agents yet. The orchestrator spawns planner, worker, reviewer and validator
+                  agents as this run progresses.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {roster.map((a) => (
+                  <div
+                    key={a.agentRunId}
+                    className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
+                  >
+                    <StatusDot
+                      status={AGENT_DOT[a.status]}
+                      pulse={a.status === 'running'}
+                      glow={a.status === 'running'}
+                    />
+                    <Badge variant="outline" className="shrink-0">
+                      {a.role}
+                    </Badge>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px]">{a.title}</div>
+                      <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                        <span>{a.agentId}</span>
+                        {a.model && <span>· {a.model}</span>}
+                      </div>
+                    </div>
+                    <span className="shrink-0 text-[11px] capitalize text-muted-foreground">{a.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
-        <EmptyDetail message="Select an agent definition, or create one to customize its role, model, and system prompt." />
+        <EmptyDetail message="Agents are spawned by runs — start a run, and its planner/worker/reviewer/validator agents appear here live." />
       )}
     </ContentLayout>
   );

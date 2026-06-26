@@ -11,6 +11,31 @@ describe('toCockpitEvent', () => {
     ).toMatchObject({ kind: 'task', title: 'Build', level: 'success', status: 'succeeded' });
   });
 
+  it('maps an agent-assigned event to a roster entry with its CLI and model', () => {
+    expect(
+      toCockpitEvent(
+        ev({
+          type: 'agent-assigned',
+          role: 'worker',
+          taskId: 't1',
+          title: 'Build',
+          assignment: { agentId: 'codex', model: 'gpt-5' },
+          agentRunId: 'a1',
+        }),
+        0,
+      ),
+    ).toMatchObject({
+      kind: 'agent',
+      title: 'Build',
+      role: 'worker',
+      status: 'running',
+      agentRunId: 'a1',
+      agentId: 'codex',
+      model: 'gpt-5',
+      taskId: 't1',
+    });
+  });
+
   it('maps a tool_use agent event to a tool line', () => {
     expect(
       toCockpitEvent(ev({ type: 'agent-event', role: 'worker', taskId: 't1', assignment: {}, event: { type: 'tool_use', name: 'edit' } }), 1),

@@ -219,6 +219,7 @@ export type CockpitEventKind =
   | 'route'
   | 'plan'
   | 'task'
+  | 'agent'
   | 'tool'
   | 'review'
   | 'report'
@@ -241,6 +242,12 @@ export interface CockpitEvent {
   status?: string;
   level: CockpitLevel;
   gateId?: string;
+  /** For 'agent' events: the spawned sub-agent's identity + resolved CLI/model. */
+  agentRunId?: string;
+  agentId?: string;
+  model?: string | null;
+  /** Links an 'agent'/'task' event to its plan task, so a roster can join status. */
+  taskId?: string;
 }
 
 export interface RunDetailDto {
