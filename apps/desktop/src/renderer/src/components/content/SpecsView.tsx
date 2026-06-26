@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Eye, Pencil, Trash2 } from 'lucide-react';
 import type { SpecDoc, SpecPhase, SpecStatus } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
-import { Textarea } from '../ui/textarea';
+import { CodeEditor } from '../ui/code-editor';
+import { MarkdownPreview } from '../ui/markdown-preview';
 import { Tooltip } from '../ui/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
@@ -20,6 +21,7 @@ export function SpecsView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpecDoc | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
 
   useEffect(() => {
     void window.omakase.specs.list().then((list) => {
@@ -117,6 +119,21 @@ export function SpecsView() {
                 ))}
               </SelectContent>
             </Select>
+            <div className="flex items-center rounded-md border p-0.5">
+              {(['edit', 'preview'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={cn(
+                    'flex items-center gap-1 rounded px-2 py-1 text-[12px] capitalize transition-colors',
+                    mode === m ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {m === 'edit' ? <Pencil className="size-3" /> : <Eye className="size-3" />}
+                  {m}
+                </button>
+              ))}
+            </div>
             <Button variant={dirty ? 'omk' : 'outline'} size="sm" disabled={!dirty} onClick={() => void save()}>
               Save
             </Button>
@@ -131,12 +148,22 @@ export function SpecsView() {
               </Button>
             </Tooltip>
           </div>
-          <Textarea
-            value={draft.body}
-            onChange={(e) => update({ body: e.target.value })}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
-          />
+          {mode === 'edit' ? (
+            <CodeEditor
+              language="markdown"
+              value={draft.body}
+              onChange={(body) => update({ body })}
+              className="min-h-0 flex-1 px-2 py-1"
+            />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              {draft.body.trim() ? (
+                <MarkdownPreview source={draft.body} />
+              ) : (
+                <p className="text-[12px] text-muted-foreground">Nothing to preview yet.</p>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <EmptyDetail message="Select a spec from the list, or create a new one to start capturing requirements." />

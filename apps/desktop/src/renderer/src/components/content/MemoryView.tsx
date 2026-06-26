@@ -5,7 +5,8 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { Textarea } from '../ui/textarea';
+import { CodeEditor } from '../ui/code-editor';
+import { MarkdownPreview } from '../ui/markdown-preview';
 import { Tooltip } from '../ui/tooltip';
 import { Card, CardContent, CardHeader } from '../ui/card';
 import { ContentLayout } from './ContentLayout';
@@ -138,20 +139,26 @@ export function MemoryView() {
                 </Tooltip>
               )}
             </div>
-            <Textarea
+            <CodeEditor
+              language="markdown"
               value={text}
-              onChange={(e) => {
-                setText(e.target.value);
+              onChange={(v) => {
+                setText(v);
                 setDirty(true);
               }}
-              spellCheck={false}
-              className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
+              className="min-h-0 flex-1 px-2 py-1"
             />
           </>
         ) : sel.kind === 'wiki' ? (
-          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap p-4 font-mono text-[12px] leading-relaxed text-foreground">
-            {wiki || 'The project wiki is empty. Agents accumulate knowledge here as they run.'}
-          </pre>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {wiki.trim() ? (
+              <MarkdownPreview source={wiki} />
+            ) : (
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                The project wiki is empty. Agents accumulate knowledge here as they run.
+              </p>
+            )}
+          </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {events.length === 0 ? (

@@ -4,7 +4,7 @@ import type { WorkflowDoc } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '../ui/button';
-import { Textarea } from '../ui/textarea';
+import { CodeEditor } from '../ui/code-editor';
 import { Tooltip } from '../ui/tooltip';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
@@ -102,14 +102,14 @@ export function WorkflowsView() {
               </Button>
             </Tooltip>
           </div>
-          <Textarea
+          <CodeEditor
+            language="typescript"
             value={source}
-            onChange={(e) => {
-              setSource(e.target.value);
+            onChange={(v) => {
+              setSource(v);
               setDirty(true);
             }}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[12px] leading-relaxed shadow-none focus-visible:ring-0"
+            className="min-h-0 flex-1 px-2 py-1"
           />
         </div>
       ) : (

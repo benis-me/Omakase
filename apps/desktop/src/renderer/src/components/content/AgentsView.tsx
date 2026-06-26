@@ -7,7 +7,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
+import { CodeEditor } from '../ui/code-editor';
 import { Tooltip } from '../ui/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { StatusDot } from '../StatusDot';
@@ -184,11 +184,11 @@ export function AgentsView() {
               </Button>
             </Tooltip>
           </div>
-          <Textarea
+          <CodeEditor
+            language="markdown"
             value={draft.body}
-            onChange={(e) => update({ body: e.target.value })}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent px-4 pb-4 font-mono text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
+            onChange={(body) => update({ body })}
+            className="min-h-0 flex-1 px-2 py-1"
           />
         </div>
       ) : (
