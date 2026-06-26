@@ -38,9 +38,17 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
       }
     }
   }
-  const byAgent = new Map<string, Omit<AgentRow, 'status'>>();
+  // The latest 'agent' event per agent wins: agent-assigned (status 'running')
+  // then the terminal done event (status 'done'/'failed'/'cancelled').
+  const byAgent = new Map<string, Omit<AgentRow, 'status'> & { eventStatus?: string }>();
   for (const e of feed) {
-    if (e.kind === 'agent' && e.agentRunId) {
+    if (e.kind !== 'agent' || !e.agentRunId) continue;
+    const prev = byAgent.get(e.agentRunId);
+    if (prev) {
+      // A later event (the terminal 'done') updates only the status — the first
+      // event (agent-assigned) carries the descriptive task title/CLI/model.
+      prev.eventStatus = e.status;
+    } else {
       byAgent.set(e.agentRunId, {
         agentRunId: e.agentRunId,
         role: e.role ?? 'worker',
@@ -48,16 +56,27 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
         model: e.model ?? null,
         taskId: e.taskId,
         title: e.title,
+        eventStatus: e.status,
       });
     }
   }
-  return [...byAgent.values()].map((a) => {
+  return [...byAgent.values()].map((a): AgentRow => {
     let status: AgentRow['status'];
-    if (a.taskId && failed.has(a.taskId)) status = 'failed';
+    if (a.eventStatus === 'failed') status = 'failed';
+    else if (a.eventStatus === 'done' || a.eventStatus === 'cancelled') status = 'done';
+    else if (a.taskId && failed.has(a.taskId)) status = 'failed';
     else if (a.taskId && finished.has(a.taskId)) status = 'done';
     else if (runTerminal) status = 'done';
     else status = 'running';
-    return { ...a, status };
+    return {
+      agentRunId: a.agentRunId,
+      role: a.role,
+      agentId: a.agentId,
+      model: a.model,
+      taskId: a.taskId,
+      title: a.title,
+      status,
+    };
   });
 }
 

@@ -36,6 +36,36 @@ describe('toCockpitEvent', () => {
     });
   });
 
+  it('maps an agent done event to a terminal roster status', () => {
+    expect(
+      toCockpitEvent(
+        ev({
+          type: 'agent-event',
+          role: 'planner',
+          taskId: null,
+          title: 'planner',
+          assignment: { agentId: 'claude', model: null },
+          agentRunId: 'a2',
+          event: { type: 'done', reason: 'completed' },
+        }),
+        0,
+      ),
+    ).toMatchObject({ kind: 'agent', role: 'planner', status: 'done', agentRunId: 'a2', agentId: 'claude' });
+    expect(
+      toCockpitEvent(
+        ev({
+          type: 'agent-event',
+          role: 'worker',
+          taskId: 't1',
+          assignment: { agentId: 'codex', model: null },
+          agentRunId: 'a3',
+          event: { type: 'done', reason: 'error' },
+        }),
+        1,
+      ),
+    ).toMatchObject({ kind: 'agent', status: 'failed', agentRunId: 'a3' });
+  });
+
   it('maps a tool_use agent event to a tool line', () => {
     expect(
       toCockpitEvent(ev({ type: 'agent-event', role: 'worker', taskId: 't1', assignment: {}, event: { type: 'tool_use', name: 'edit' } }), 1),

@@ -61,6 +61,19 @@ export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEv
           level: 'error',
         });
       }
+      if (ae.type === 'done') {
+        // Terminal roster update for this sub-agent (the Agents view joins by id).
+        const reason = (ae as { reason?: string }).reason;
+        const status = reason === 'error' ? 'failed' : reason === 'cancelled' ? 'cancelled' : 'done';
+        return make(seq, 'agent', event.role, {
+          role: event.role,
+          status,
+          ...(event.agentRunId ? { agentRunId: event.agentRunId } : {}),
+          agentId: event.assignment.agentId,
+          model: event.assignment.model,
+          ...(event.taskId ? { taskId: event.taskId } : {}),
+        });
+      }
       return null;
     }
     case 'review':

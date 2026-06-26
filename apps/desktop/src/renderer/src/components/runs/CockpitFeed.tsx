@@ -69,12 +69,14 @@ function FeedRow({ event }: { event: CockpitEvent }) {
 
 export function CockpitFeed({ feed }: { feed: CockpitEvent[] }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // 'agent' events feed the live roster (Agents view), not the activity log.
+  const items = feed.filter((e) => e.kind !== 'agent');
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [feed.length]);
+  }, [items.length]);
 
-  if (feed.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="grid flex-1 place-items-center text-[12px] text-muted-foreground">
         Waiting for the first event…
@@ -84,7 +86,7 @@ export function CockpitFeed({ feed }: { feed: CockpitEvent[] }) {
 
   return (
     <div ref={ref} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
-      {feed.map((e) => (
+      {items.map((e) => (
         <FeedRow key={e.seq} event={e} />
       ))}
     </div>
