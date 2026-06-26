@@ -56,6 +56,7 @@ interface AppState {
     specId?: string;
     mode?: AppSettings['defaultMode'];
     autonomy?: AppSettings['defaultAutonomy'];
+    agentId?: string;
   }) => Promise<void>;
   resumeRun: (id: string) => Promise<void>;
   startWorkflow: (workflowId: string) => Promise<void>;
@@ -186,6 +187,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       autonomy: input.autonomy ?? settings?.defaultAutonomy ?? 'low',
       prompt: input.prompt,
       specId: input.specId,
+      ...(input.agentId ? { agentId: input.agentId } : {}),
     });
     set({ currentRunId: id, feed: [] });
     void get().loadRuns();

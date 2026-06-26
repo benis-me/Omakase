@@ -28,16 +28,26 @@ function NewRunComposer() {
   const [specs, setSpecs] = useState<SpecDoc[]>([]);
   const [mode, setMode] = useState<RunMode>(settings?.defaultMode ?? 'normal');
   const [autonomy, setAutonomy] = useState<AutonomyLevel>(settings?.defaultAutonomy ?? 'low');
+  const [agentId, setAgentId] = useState('auto');
+  const [clis, setClis] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     void window.omakase.specs.list().then(setSpecs);
+    void window.omakase.agents
+      .detect()
+      .then((list) => setClis(list.filter((d) => d.available).map((d) => ({ id: d.id, name: d.name }))));
   }, []);
 
   const usingSpec = specId !== 'none';
   const canRun = usingSpec || prompt.trim().length > 0;
   const run = (): void => {
     if (!canRun) return;
-    void startRun({ ...(usingSpec ? { specId } : { prompt: prompt.trim() }), mode, autonomy });
+    void startRun({
+      ...(usingSpec ? { specId } : { prompt: prompt.trim() }),
+      mode,
+      autonomy,
+      ...(agentId !== 'auto' ? { agentId } : {}),
+    });
   };
 
   return (
@@ -77,6 +87,19 @@ function NewRunComposer() {
       />
 
       <div className="flex items-center gap-2">
+        <Select value={agentId} onValueChange={setAgentId}>
+          <SelectTrigger size="sm" className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="auto">CLI: auto</SelectItem>
+            {clis.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                CLI: {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={mode} onValueChange={(v) => setMode(v as RunMode)}>
           <SelectTrigger size="sm" className="w-32">
             <SelectValue />

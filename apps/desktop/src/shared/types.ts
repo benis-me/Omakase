@@ -197,6 +197,8 @@ export interface RunStartInput {
   autonomy: AutonomyLevel;
   prompt?: string;
   specId?: string;
+  /** Pin every role of this run to a specific agent CLI (detected id). Omit = auto. */
+  agentId?: string;
 }
 
 export interface RunSummaryDto {

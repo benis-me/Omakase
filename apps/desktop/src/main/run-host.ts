@@ -109,7 +109,7 @@ export class RunHost {
 
     const controlDir = this.controlDir(ws);
     // Spec-driven runs get an independent validator at the finish line.
-    const handle = this.buildOrchestrator(ws, controlDir, input.mode, Boolean(input.specId)).start({
+    const handle = this.buildOrchestrator(ws, controlDir, input.mode, Boolean(input.specId), input.agentId).start({
       prompt,
       cwd: ws.root,
       mode: input.mode,
@@ -240,6 +240,7 @@ export class RunHost {
     controlDir: string,
     defaultMode: RunStartInput['mode'],
     validate = false,
+    agentId?: string,
   ): Orchestrator {
     this.runtime ??=
       this.overrides?.runtime ?? createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
@@ -257,6 +258,8 @@ export class RunHost {
       control,
       controlPoll,
       validate,
+      // A run-level CLI choice pins every role to that agent.
+      ...(agentId ? { policy: createModelPolicy('custom', { custom: { default: { agentId } } }) } : {}),
       ...this.overrides,
     });
   }
