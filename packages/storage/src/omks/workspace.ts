@@ -106,33 +106,88 @@ _Code style, patterns to follow, things to avoid._
 _What "complete" looks like here: tests green, lint clean, etc._
 `;
 
-// A runnable starter "mission": orchestrator → parallel workers → validator,
-// expressed with the dynamic-workflow API (agent/phase/parallel/log). String.raw
-// keeps the backslashes/regex literal in the generated script.
+// Runnable starter workflows, written against the real Omakase dynamic-workflow
+// API: `export default async function(w)` where `w` exposes phase / agent /
+// parallel / pipeline / loopUntil / budget / requestReport / updateWiki / log.
+// String.raw keeps the regex backslashes literal in the generated script.
 const MISSION_TEMPLATE = String.raw`// name: Mission
-// Orchestrator -> parallel workers -> independent validator.
-// Decompose a goal into features, build each in parallel, then validate.
+// Plan features -> build+review each in a pipeline -> loop-until-dry on gaps.
+//   w.phase(name, fn) · w.agent({role,title,prompt}) -> { text, status }
+//   w.parallel([...]) · w.pipeline(items, ...stages) · w.loopUntil(fn, { maxRounds })
+//   w.budget() · w.requestReport(...) · w.updateWiki(...) · w.log(msg)
+export default async function mission(w) {
+  const features = await w.phase('Plan', async () => {
+    const res = await w.agent({
+      role: 'planner',
+      title: 'Plan features',
+      prompt: 'List 3 to 6 independently buildable features for this workspace, one per line.',
+    });
+    return res.text
+      .split('\n')
+      .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter(Boolean);
+  });
 
-phase('Plan');
-const plan = await agent(
-  'List 3 to 6 independently buildable features for this workspace, one feature per line.',
-);
+  const left = await w.budget();
+  await w.log('Building ' + features.length + ' feature(s); ' + left.remaining + ' agents left');
 
-phase('Build');
-const features = plan
-  .split('\n')
-  .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
-  .filter(Boolean);
-log('Building ' + features.length + ' feature(s)');
-await parallel(
-  features.map((f) => () => agent('Implement this feature, writing tests first:\n' + f)),
-);
+  // Each feature flows build -> review independently (no barrier between stages).
+  await w.phase('Build', async () => {
+    await w.pipeline(
+      features,
+      (_value, feature) =>
+        w.agent({ role: 'worker', title: 'Build: ' + feature, prompt: 'Implement this feature, writing tests first:\n' + feature }),
+      (built, feature) =>
+        w.agent({ role: 'reviewer', title: 'Review: ' + feature, prompt: 'Review against the feature and list gaps:\n' + feature + '\n\n' + built.text }),
+    );
+  });
 
-phase('Validate');
-await agent(
-  'Independently validate the work for correctness and completeness; list any gaps as ' +
-    'concrete fix-tasks. Do NOT implement fixes yourself.\n\nFeatures:\n' + features.join('\n'),
-);
+  // Validate -> fix what it finds -> re-validate, as a bounded loop-until-dry.
+  await w.phase('Validate', async () => {
+    await w.loopUntil(
+      async (round) => {
+        const verdict = await w.agent({
+          role: 'validator',
+          title: 'Validate (round ' + (round + 1) + ')',
+          prompt: 'Independently judge correctness and completeness. List concrete remaining gaps as bullets, or reply DONE. Do NOT implement fixes.',
+        });
+        if (/\bDONE\b/i.test(verdict.text)) return [];
+        const gaps = verdict.text.split('\n').map((l) => l.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean);
+        await w.parallel(gaps.map((gap) => () => w.agent({ role: 'worker', title: 'Fix', prompt: 'Fix this gap:\n' + gap })));
+        return gaps; // non-empty -> loop again; empty -> done
+      },
+      { maxRounds: 3 },
+    );
+  });
+
+  await w.requestReport({ title: 'Mission complete', reason: 'workflow-finished', summary: 'Built and validated ' + features.length + ' feature(s).' });
+}
+`;
+
+// A test-first workflow: red -> green -> refactor, cycled per behaviour.
+const TDD_TEMPLATE = String.raw`// name: TDD
+// Red -> Green -> Refactor for each behaviour, run as an independent pipeline.
+export default async function tdd(w) {
+  const behaviours = await w.phase('Plan', async () => {
+    const res = await w.agent({
+      role: 'planner',
+      title: 'List behaviours',
+      prompt: 'List the behaviours to build test-first, one per line.',
+    });
+    return res.text.split('\n').map((l) => l.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean);
+  });
+
+  await w.phase('Cycle', async () => {
+    await w.pipeline(
+      behaviours,
+      (_v, b) => w.agent({ role: 'worker', title: 'Red: ' + b, prompt: 'Write a FAILING test for this behaviour, then stop:\n' + b }),
+      (_red, b) => w.agent({ role: 'worker', title: 'Green: ' + b, prompt: 'Write the minimum code to make the test pass:\n' + b }),
+      (_green, b) => w.agent({ role: 'worker', title: 'Refactor: ' + b, prompt: 'Refactor while keeping all tests green:\n' + b }),
+    );
+  });
+
+  await w.requestReport({ title: 'TDD complete', reason: 'workflow-finished', summary: 'Implemented ' + behaviours.length + ' behaviour(s) test-first.' });
+}
 `;
 
 export interface EnsureWorkspaceOptions {
@@ -166,6 +221,9 @@ export function ensureWorkspace(root: string, options: EnsureWorkspaceOptions = 
 
   const missionFile = path.join(workflowsDir(root), 'mission.ts');
   if (!existsSync(missionFile)) writeFileSync(missionFile, MISSION_TEMPLATE, 'utf8');
+
+  const tddFile = path.join(workflowsDir(root), 'tdd.ts');
+  if (!existsSync(tddFile)) writeFileSync(tddFile, TDD_TEMPLATE, 'utf8');
 
   let manifest = readWorkspace(root);
   if (!manifest) {

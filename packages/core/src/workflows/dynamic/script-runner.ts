@@ -29,6 +29,7 @@ type RunnerFrame =
   | { id: string; type: 'wiki'; input: DynamicWorkflowWikiInput }
   | { id: string; type: 'checkpoint'; input: unknown }
   | { id: string; type: 'log'; input: { message: string } }
+  | { id: string; type: 'budget'; input: undefined }
   | { id: string; type: 'finish'; input: { status: 'succeeded' | 'failed'; summary?: string } };
 
 export interface BunWorkflowScriptRunnerOptions {
@@ -132,6 +133,8 @@ export class BunWorkflowScriptRunner implements WorkflowScriptRunner {
         return await api.checkpoint(frame.input as never);
       case 'log':
         return await api.log(frame.input.message);
+      case 'budget':
+        return api.budget();
       case 'finish':
         await api.finish(frame.input.status, frame.input.summary);
         return null;
@@ -203,6 +206,29 @@ const workflow = {
   },
   parallel(items) {
     return Promise.all(items.map((item) => typeof item === "function" ? item() : item));
+  },
+  pipeline(items, ...stages) {
+    return Promise.all(items.map(async (item, index) => {
+      let value = item;
+      for (const stage of stages) value = await stage(value, item, index);
+      return value;
+    }));
+  },
+  async loopUntil(fn, options) {
+    const opts = options || {};
+    const maxRounds = Math.max(1, opts.maxRounds || 10);
+    const dry = (v) => !v || (Array.isArray(v) && v.length === 0) || v === 0;
+    const results = [];
+    for (let round = 0; round < maxRounds; round++) {
+      const result = await fn(round);
+      results.push(result);
+      const stop = opts.until ? await opts.until(result, round) : dry(result);
+      if (stop) break;
+    }
+    return results;
+  },
+  budget() {
+    return send("budget");
   },
   agent(input) {
     return send("agent", input);

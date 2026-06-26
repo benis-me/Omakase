@@ -22,6 +22,7 @@ import {
   writeSpec,
   type OpenWorkspace,
 } from '../src/index.js';
+import { validateWorkflowScriptSource } from '@omakase/core';
 import { makeRecord } from './fixtures.js';
 
 describe('omks workspace', () => {
@@ -42,6 +43,16 @@ describe('omks workspace', () => {
     expect(readFileSync(join(root, '.omks', 'memory', 'AGENTS.md'), 'utf8')).toContain('AGENTS.md');
     // Idempotent: a second ensure keeps the same id.
     expect(ensureWorkspace(root, { now: 2000 }).id).toBe(manifest.id);
+  });
+
+  it('seeds runnable workflow templates that pass the dynamic-workflow validator', () => {
+    ensureWorkspace(root, { name: 'WF', now: 1 });
+    for (const file of ['mission.ts', 'tdd.ts']) {
+      const source = readFileSync(join(root, '.omks', 'workflows', file), 'utf8');
+      // The real runner contract: a default export, and no forbidden globals.
+      expect(source).toMatch(/export default async function/);
+      expect(() => validateWorkflowScriptSource(source)).not.toThrow();
+    }
   });
 
   it('opens a workspace, persists runs in omks.db, and reopens with the same id', async () => {

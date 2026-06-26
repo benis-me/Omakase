@@ -136,6 +136,57 @@ describe('DynamicWorkflowRun', () => {
     expect(record?.plan.tasks).toHaveLength(2);
   });
 
+  it('exposes loop primitives: pipeline, bounded loopUntil, and budget', async () => {
+    const exec = createScriptedAgent((input) => [{ type: 'text_delta', delta: `ok:${input.prompt}` }]);
+    const store = new MemoryRunStore();
+    const piped: string[] = [];
+    let observedRemaining = -1;
+    let rounds = 0;
+
+    const run = new DynamicWorkflowRun({
+      runtime: createAgentRuntime({ executors: { codex: exec }, detection: OFFLINE, now: () => 0 }),
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'codex' } } }),
+      store,
+      scriptRunner: new MemoryWorkflowScriptRunner(async (w: DynamicWorkflowApi) => {
+        observedRemaining = (await w.budget()).remaining;
+        // Each item flows item → generate(agent) → review, independently.
+        const out = (await w.pipeline(
+          ['a', 'b', 'c'],
+          (_value, item) => w.agent({ title: `gen ${item}`, prompt: `gen ${item}` }),
+          (gen) => `reviewed:${(gen as { text: string }).text}`,
+        )) as string[];
+        piped.push(...out);
+        // Bounded loop-until-dry: round 0 yields work, round 1 is dry → stop (not maxRounds).
+        await w.loopUntil(
+          (round) => {
+            rounds = round + 1;
+            return round < 1 ? [round] : [];
+          },
+          { maxRounds: 5 },
+        );
+      }),
+      script: {
+        id: 'wf-loop',
+        path: '/tmp/wf.js',
+        source: 'export default async function w() {}',
+        runtime: 'memory',
+        createdAt: 0,
+      },
+      request: { prompt: 'loop primitives', cwd: process.cwd(), mode: 'normal' },
+      clock: () => 0,
+      detectionOptions: OFFLINE,
+      maxConcurrency: 3,
+      maxAgents: 10,
+    });
+
+    const result = await run.start().result;
+
+    expect(result.status).toBe('succeeded');
+    expect(piped).toEqual(['reviewed:ok:gen a', 'reviewed:ok:gen b', 'reviewed:ok:gen c']);
+    expect(observedRemaining).toBe(10); // full agent allowance before any agent ran
+    expect(rounds).toBe(2); // stopped on the dry round, well under maxRounds=5
+  });
+
   it('enforces the workflow agent cap before spawning unbounded sub-agents', async () => {
     const store = new MemoryRunStore();
     const run = new DynamicWorkflowRun({

@@ -120,9 +120,42 @@ export interface DynamicWorkflowCheckpointInput {
   data?: unknown;
 }
 
+/** Remaining sub-agent budget for the run (agents are the bounded resource). */
+export interface DynamicWorkflowBudget {
+  total: number;
+  spent: number;
+  remaining: number;
+}
+
+export interface DynamicWorkflowLoopOptions {
+  /** Hard cap on rounds — every loop is bounded (default 10). */
+  maxRounds?: number;
+  /** Return true to STOP. When omitted, the loop stops when a round comes back
+   * "dry" (falsy, an empty array, or 0) — the loop-until-dry idiom. */
+  until?: (result: unknown, round: number) => boolean | Promise<boolean>;
+}
+
 export interface DynamicWorkflowApi {
   phase<T>(name: string, fn: (workflow: DynamicWorkflowApi) => Promise<T> | T): Promise<T>;
   parallel<T>(items: Array<Promise<T> | (() => Promise<T> | T)>): Promise<T[]>;
+  /**
+   * Run each item through all stages independently — no barrier between stages,
+   * so item A can be in stage 3 while item B is still in stage 1. Each stage
+   * receives `(prevResult, originalItem, index)`.
+   */
+  pipeline<T = unknown>(
+    items: readonly T[],
+    ...stages: Array<(value: unknown, item: T, index: number) => unknown | Promise<unknown>>
+  ): Promise<unknown[]>;
+  /** Bounded loop-until: repeat `fn(round)` until `until` says stop (or it comes
+   * back dry), capped by {@link DynamicWorkflowLoopOptions.maxRounds}. */
+  loopUntil(
+    fn: (round: number) => unknown | Promise<unknown>,
+    options?: DynamicWorkflowLoopOptions,
+  ): Promise<unknown[]>;
+  /** Remaining sub-agent budget, for scaling loop depth to what's left.
+   * Async because the Bun runtime answers it over IPC. */
+  budget(): Promise<DynamicWorkflowBudget>;
   agent(input: DynamicWorkflowAgentInput): Promise<DynamicWorkflowAgentResult>;
   requestReport(input: DynamicWorkflowReportInput): Promise<void>;
   updateWiki(input: DynamicWorkflowWikiInput): Promise<void>;

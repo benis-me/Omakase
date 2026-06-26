@@ -111,6 +111,15 @@ function usageTokens(result: AgentRunResult): number {
   return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
 }
 
+/** A loop round is "dry" (default stop condition for loopUntil) when it yields
+ * nothing: falsy, an empty array, or 0. */
+function isDry(value: unknown): boolean {
+  if (!value) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'number') return value === 0;
+  return false;
+}
+
 function cleanTitle(value: string, fallback: string): string {
   const clean = value.replace(/\s+/g, ' ').trim();
   return (clean || fallback).slice(0, 96);
@@ -295,6 +304,30 @@ export class DynamicWorkflowRun {
       },
       parallel: async <T>(items: Array<Promise<T> | (() => Promise<T> | T)>): Promise<T[]> =>
         Promise.all(items.map((item) => (typeof item === 'function' ? item() : item))),
+      pipeline: async (items, ...stages) =>
+        Promise.all(
+          items.map(async (item, index) => {
+            let value: unknown = item;
+            for (const stage of stages) value = await stage(value, item, index);
+            return value;
+          }),
+        ),
+      loopUntil: async (fn, options = {}) => {
+        const maxRounds = Math.max(1, options.maxRounds ?? 10);
+        const results: unknown[] = [];
+        for (let round = 0; round < maxRounds && this.status !== 'cancelled'; round += 1) {
+          const result = await fn(round);
+          results.push(result);
+          const stop = options.until ? await options.until(result, round) : isDry(result);
+          if (stop) break;
+        }
+        return results;
+      },
+      budget: async () => ({
+        total: this.maxAgents,
+        spent: this.agentCount,
+        remaining: Math.max(0, this.maxAgents - this.agentCount),
+      }),
       agent: (input) => this.runAgentFromWorkflow(input),
       requestReport: (input) => this.requestReport(input),
       updateWiki: (input) => this.updateWiki(input),
