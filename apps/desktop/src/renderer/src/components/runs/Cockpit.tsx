@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusDot, type DotStatus } from '../StatusDot';
-import { CockpitFeed } from './CockpitFeed';
+import { CockpitTabs } from './CockpitTabs';
 
 export const RUN_DOT: Record<string, DotStatus> = {
   running: 'omk',
@@ -221,7 +221,7 @@ function LiveCockpit({ runId }: { runId: string }) {
         </Tooltip>
       </header>
 
-      <CockpitFeed feed={feed} />
+      <CockpitTabs feed={feed} />
 
       <div className="shrink-0 border-t bg-card/40 p-2">
         <div className="flex items-center gap-1.5">

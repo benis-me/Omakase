@@ -19,6 +19,7 @@ import {
   type ControlPoll,
   type ControlSource,
   type OrchestratorEvent,
+  type OrchestratorOptions,
   type RunRecord,
   type RunStatus,
 } from '@omakase/core';
@@ -75,6 +76,9 @@ export class RunHost {
   constructor(
     private readonly host: WorkspaceHost,
     private readonly events: RunHostEvents,
+    /** Test-only seam: merged into every Orchestrator (inject a scripted runtime,
+     * a forced policy, hermetic detection, etc.). Undefined in production. */
+    private readonly overrides?: Partial<OrchestratorOptions>,
   ) {}
 
   listRuns(): RunSummaryDto[] {
@@ -237,7 +241,8 @@ export class RunHost {
     defaultMode: RunStartInput['mode'],
     validate = false,
   ): Orchestrator {
-    this.runtime ??= createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
+    this.runtime ??=
+      this.overrides?.runtime ?? createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
     const controlPoll: ControlPoll = (tick) => {
       const timer = setInterval(tick, 250);
       timer.unref?.();
@@ -252,6 +257,7 @@ export class RunHost {
       control,
       controlPoll,
       validate,
+      ...this.overrides,
     });
   }
 
