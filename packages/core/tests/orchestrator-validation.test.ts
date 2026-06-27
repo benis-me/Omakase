@@ -247,6 +247,41 @@ describe('adopting agent-authored spec criteria (closing the verification loop)'
     expect(result.plan.tasks.some((t) => t.tags?.includes('validator-fix'))).toBe(true);
   });
 
+  it('still verifies an adopted spec after the worker phase exhausts the budget', async () => {
+    // The worker blows a 1-token budget; the validator (budget-exempt support work,
+    // like the wiki-curator that already runs post-budget) must still get to verify.
+    const exec = createScriptedAgent((input) => {
+      const p = String(input.prompt);
+      if (p.includes('independent VALIDATOR')) {
+        return [{ type: 'text_delta', delta: '{"passed": true, "gaps": []}' }];
+      }
+      return [
+        { type: 'usage', usage: { inputTokens: 50, outputTokens: 50 } },
+        { type: 'text_delta', delta: 'done' },
+      ];
+    });
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      budget: { maxTokens: 1 },
+      authoredSpecCriteria: () => ['titleCase capitalizes each word'],
+    });
+    const result = await orch.start({
+      prompt: 'build titlecase',
+      cwd: '/tmp/omks-adopt',
+      metadata: { supportAgents: true },
+    }).result;
+
+    expect(result.status).toBe('succeeded');
+    const spec = result.acceptance.criteria.filter((c) => c.source === 'spec');
+    expect(spec.length).toBe(1);
+    expect(spec[0].status).toBe('pass');
+  });
+
   it('leaves the run unchanged when no authored-spec provider is wired', async () => {
     const result = await makeOrch({
       validatorText: '{"passed": true, "gaps": []}',

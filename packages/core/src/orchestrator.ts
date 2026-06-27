@@ -844,7 +844,12 @@ class RunController implements RunHandle {
     if (!this.validateEnabled && !this.verifier && !this.adoptedSpec) return;
     let round = 0;
     let lastVerifierPassed = true;
-    while (round < this.maxValidationRounds && !this.cancelled && !this.budgetExhausted) {
+    // Note: budget exhaustion does NOT skip the gate. The verifier (a shell check)
+    // and the validator (a budget-exempt support agent, like the wiki-curator that
+    // already runs post-budget) still get to render a verdict — otherwise a run that
+    // spent its budget in the worker phase could never verify the spec it adopted.
+    // Only the fix→re-loop below (which spends worker budget) honors the budget.
+    while (round < this.maxValidationRounds && !this.cancelled) {
       this.applyImplicitAcceptanceIfNeeded();
       const status = this.computeFinalStatus();
       // Gate a run that would otherwise succeed. For an adopted spec, 'incomplete'
@@ -899,6 +904,10 @@ class RunController implements RunHandle {
         }
         return;
       }
+      // Gaps remain. Fixing them re-runs workers, which spends budget — so if the
+      // budget is already exhausted, stop here: the run finishes 'incomplete' with
+      // the gaps recorded, rather than overspending.
+      if (this.budgetExhausted) return;
       for (const fix of fixes) {
         this.graph.addTask({ title: fix.title, description: fix.description, role: 'worker', tags: [fix.tag] });
       }
