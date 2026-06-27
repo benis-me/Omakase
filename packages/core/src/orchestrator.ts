@@ -911,9 +911,30 @@ class RunController implements RunHandle {
       'Keep it concise and specific. Avoid generic status phrases.',
       `Reason: ${reason}`,
       report ? `Related report: ${report.title} (${report.id})` : 'Related report: none',
+      this.commandCurationDirective(),
       '',
       'Current run state JSON:',
       this.supportContext(),
+    ].join('\n');
+  }
+
+  /**
+   * "/learn"-style command curation (P2). The post-run curator may distill a
+   * reusable command when — and only when — the run revealed a genuinely
+   * repeatable recipe. Deliberately conservative: most runs warrant nothing, and
+   * writing a command every run would just add entropy (the thing P3 guards). The
+   * agent authors the file itself; silent when the workspace isn't writable.
+   */
+  private commandCurationDirective(): string {
+    if (!this.request.cwd) return '';
+    return [
+      '',
+      'Command curation: if — and ONLY if — this run revealed a clearly repeatable,',
+      'general procedure a future run would benefit from invoking directly, distill it',
+      'into a command with your file tools: write `.omks/commands/<slug>.md` (a one-line',
+      'title, then the reusable prompt body; use `$ARGUMENTS` where the caller substitutes',
+      'input). Most runs warrant NO new command — skip it unless the recipe is genuinely',
+      'reusable, and never duplicate a command already in `.omks/commands/`.',
     ].join('\n');
   }
 

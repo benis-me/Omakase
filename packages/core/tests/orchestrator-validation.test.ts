@@ -198,3 +198,45 @@ describe('spec-first nudge (spec-driven development for spec-less runs)', () => 
     expect(prompts.some((p) => p.includes(SPEC_FIRST))).toBe(false);
   });
 });
+
+describe('command curation (/learn-style, post-run)', () => {
+  const CURATION = 'Command curation:';
+  function makeOrch(prompts: string[]) {
+    const exec = createScriptedAgent((input) => {
+      prompts.push(String(input.prompt));
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    return new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+  }
+
+  it('invites the post-run curator to distill a reusable command when cwd is writable', async () => {
+    const prompts: string[] = [];
+    // supportAgents:true forces the wiki curator to run with the scripted agent.
+    await makeOrch(prompts).start({
+      prompt: 'do a thing',
+      cwd: '/tmp/omks-cmd',
+      metadata: { supportAgents: true },
+    }).result;
+    const curator = prompts.find((p) => p.includes('Omakase Wiki Curator'));
+    expect(curator).toBeDefined();
+    expect(curator).toContain(CURATION);
+  });
+
+  it('omits command curation when there is no writable workspace', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({
+      prompt: 'do a thing',
+      metadata: { supportAgents: true },
+    }).result;
+    const curator = prompts.find((p) => p.includes('Omakase Wiki Curator'));
+    expect(curator).toBeDefined();
+    expect(curator).not.toContain(CURATION);
+  });
+});
