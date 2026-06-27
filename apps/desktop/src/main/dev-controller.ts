@@ -109,6 +109,9 @@ export class DevController {
   gitStatus(): Promise<GitInfo | null> {
     return this.workspace ? this.git.info(this.workspace.root) : Promise.resolve(null);
   }
+  gitDiff(): Promise<string> {
+    return this.workspace ? this.git.diff(this.workspace.root) : Promise.resolve('');
+  }
 
   // ── Open with / terminal ──────────────────────────────────────────────────
 

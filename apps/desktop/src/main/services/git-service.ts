@@ -42,4 +42,15 @@ export class GitService {
     const { ahead, behind } = abR.ok ? parseAheadBehind(abR.out) : { ahead: 0, behind: 0 };
     return { branch, dirty: changes > 0, changes, ahead, behind };
   }
+
+  /** Working-tree diff vs HEAD (what a run changed). '' if clean or not a repo. */
+  async diff(cwd: string): Promise<string> {
+    const inside = await this.run(['rev-parse', '--is-inside-work-tree'], cwd);
+    if (!inside.ok || inside.out.trim() !== 'true') return '';
+    const head = await this.run(['diff', 'HEAD'], cwd);
+    if (head.ok) return head.out;
+    // No commit yet (HEAD invalid) — fall back to the unstaged diff.
+    const unstaged = await this.run(['diff'], cwd);
+    return unstaged.ok ? unstaged.out : '';
+  }
 }

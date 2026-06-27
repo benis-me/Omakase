@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
@@ -16,10 +16,14 @@ export function RunsView() {
   const openRun = useAppStore((s) => s.openRun);
   const closeRun = useAppStore((s) => s.closeRun);
   const resumeRun = useAppStore((s) => s.resumeRun);
+  const [armed, setArmed] = useState(0);
 
   useEffect(() => {
     void loadRuns();
-  }, [activePath, loadRuns]);
+    void window.omakase.triggers.list().then((ts) => setArmed(ts.filter((t) => t.enabled).length));
+  }, [activePath, loadRuns, runs.length]);
+
+  const liveCount = runs.filter((r) => r.live).length;
 
   return (
     <div className="flex h-full">
@@ -30,6 +34,18 @@ export function RunsView() {
             <Plus className="size-3.5" />
             New
           </Button>
+        </div>
+        {/* Fleet at a glance. */}
+        <div className="flex items-center gap-1.5 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
+          {liveCount > 0 ? <span className="text-run">{liveCount} live</span> : <span>idle</span>}
+          <span>·</span>
+          <span>{runs.length} total</span>
+          {armed > 0 && (
+            <>
+              <span>·</span>
+              <span className="text-omk">{armed} armed</span>
+            </>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {runs.length === 0 ? (

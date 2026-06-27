@@ -114,6 +114,7 @@ export function registerIpc(
   ipcMain.handle(IPC.PortsKill, (_e, port: number) => dev.portsKill(port));
   ipcMain.handle(IPC.PortsKillPid, (_e, pid: number) => dev.portsKillPid(pid));
   ipcMain.handle(IPC.GitStatus, () => dev.gitStatus());
+  ipcMain.handle(IPC.GitDiff, () => dev.gitDiff());
   ipcMain.handle(IPC.AppsList, () => dev.listApps());
   ipcMain.handle(IPC.AppsOpenWith, (_e, appId: string, target?: string) => dev.openWith(appId, target));
   ipcMain.handle(IPC.AppsOpenTerminal, (_e, appId: string) => dev.openTerminal(appId));

@@ -53,6 +53,7 @@ const api: OmakaseApi = {
   },
   git: {
     status: () => ipcRenderer.invoke(IPC.GitStatus),
+    diff: () => ipcRenderer.invoke(IPC.GitDiff),
   },
   apps: {
     list: () => ipcRenderer.invoke(IPC.AppsList),

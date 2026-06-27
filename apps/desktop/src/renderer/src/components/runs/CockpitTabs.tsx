@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,53 @@ const TASK_DOT: Record<string, DotStatus> = {
   cancelled: 'idle',
 };
 
-type TabId = 'activity' | 'tasks' | 'reports' | 'knowledge';
+type TabId = 'activity' | 'tasks' | 'reports' | 'knowledge' | 'diffs';
+
+/** The workspace's working-tree diff (what the run changed), with +/- coloring. */
+function DiffsPanel() {
+  const [diff, setDiff] = useState<string | null>(null);
+  useEffect(() => {
+    void window.omakase.git.diff().then(setDiff);
+  }, []);
+  if (diff === null)
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-[12px] text-muted-foreground">
+        Loading diff…
+      </div>
+    );
+  if (!diff.trim())
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
+          No uncommitted changes in the workspace.
+        </p>
+      </div>
+    );
+  return (
+    <div className="h-full overflow-auto p-3">
+      <pre className="font-mono text-[12px] leading-relaxed">
+        {diff.split('\n').map((line, i) => (
+          <div
+            key={i}
+            className={cn(
+              line.startsWith('@@')
+                ? 'text-omk'
+                : line.startsWith('+') && !line.startsWith('+++')
+                  ? 'text-run'
+                  : line.startsWith('-') && !line.startsWith('---')
+                    ? 'text-destructive'
+                    : line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---')
+                      ? 'text-muted-foreground'
+                      : '',
+            )}
+          >
+            {line || ' '}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
 
 interface TaskRow {
   title: string;
@@ -126,6 +172,7 @@ export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
     { id: 'tasks', label: 'Tasks', count: tasks.length },
     { id: 'reports', label: 'Reports', count: reports.length },
     { id: 'knowledge', label: 'Knowledge', count: knowledge.length },
+    { id: 'diffs', label: 'Diffs', count: 0 },
   ];
 
   return (
@@ -150,6 +197,7 @@ export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
         {tab === 'tasks' && <TasksPanel tasks={tasks} />}
         {tab === 'reports' && <ReportsPanel reports={reports} />}
         {tab === 'knowledge' && <KnowledgePanel items={knowledge} />}
+        {tab === 'diffs' && <DiffsPanel />}
       </div>
     </div>
   );

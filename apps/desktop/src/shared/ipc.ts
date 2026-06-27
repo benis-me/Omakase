@@ -39,6 +39,7 @@ export const IPC = {
   PortsKill: 'ports:kill',
   PortsKillPid: 'ports:killPid',
   GitStatus: 'git:status',
+  GitDiff: 'git:diff',
   AppsList: 'apps:list',
   AppsOpenWith: 'apps:openWith',
   AppsOpenTerminal: 'apps:openTerminal',

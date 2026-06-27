@@ -80,6 +80,7 @@ export interface OmakaseApi {
   };
   git: {
     status(): Promise<GitInfo | null>;
+    diff(): Promise<string>;
   };
   apps: {
     list(): Promise<AppInfo[]>;
