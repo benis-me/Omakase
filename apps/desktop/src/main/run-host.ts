@@ -27,7 +27,16 @@ import {
   type RunVerifier,
 } from '@omakase/core';
 import type { OpenWorkspace } from '@omakase/storage';
-import { readSpec, readWorkflow, type RunSummary } from '@omakase/storage';
+import {
+  readSpec,
+  readWorkflow,
+  snapshotInstructionMemory,
+  diffInstructionMemory,
+  instructionMemoryDrifted,
+  describeInstructionDrift,
+  type InstructionMemorySnapshot,
+  type RunSummary,
+} from '@omakase/storage';
 import type {
   AutonomyLevel,
   CockpitEvent,
@@ -65,6 +74,9 @@ export interface RunHostEvents {
   /** A run reached a terminal state. Used to notify the user when an unattended
    * (triggered) run can't finish cleanly. */
   runFinished?(runId: string, status: string, triggeredBy?: string): void;
+  /** A run changed instruction-level memory (AGENTS.md / rules) — the
+   * self-poisoning guardrail. `summary` names what drifted. */
+  instructionDrift?(runId: string, summary: string): void;
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -80,6 +92,9 @@ export class RunHost {
   private readonly live = new Map<string, LiveRun>();
   /** runId → the automation name that started it (this session, for the "auto" badge). */
   private readonly triggeredBy = new Map<string, string>();
+  /** runId → workspace + a fingerprint of instruction memory at run start, for the
+   * self-poisoning audit when the run finishes. */
+  private readonly memBaseline = new Map<string, { root: string; snapshot: InstructionMemorySnapshot }>();
 
   constructor(
     private readonly host: WorkspaceHost,
@@ -142,6 +157,7 @@ export class RunHost {
       ...(input.triggeredBy ? { metadata: { triggeredBy: input.triggeredBy } } : {}),
     });
     if (input.triggeredBy) this.triggeredBy.set(handle.id, input.triggeredBy);
+    this.memBaseline.set(handle.id, { root: ws.root, snapshot: snapshotInstructionMemory(ws.root) });
     this.track(handle, input.autonomy, controlDir, 0);
     return handle.id;
   }
@@ -159,6 +175,7 @@ export class RunHost {
     rmSync(join(controlDir, `${id}.control.json`), { force: true });
     const handle = await this.buildOrchestrator(ws, controlDir, record.mode).resume(id);
     if (!handle) return false;
+    this.memBaseline.set(handle.id, { root: ws.root, snapshot: snapshotInstructionMemory(ws.root) });
     // Continue the cockpit feed's seq numbering after the already-persisted feed.
     this.track(handle, autonomy, controlDir, toCockpitFeed(record.events).length);
     return true;
@@ -183,6 +200,7 @@ export class RunHost {
       maxAgents: 1000,
     });
     const handle = run.start();
+    this.memBaseline.set(handle.id, { root: ws.root, snapshot: snapshotInstructionMemory(ws.root) });
     this.track(handle, autonomy, controlDir, 0);
     return handle.id;
   }
@@ -203,6 +221,7 @@ export class RunHost {
       /* already done */
     }
     this.triggeredBy.delete(id);
+    this.memBaseline.delete(id);
     await this.host.activeWorkspace?.runStore.delete(id);
   }
 
@@ -237,6 +256,27 @@ export class RunHost {
     this.events.liveChanged(this.live.size);
     this.events.runStatus(runId);
     if (result?.status) this.events.runFinished?.(runId, result.status, this.triggeredBy.get(runId));
+    this.auditInstructionMemory(runId);
+  }
+
+  /**
+   * Self-poisoning guardrail: compare instruction-level memory (AGENTS.md / rules)
+   * against the snapshot taken at run start. Agents are briefed NOT to touch it, so
+   * any drift is unsanctioned by default — surface it for human review. We never
+   * auto-revert (a genuine user-requested edit is legitimate); we just notify.
+   */
+  private auditInstructionMemory(runId: string): void {
+    const baseline = this.memBaseline.get(runId);
+    this.memBaseline.delete(runId);
+    if (!baseline) return;
+    try {
+      const drift = diffInstructionMemory(baseline.snapshot, snapshotInstructionMemory(baseline.root));
+      if (instructionMemoryDrifted(drift)) {
+        this.events.instructionDrift?.(runId, describeInstructionDrift(drift));
+      }
+    } catch {
+      /* a deleted/unreadable workspace just skips the audit */
+    }
   }
 
   private maybeAutoAnswer(run: LiveRun, gateId: string, reason: string): void {

@@ -83,6 +83,16 @@ app.whenReady().then(() => {
         }).show();
       }
     },
+    instructionDrift: (_runId, summary) => {
+      // Self-poisoning guardrail: an agent changed instruction-level memory it was
+      // briefed not to touch. Always surface it — it biases every future run.
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Instruction memory changed during a run',
+          body: `Review the edit to ${summary} — it shapes every future run.`,
+        }).show();
+      }
+    },
   });
   scheduler = new RunScheduler(host, runs);
   contentWatcher = new ContentWatcher(host, () => send(IPC.EvtContentChanged, null));

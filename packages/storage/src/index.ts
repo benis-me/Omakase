@@ -68,8 +68,16 @@ export {
   listRules,
   writeRule,
   deleteRule,
+  snapshotInstructionMemory,
+  diffInstructionMemory,
+  instructionMemoryDrifted,
+  describeInstructionDrift,
 } from './omks/memory.js';
-export type { RuleDoc } from './omks/memory.js';
+export type {
+  RuleDoc,
+  InstructionMemorySnapshot,
+  InstructionMemoryDrift,
+} from './omks/memory.js';
 
 export { listCommands, readCommand, writeCommand, deleteCommand } from './omks/commands.js';
 export type { CommandDoc } from './omks/commands.js';

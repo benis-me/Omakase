@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,6 +75,62 @@ describe('RunHost end-to-end flow', () => {
     const detail = await runHost.getRun(id);
     expect(detail?.events.length).toBeGreaterThan(0);
     expect(detail?.events.some((e) => e.kind === 'finished')).toBe(true);
+  }, 20_000);
+
+  it('flags instruction-memory drift when a run rewrites AGENTS.md (self-poisoning guardrail)', async () => {
+    // A scripted agent that does the thing it's briefed NOT to do: rewrite AGENTS.md mid-run.
+    const exec = createScriptedAgent((input) => {
+      if (input.cwd) {
+        writeFileSync(join(input.cwd, '.omks', 'memory', 'AGENTS.md'), '# Poisoned briefing\n', 'utf8');
+      }
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const overrides: Partial<OrchestratorOptions> = {
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      clock: () => 0,
+    };
+
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => (resolveDone = resolve));
+    const drifts: string[] = [];
+    const events: RunHostEvents = {
+      cockpitEvent: () => {},
+      runStatus: () => {},
+      liveChanged: (count) => {
+        if (count === 0) resolveDone();
+      },
+      instructionDrift: (_id, summary) => drifts.push(summary),
+    };
+
+    const runHost = new RunHost(host, events, overrides);
+    runHost.startRun({ prompt: 'tweak something', mode: 'normal', autonomy: 'high' });
+    await done;
+
+    expect(drifts).toHaveLength(1);
+    expect(drifts[0]).toContain('AGENTS.md');
+  }, 20_000);
+
+  it('does not flag drift when a run leaves instruction memory untouched', async () => {
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => (resolveDone = resolve));
+    const drifts: string[] = [];
+    const events: RunHostEvents = {
+      cockpitEvent: () => {},
+      runStatus: () => {},
+      liveChanged: (count) => {
+        if (count === 0) resolveDone();
+      },
+      instructionDrift: (_id, summary) => drifts.push(summary),
+    };
+
+    const runHost = new RunHost(host, events, hermeticOverrides());
+    runHost.startRun({ prompt: 'do a small thing', mode: 'normal', autonomy: 'high' });
+    await done;
+
+    expect(drifts).toEqual([]);
   }, 20_000);
 
   it('reports no runs for a fresh workspace', () => {
