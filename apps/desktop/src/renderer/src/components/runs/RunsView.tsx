@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Play, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { StatusDot } from '../StatusDot';
@@ -9,6 +10,7 @@ import { Cockpit } from './Cockpit';
 import { RUN_DOT } from './run-status';
 
 export function RunsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
   const runs = useAppStore((s) => s.runs);
   const currentRunId = useAppStore((s) => s.currentRunId);
@@ -20,7 +22,7 @@ export function RunsView() {
 
   useEffect(() => {
     void loadRuns();
-    void window.omakase.triggers.list().then((ts) => setArmed(ts.filter((t) => t.enabled).length));
+    void window.omakase.triggers.list().then((ts) => setArmed(ts.filter((tr) => tr.enabled).length));
   }, [activePath, loadRuns, runs.length]);
 
   const liveCount = runs.filter((r) => r.live).length;
@@ -29,28 +31,28 @@ export function RunsView() {
     <div className="flex h-full">
       <div className="flex w-64 shrink-0 flex-col border-r">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
-          <h2 className="text-[13px] font-medium">Runs</h2>
+          <h2 className="text-[13px] font-medium">{t('Runs')}</h2>
           <Button variant="omk" size="sm" className="ml-auto gap-1.5" onClick={closeRun}>
             <Plus className="size-3.5" />
-            New
+            {t('New')}
           </Button>
         </div>
         {/* Fleet at a glance. */}
         <div className="flex items-center gap-1.5 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
-          {liveCount > 0 ? <span className="text-run">{liveCount} live</span> : <span>idle</span>}
+          {liveCount > 0 ? <span className="text-run">{liveCount} {t('live')}</span> : <span>{t('idle')}</span>}
           <span>·</span>
-          <span>{runs.length} total</span>
+          <span>{runs.length} {t('total')}</span>
           {armed > 0 && (
             <>
               <span>·</span>
-              <span className="text-omk">{armed} armed</span>
+              <span className="text-omk">{armed} {t('armed')}</span>
             </>
           )}
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {runs.length === 0 ? (
             <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-              No runs yet. Start one with “New”.
+              {t('No runs yet. Start one with “New”.')}
             </p>
           ) : (
             <div className="flex flex-col gap-0.5">
@@ -72,10 +74,10 @@ export function RunsView() {
                       onClick={() => void openRun(r.id)}
                       className="flex-1 truncate text-left text-[13px] outline-none"
                     >
-                      {r.summary || 'Run'}
+                      {r.summary || t('Run')}
                     </button>
                     {r.resumable && (
-                      <Tooltip content="Resume run">
+                      <Tooltip content={t('Resume run')}>
                         <button
                           onClick={() => void resumeRun(r.id)}
                           className="text-muted-foreground opacity-0 outline-none transition-opacity hover:text-run group-hover:opacity-100"
@@ -93,8 +95,8 @@ export function RunsView() {
                     {r.triggeredBy && (
                       <>
                         <span>·</span>
-                        <span className="text-omk" title={`Automation: ${r.triggeredBy}`}>
-                          auto
+                        <span className="text-omk" title={`${t('Automation:')} ${r.triggeredBy}`}>
+                          {t('auto')}
                         </span>
                       </>
                     )}

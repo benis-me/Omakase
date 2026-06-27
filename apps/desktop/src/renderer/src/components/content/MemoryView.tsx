@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { KnowledgeEventDto, RuleDoc } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { CodeEditor } from '../ui/code-editor';
@@ -14,7 +15,9 @@ import { ContentLayout } from './ContentLayout';
 type Sel = { kind: 'agents' } | { kind: 'rule'; name: string } | { kind: 'wiki' } | { kind: 'knowledge' };
 
 export function MemoryView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
+  const contentTick = useAppStore((s) => s.contentTick);
   const [agentsMd, setAgentsMd] = useState('');
   const [rules, setRules] = useState<RuleDoc[]>([]);
   const [wiki, setWiki] = useState('');
@@ -28,7 +31,7 @@ export function MemoryView() {
     void window.omakase.memory.listRules().then(setRules);
     void window.omakase.memory.readWiki().then(setWiki);
     void window.omakase.memory.knowledgeEvents().then(setEvents);
-  }, [activePath]);
+  }, [activePath, contentTick]);
 
   useEffect(() => {
     if (sel.kind === 'agents') setText(agentsMd);
@@ -75,18 +78,18 @@ export function MemoryView() {
             AGENTS.md
           </button>
           <button className={navBtn(sel.kind === 'wiki')} onClick={() => setSel({ kind: 'wiki' })}>
-            Wiki
+            {t('Wiki')}
           </button>
           <button className={navBtn(sel.kind === 'knowledge')} onClick={() => setSel({ kind: 'knowledge' })}>
             <span className="flex items-center gap-1.5">
-              Knowledge
+              {t('Knowledge')}
               <Badge variant="outline">{events.length}</Badge>
             </span>
           </button>
         </div>
         <div className="mt-3 flex items-center px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Rules
-          <Tooltip content="Add rule">
+          {t('Rules')}
+          <Tooltip content={t('Add rule')}>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -124,10 +127,10 @@ export function MemoryView() {
                 disabled={!dirty}
                 onClick={() => void save()}
               >
-                Save
+                {t('Save')}
               </Button>
               {sel.kind === 'rule' && (
-                <Tooltip content="Delete rule">
+                <Tooltip content={t('Delete rule')}>
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -155,7 +158,7 @@ export function MemoryView() {
               <MarkdownPreview source={wiki} />
             ) : (
               <p className="text-[12px] leading-relaxed text-muted-foreground">
-                The project wiki is empty. Agents accumulate knowledge here as they run.
+                {t('The project wiki is empty. Agents accumulate knowledge here as they run.')}
               </p>
             )}
           </div>
@@ -164,7 +167,7 @@ export function MemoryView() {
             {events.length === 0 ? (
               <div className="flex h-full items-center justify-center">
                 <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
-                  No knowledge events yet. Agents record what they learn here as runs progress.
+                  {t('No knowledge events yet. Agents record what they learn here as runs progress.')}
                 </p>
               </div>
             ) : (

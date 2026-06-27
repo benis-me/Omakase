@@ -1,5 +1,6 @@
 import { Asterisk, Command, Settings } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { ThemeToggle } from './ThemeToggle';
@@ -10,6 +11,7 @@ export function TitleBar() {
   const active = useAppStore((s) => s.active);
   const setPaletteOpen = useAppStore((s) => s.setPaletteOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const t = useT();
 
   return (
     <header
@@ -40,13 +42,13 @@ export function TitleBar() {
           <kbd className="font-mono text-[11px] tracking-tight">⌘K</kbd>
         </Button>
         <ThemeToggle />
-        <Tooltip content="Settings">
+        <Tooltip content={t('Settings')}>
           <Button
             variant="ghost"
             size="icon"
             className="text-muted-foreground hover:text-foreground"
             onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
+            aria-label={t('Settings')}
           >
             <Settings className="size-4" />
           </Button>

@@ -3,13 +3,16 @@ import { Trash2 } from 'lucide-react';
 import type { CommandDocDto } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { CodeEditor } from '../ui/code-editor';
 import { Tooltip } from '../ui/tooltip';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
 export function CommandsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
+  const contentTick = useAppStore((s) => s.contentTick);
   const [commands, setCommands] = useState<CommandDocDto[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [body, setBody] = useState('');
@@ -22,7 +25,7 @@ export function CommandsView() {
         cur && list.some((c) => c.name === cur) ? cur : (list[0]?.name ?? null),
       );
     });
-  }, [activePath]);
+  }, [activePath, contentTick]);
 
   useEffect(() => {
     setBody(commands.find((c) => c.name === selectedName)?.body ?? '');
@@ -59,7 +62,7 @@ export function CommandsView() {
       <div className="w-60 shrink-0 overflow-y-auto border-r p-2">
         {commands.length === 0 ? (
           <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            No commands yet. Create one with “New” to save a reusable prompt.
+            {t('No commands yet. Create one with “New” to save a reusable prompt.')}
           </p>
         ) : (
           <div className="flex flex-col gap-0.5">
@@ -92,9 +95,9 @@ export function CommandsView() {
               disabled={!dirty}
               onClick={() => void save()}
             >
-              Save
+              {t('Save')}
             </Button>
-            <Tooltip content="Delete command">
+            <Tooltip content={t('Delete command')}>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -107,15 +110,15 @@ export function CommandsView() {
           </div>
           <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 px-3 py-1.5">
             <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Recipe
+              {t('Recipe')}
             </span>
-            <Tooltip content="Interpolated with the text passed after the command when it runs.">
+            <Tooltip content={t('Interpolated with the text passed after the command when it runs.')}>
               <code className="cursor-default rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground/80 hover:text-foreground">
                 $ARGUMENTS
               </code>
             </Tooltip>
             <span className="text-[11px] leading-snug text-muted-foreground">
-              Markdown prompt that agents and loops can invoke as <code>/{selected.name}</code>.
+              {t('Markdown prompt that agents and loops can invoke as')} <code>/{selected.name}</code>.
             </span>
           </div>
           <CodeEditor

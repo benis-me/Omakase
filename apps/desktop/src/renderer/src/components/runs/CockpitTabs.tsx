@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MarkdownPreview } from '@/components/ui/markdown-preview';
@@ -21,6 +22,7 @@ type TabId = 'activity' | 'tasks' | 'reports' | 'knowledge' | 'diffs';
 
 /** The workspace's working-tree diff (what the run changed), with +/- coloring. */
 function DiffsPanel() {
+  const t = useT();
   const [diff, setDiff] = useState<string | null>(null);
   useEffect(() => {
     void window.omakase.git.diff().then(setDiff);
@@ -28,14 +30,14 @@ function DiffsPanel() {
   if (diff === null)
     return (
       <div className="flex h-full items-center justify-center p-8 text-[12px] text-muted-foreground">
-        Loading diff…
+        {t('Loading diff…')}
       </div>
     );
   if (!diff.trim())
     return (
       <div className="flex h-full items-center justify-center p-8">
         <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
-          No uncommitted changes in the workspace.
+          {t('No uncommitted changes in the workspace.')}
         </p>
       </div>
     );
@@ -72,9 +74,10 @@ interface TaskRow {
 }
 
 function EmptyPanel({ children }: { children: string }) {
+  const t = useT();
   return (
     <div className="flex h-full items-center justify-center p-8">
-      <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">{children}</p>
+      <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">{t(children)}</p>
     </div>
   );
 }
@@ -84,13 +87,13 @@ function TasksPanel({ tasks }: { tasks: TaskRow[] }) {
   return (
     <div className="h-full overflow-y-auto p-3">
       <div className="flex flex-col gap-0.5">
-        {tasks.map((t) => (
-          <div key={t.title} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
-            <StatusDot status={TASK_DOT[t.status] ?? 'idle'} pulse={t.status === 'running'} />
-            <span className="flex-1 truncate text-[13px]">{t.title}</span>
-            {t.role && <Badge variant="outline">{t.role}</Badge>}
+        {tasks.map((task) => (
+          <div key={task.title} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+            <StatusDot status={TASK_DOT[task.status] ?? 'idle'} pulse={task.status === 'running'} />
+            <span className="flex-1 truncate text-[13px]">{task.title}</span>
+            {task.role && <Badge variant="outline">{task.role}</Badge>}
             <span className="w-16 shrink-0 text-right text-[11px] capitalize text-muted-foreground">
-              {t.status}
+              {task.status}
             </span>
           </div>
         ))}
@@ -100,6 +103,7 @@ function TasksPanel({ tasks }: { tasks: TaskRow[] }) {
 }
 
 function ReportsPanel({ reports }: { reports: CockpitEvent[] }) {
+  const t = useT();
   if (reports.length === 0)
     return <EmptyPanel>No reports yet — the reporter writes summaries here as the run progresses.</EmptyPanel>;
   return (
@@ -114,7 +118,7 @@ function ReportsPanel({ reports }: { reports: CockpitEvent[] }) {
               {r.detail ? (
                 <MarkdownPreview source={r.detail} />
               ) : (
-                <p className="text-[12px] text-muted-foreground">No content.</p>
+                <p className="text-[12px] text-muted-foreground">{t('No content.')}</p>
               )}
             </CardContent>
           </Card>
@@ -153,6 +157,7 @@ function KnowledgePanel({ items }: { items: CockpitEvent[] }) {
 }
 
 export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
+  const t = useT();
   const [tab, setTab] = useState<TabId>('activity');
 
   const tasks = useMemo<TaskRow[]>(() => {
@@ -178,17 +183,17 @@ export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
-        {tabs.map((t) => (
+        {tabs.map((tb) => (
           <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
+            key={tb.id}
+            onClick={() => setTab(tb.id)}
             className={cn(
               'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
-              tab === t.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+              tab === tb.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            {t.label}
-            {t.count > 0 && <span className="text-[10px] tabular-nums text-muted-foreground">{t.count}</span>}
+            {t(tb.label)}
+            {tb.count > 0 && <span className="text-[10px] tabular-nums text-muted-foreground">{tb.count}</span>}
           </button>
         ))}
       </div>

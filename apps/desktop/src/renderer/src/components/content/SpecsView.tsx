@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import type { SpecDoc, SpecPhase, SpecStatus } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
@@ -56,7 +57,9 @@ function canAdvance(doc: SpecDoc): boolean {
 }
 
 export function SpecsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
+  const contentTick = useAppStore((s) => s.contentTick);
   const [specs, setSpecs] = useState<SpecDoc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpecDoc | null>(null);
@@ -70,7 +73,7 @@ export function SpecsView() {
       setSpecs(list);
       setSelectedId((cur) => (cur && list.some((s) => s.id === cur) ? cur : (list[0]?.id ?? null)));
     });
-  }, [activePath]);
+  }, [activePath, contentTick]);
 
   useEffect(() => {
     const spec = specs.find((s) => s.id === selectedId) ?? null;
@@ -108,7 +111,7 @@ export function SpecsView() {
     if (dirty) await save();
     const next = await window.omakase.specs.advance(draft.id);
     if (!next) {
-      toast.error("Add this phase's content before advancing.");
+      toast.error(t("Add this phase's content before advancing."));
       return;
     }
     setDraft({ ...next });
@@ -122,7 +125,7 @@ export function SpecsView() {
       <div className="w-64 shrink-0 overflow-y-auto border-r p-2">
         {specs.length === 0 ? (
           <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            No specs yet.
+            {t('No specs yet.')}
           </p>
         ) : (
           <div className="flex flex-col gap-0.5">
@@ -188,6 +191,7 @@ function SpecDetail({
   onDelete: () => void;
   onAdvance: () => void;
 }) {
+  const t = useT();
   const currentIdx = PHASES.indexOf(draft.phase);
   const ready = canAdvance(draft);
   const advances = draft.history.length;
@@ -214,9 +218,9 @@ function SpecDetail({
           </SelectContent>
         </Select>
         <Button variant={dirty ? 'omk' : 'outline'} size="sm" disabled={!dirty} onClick={onSave}>
-          Save
+          {t('Save')}
         </Button>
-        <Tooltip content="Delete spec">
+        <Tooltip content={t('Delete spec')}>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -239,7 +243,7 @@ function SpecDetail({
               {idx > 0 && (
                 <div className={cn('h-px w-4 shrink-0', idx <= currentIdx ? 'bg-omk/50' : 'bg-border')} />
               )}
-              <Tooltip content={PHASE_META[phase].blurb}>
+              <Tooltip content={t(PHASE_META[phase].blurb)}>
                 <button
                   onClick={() => onViewPhase(phase)}
                   className={cn(
@@ -264,7 +268,7 @@ function SpecDetail({
                   >
                     {completed ? <Check className="size-2.5" /> : idx + 1}
                   </span>
-                  {PHASE_META[phase].label}
+                  {t(PHASE_META[phase].label)}
                 </button>
               </Tooltip>
             </div>
@@ -278,24 +282,24 @@ function SpecDetail({
       {/* Footer: advance / done + history hint */}
       <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5">
         <span className="text-[11px] text-muted-foreground">
-          {advances === 0 ? 'Not advanced yet' : `Advanced ${advances} time${advances === 1 ? '' : 's'}`}
+          {advances === 0 ? t('Not advanced yet') : `Advanced ${advances} time${advances === 1 ? '' : 's'}`}
         </span>
         {draft.phase === 'done' ? (
           <span className="flex items-center gap-1.5 text-[12px] font-medium text-omk">
             <CircleCheck className="size-4" />
-            Spec complete
+            {t('Spec complete')}
           </span>
         ) : (
           <Tooltip
             content={
               ready
-                ? `Advance to ${PHASE_META[PHASES[currentIdx + 1]!].label}`
-                : `Add ${PHASE_META[draft.phase].label.toLowerCase()} content to advance`
+                ? `${t('Advance to')} ${t(PHASE_META[PHASES[currentIdx + 1]!].label)}`
+                : `${t('Add')} ${t(PHASE_META[draft.phase].label).toLowerCase()} ${t('content to advance')}`
             }
           >
             <span>
               <Button variant="omk" size="sm" disabled={!ready} onClick={onAdvance}>
-                Advance
+                {t('Advance')}
                 <ArrowRight />
               </Button>
             </span>
@@ -320,16 +324,17 @@ function PhaseEditor({
   onModeChange: (m: 'edit' | 'preview') => void;
   onUpdate: (patch: Partial<SpecDoc>) => void;
 }) {
+  const t = useT();
   const listField = LIST_FIELD[viewPhase];
 
   if (viewPhase === 'idea') {
     return (
       <PhaseFrame phase={viewPhase}>
-        <label className="mb-1.5 block text-[12px] font-medium text-muted-foreground">Title</label>
+        <label className="mb-1.5 block text-[12px] font-medium text-muted-foreground">{t('Title')}</label>
         <Input
           value={draft.title}
           onChange={(e) => onUpdate({ title: e.target.value })}
-          placeholder="What are we building?"
+          placeholder={t('What are we building?')}
           className="text-[14px]"
         />
       </PhaseFrame>
@@ -351,7 +356,7 @@ function PhaseEditor({
                 )}
               >
                 {m === 'edit' ? <Pencil className="size-3" /> : <Eye className="size-3" />}
-                {m}
+                {t(m)}
               </button>
             ))}
           </div>
@@ -368,7 +373,7 @@ function PhaseEditor({
             {draft.body.trim() ? (
               <MarkdownPreview source={draft.body} />
             ) : (
-              <p className="text-[12px] text-muted-foreground">Nothing to preview yet.</p>
+              <p className="text-[12px] text-muted-foreground">{t('Nothing to preview yet.')}</p>
             )}
           </div>
         )}
@@ -381,9 +386,9 @@ function PhaseEditor({
       <PhaseFrame phase={viewPhase}>
         <div className="rounded-lg border border-dashed p-8 text-center">
           <CircleCheck className="mx-auto mb-2 size-7 text-omk" />
-          <p className="text-[13px] font-medium">This spec is fully drafted.</p>
+          <p className="text-[13px] font-medium">{t('This spec is fully drafted.')}</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            Idea, spec, acceptance criteria, test plan, and tasks are all captured.
+            {t('Idea, spec, acceptance criteria, test plan, and tasks are all captured.')}
           </p>
         </div>
       </PhaseFrame>
@@ -401,11 +406,12 @@ function PhaseEditor({
 }
 
 function PhaseHeader({ phase, children }: { phase: SpecPhase; children?: ReactNode }) {
+  const t = useT();
   return (
     <div className="flex items-center justify-between gap-3 border-b px-4 py-2.5">
       <div>
-        <div className="text-[13px] font-medium capitalize">{PHASE_META[phase].label}</div>
-        <div className="text-[11px] text-muted-foreground">{PHASE_META[phase].blurb}</div>
+        <div className="text-[13px] font-medium capitalize">{t(PHASE_META[phase].label)}</div>
+        <div className="text-[11px] text-muted-foreground">{t(PHASE_META[phase].blurb)}</div>
       </div>
       {children}
     </div>
@@ -432,6 +438,7 @@ function ListEditor({
   items: string[];
   onChange: (next: string[]) => void;
 }) {
+  const t = useT();
   const addLabel = useMemo(() => {
     const labels: Partial<Record<SpecPhase, string>> = {
       acceptance: 'Add criterion',
@@ -451,7 +458,7 @@ function ListEditor({
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {items.length === 0 ? (
           <p className="px-1 py-3 text-[12px] text-muted-foreground">
-            Nothing here yet — add at least one to advance.
+            {t('Nothing here yet — add at least one to advance.')}
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -466,7 +473,7 @@ function ListEditor({
                   placeholder="…"
                   className="flex-1"
                 />
-                <Tooltip content="Remove">
+                <Tooltip content={t('Remove')}>
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -482,7 +489,7 @@ function ListEditor({
         )}
         <Button variant="outline" size="sm" className="mt-3" onClick={add}>
           <Plus />
-          {addLabel}
+          {t(addLabel)}
         </Button>
       </div>
     </div>

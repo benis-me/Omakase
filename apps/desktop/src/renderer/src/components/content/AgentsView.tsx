@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Badge } from '../ui/badge';
 import { StatusDot, type DotStatus } from '../StatusDot';
 import { RUN_DOT } from '../runs/run-status';
@@ -81,6 +82,7 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
 }
 
 export function AgentsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
   const runs = useAppStore((s) => s.runs);
   const currentRunId = useAppStore((s) => s.currentRunId);
@@ -127,12 +129,12 @@ export function AgentsView() {
     <ContentLayout title="Agents">
       <div className="flex w-64 shrink-0 flex-col border-r">
         <div className="px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Runs
+          {t('Runs')}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {runs.length === 0 ? (
             <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-              No runs yet. Agents appear here as a run spawns them.
+              {t('No runs yet. Agents appear here as a run spawns them.')}
             </p>
           ) : (
             <div className="flex flex-col gap-0.5">
@@ -150,7 +152,7 @@ export function AgentsView() {
                     pulse={r.status === 'running'}
                     glow={r.live && r.status === 'running'}
                   />
-                  <span className="flex-1 truncate text-[13px]">{r.summary || 'Run'}</span>
+                  <span className="flex-1 truncate text-[13px]">{r.summary || t('Run')}</span>
                   {r.live && <span className="text-[10px] uppercase tracking-wide text-run">live</span>}
                 </button>
               ))}
@@ -162,7 +164,7 @@ export function AgentsView() {
       {selectedRun ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
-            <span className="truncate text-[13px] font-medium">{selectedRun.summary || 'Run'}</span>
+            <span className="truncate text-[13px] font-medium">{selectedRun.summary || t('Run')}</span>
             <Badge variant={selectedRun.live ? 'run' : 'outline'}>{selectedRun.status}</Badge>
             <span className="ml-auto text-[12px] text-muted-foreground">
               {roster.length} agent{roster.length === 1 ? '' : 's'}
@@ -173,8 +175,9 @@ export function AgentsView() {
             {roster.length === 0 ? (
               <div className="flex h-full items-center justify-center">
                 <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
-                  No sub-agents yet. The orchestrator spawns planner, worker, reviewer and validator
-                  agents as this run progresses.
+                  {t(
+                    'No sub-agents yet. The orchestrator spawns planner, worker, reviewer and validator agents as this run progresses.',
+                  )}
                 </p>
               </div>
             ) : (

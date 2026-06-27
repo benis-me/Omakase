@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { FileCog, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Tooltip } from '../ui/tooltip';
 import { ScriptList } from './ScriptList';
@@ -11,6 +12,7 @@ import { OpenWithMenu } from './OpenWithMenu';
 import { EnvEditor } from './EnvEditor';
 
 export function DevWorkbench() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
   const scanDev = useAppStore((s) => s.scanDev);
   const [envOpen, setEnvOpen] = useState(false);
@@ -22,7 +24,7 @@ export function DevWorkbench() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b px-4">
-        <h2 className="text-[13px] font-medium">Dev</h2>
+        <h2 className="text-[13px] font-medium">{t('Dev')}</h2>
         <GitBadge />
         <div className="ml-auto flex items-center gap-1">
           <Button
@@ -32,10 +34,10 @@ export function DevWorkbench() {
             onClick={() => setEnvOpen(true)}
           >
             <FileCog className="size-3.5" />
-            Env
+            {t('Env')}
           </Button>
           <OpenWithMenu />
-          <Tooltip content="Rescan scripts">
+          <Tooltip content={t('Rescan scripts')}>
             <Button
               variant="ghost"
               size="icon-sm"

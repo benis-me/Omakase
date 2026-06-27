@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Plus } from 'lucide-react';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 
 export function ContentLayout({
@@ -15,16 +16,17 @@ export function ContentLayout({
   actions?: ReactNode;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
-        <h2 className="text-[13px] font-medium">{title}</h2>
+        <h2 className="text-[13px] font-medium">{t(title)}</h2>
         <div className="ml-auto flex items-center gap-1.5">
           {actions}
           {onNew && (
             <Button variant="omk" size="sm" className="gap-1.5" onClick={onNew}>
               <Plus className="size-3.5" />
-              {newLabel}
+              {t(newLabel)}
             </Button>
           )}
         </div>
@@ -35,10 +37,11 @@ export function ContentLayout({
 }
 
 export function EmptyDetail({ message }: { message: string }) {
+  const t = useT();
   return (
     <div className="flex flex-1 items-center justify-center p-8">
       <p className="max-w-xs text-center text-[12px] leading-relaxed text-muted-foreground">
-        {message}
+        {t(message)}
       </p>
     </div>
   );

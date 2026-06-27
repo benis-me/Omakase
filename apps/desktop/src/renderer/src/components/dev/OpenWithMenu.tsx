@@ -1,5 +1,6 @@
 import { ChevronDown, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import {
   DropdownMenu,
@@ -12,6 +13,7 @@ import {
 
 export function OpenWithMenu() {
   const apps = useAppStore((s) => s.apps);
+  const t = useT();
   if (apps.length === 0) return null;
 
   return (
@@ -19,12 +21,12 @@ export function OpenWithMenu() {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground hover:text-foreground">
           <ExternalLink className="size-3.5" />
-          Open with
+          {t('Open with')}
           <ChevronDown className="size-3" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[60vh] min-w-[190px]">
-        <DropdownMenuLabel className="uppercase tracking-wide">Open workspace in</DropdownMenuLabel>
+        <DropdownMenuLabel className="uppercase tracking-wide">{t('Open workspace in')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {apps.map((app) => (
           <DropdownMenuItem key={app.id} onSelect={() => void window.omakase.apps.openWith(app.id)}>

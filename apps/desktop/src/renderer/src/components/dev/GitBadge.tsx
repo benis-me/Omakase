@@ -1,13 +1,15 @@
 import { GitBranch } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Badge } from '../ui/badge';
 import { Tooltip } from '../ui/tooltip';
 
 export function GitBadge() {
   const git = useAppStore((s) => s.gitInfo);
+  const t = useT();
   if (!git || !git.branch) return null;
 
-  const parts = [`${git.changes} change${git.changes === 1 ? '' : 's'}`];
+  const parts = [`${git.changes} ${git.changes === 1 ? t('change') : t('changes')}`];
   if (git.ahead) parts.push(`↑${git.ahead}`);
   if (git.behind) parts.push(`↓${git.behind}`);
 

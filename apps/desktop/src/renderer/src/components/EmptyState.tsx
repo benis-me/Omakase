@@ -1,9 +1,11 @@
 import { FolderOpen, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 
 export function EmptyState() {
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
+  const t = useT();
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center">
@@ -11,15 +13,16 @@ export function EmptyState() {
         <Sparkles className="size-8" />
       </div>
       <div className="space-y-2">
-        <h1 className="text-[19px] font-semibold tracking-tight">Welcome to Omakase</h1>
+        <h1 className="text-[19px] font-semibold tracking-tight">{t('Welcome to Omakase')}</h1>
         <p className="max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-          Hand a spec to autonomous, long-running multi-agent loops — and let them finish the work,
-          while you watch and steer. Open a folder to begin; it becomes a workspace.
+          {t(
+            'Hand a spec to autonomous, long-running multi-agent loops — and let them finish the work, while you watch and steer. Open a folder to begin; it becomes a workspace.',
+          )}
         </p>
       </div>
       <Button variant="omk" size="lg" onClick={() => void browseAndAdd()}>
         <FolderOpen />
-        Open a folder
+        {t('Open a folder')}
       </Button>
     </div>
   );

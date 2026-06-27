@@ -3,6 +3,7 @@ import { Dialog } from 'radix-ui';
 import { CornerDownLeft, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { NAV_SECTIONS } from './nav';
 
 interface Command {
@@ -22,6 +23,7 @@ export function CommandPalette() {
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
   const setNav = useAppStore((s) => s.setNav);
   const setTheme = useAppStore((s) => s.setTheme);
+  const t = useT();
 
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
@@ -37,21 +39,21 @@ export function CommandPalette() {
     const list: Command[] = [];
     for (const w of workspaces) {
       if (w.path !== active?.path) {
-        list.push({ id: `ws:${w.path}`, label: `Switch to ${w.name}`, hint: w.path, run: wrap(() => openWorkspace(w.path)) });
+        list.push({ id: `ws:${w.path}`, label: `${t('Switch to')} ${w.name}`, hint: w.path, run: wrap(() => openWorkspace(w.path)) });
       }
     }
-    list.push({ id: 'open', label: 'Open folder…', run: wrap(browseAndAdd) });
-    list.push({ id: 'settings', label: 'Open settings', run: wrap(() => setSettingsOpen(true)) });
+    list.push({ id: 'open', label: t('Open folder…'), run: wrap(browseAndAdd) });
+    list.push({ id: 'settings', label: t('Open settings'), run: wrap(() => setSettingsOpen(true)) });
     if (active) {
       for (const n of NAV_SECTIONS) {
-        list.push({ id: `nav:${n.id}`, label: `Go to ${n.label}`, hint: n.hint, run: wrap(() => setNav(n.id)) });
+        list.push({ id: `nav:${n.id}`, label: `${t('Go to')} ${t(n.label)}`, hint: t(n.hint), run: wrap(() => setNav(n.id)) });
       }
     }
-    for (const t of ['system', 'light', 'dark'] as const) {
-      list.push({ id: `theme:${t}`, label: `Theme: ${t}`, run: wrap(() => setTheme(t)) });
+    for (const th of ['system', 'light', 'dark'] as const) {
+      list.push({ id: `theme:${th}`, label: `${t('Theme:')} ${th}`, run: wrap(() => setTheme(th)) });
     }
     return list;
-  }, [workspaces, active, openWorkspace, browseAndAdd, setNav, setTheme, setSettingsOpen, setPaletteOpen]);
+  }, [workspaces, active, openWorkspace, browseAndAdd, setNav, setTheme, setSettingsOpen, setPaletteOpen, t]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -94,13 +96,13 @@ export function CommandPalette() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Type a command or search…"
+              placeholder={t('Type a command or search…')}
               className="w-full bg-transparent py-3.5 text-[14px] outline-none placeholder:text-muted-foreground"
             />
           </div>
           <div className="max-h-[340px] overflow-y-auto p-1.5">
             {filtered.length === 0 ? (
-              <p className="px-3 py-8 text-center text-[12px] text-muted-foreground">No matches</p>
+              <p className="px-3 py-8 text-center text-[12px] text-muted-foreground">{t('No matches')}</p>
             ) : (
               filtered.map((c, i) => (
                 <button

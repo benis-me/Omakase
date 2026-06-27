@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,6 +24,7 @@ export function NewWorkspaceDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const createWorkspace = useAppStore((s) => s.createWorkspace);
+  const t = useT();
   const [parent, setParent] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -50,15 +52,16 @@ export function NewWorkspaceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md gap-4">
         <DialogHeader>
-          <DialogTitle>New project workspace</DialogTitle>
+          <DialogTitle>{t('New project workspace')}</DialogTitle>
           <DialogDescription>
-            Creates a new folder with an <span className="font-mono">.omks</span> workspace inside.
+            {t('Creates a new folder with an')} <span className="font-mono">.omks</span>{' '}
+            {t('workspace inside.')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3.5">
           <div className="space-y-1.5">
-            <Label>Location</Label>
+            <Label>{t('Location')}</Label>
             <Button
               variant="outline"
               className="w-full justify-start gap-2 font-normal"
@@ -66,12 +69,12 @@ export function NewWorkspaceDialog({
             >
               <FolderOpen className="text-muted-foreground" />
               <span className={cn('truncate', !parent && 'text-muted-foreground')}>
-                {parent ?? 'Choose a parent folder…'}
+                {parent ?? t('Choose a parent folder…')}
               </span>
             </Button>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ws-name">Project name</Label>
+            <Label htmlFor="ws-name">{t('Project name')}</Label>
             <Input
               id="ws-name"
               autoFocus
@@ -93,11 +96,11 @@ export function NewWorkspaceDialog({
         <DialogFooter>
           <DialogClose asChild>
             <Button variant="ghost" size="sm">
-              Cancel
+              {t('Cancel')}
             </Button>
           </DialogClose>
           <Button variant="omk" size="sm" disabled={!canSubmit} onClick={() => void submit()}>
-            Create workspace
+            {t('Create workspace')}
           </Button>
         </DialogFooter>
       </DialogContent>

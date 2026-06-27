@@ -3,6 +3,7 @@ import { ChevronDown, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDoc, WorkflowTemplateDto } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { CodeEditor } from '../ui/code-editor';
 import { Tooltip } from '../ui/tooltip';
@@ -45,7 +46,9 @@ function ApiCheatsheet() {
 }
 
 export function WorkflowsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
+  const contentTick = useAppStore((s) => s.contentTick);
   const startWorkflow = useAppStore((s) => s.startWorkflow);
   const [workflows, setWorkflows] = useState<WorkflowDoc[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplateDto[]>([]);
@@ -59,7 +62,7 @@ export function WorkflowsView() {
       setSelectedId((c) => (c && list.some((w) => w.id === c) ? c : (list[0]?.id ?? null)));
     });
     void window.omakase.workflows.templates().then(setTemplates);
-  }, [activePath]);
+  }, [activePath, contentTick]);
 
   useEffect(() => {
     setSource(workflows.find((w) => w.id === selectedId)?.source ?? '');
@@ -92,21 +95,21 @@ export function WorkflowsView() {
       <DropdownMenuTrigger asChild>
         <Button variant="omk" size="sm" className="gap-1.5">
           <Plus className="size-3.5" />
-          New
+          {t('New')}
           <ChevronDown className="size-3 opacity-80" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="uppercase tracking-wide">From a template</DropdownMenuLabel>
+        <DropdownMenuLabel className="uppercase tracking-wide">{t('From a template')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {templates.map((t) => (
+        {templates.map((tpl) => (
           <DropdownMenuItem
-            key={t.id}
-            onSelect={() => void createFrom(t)}
+            key={tpl.id}
+            onSelect={() => void createFrom(tpl)}
             className="flex-col items-start gap-0.5 py-2"
           >
-            <span className="text-[13px] font-medium text-foreground">{t.name}</span>
-            <span className="text-[11px] leading-snug text-muted-foreground">{t.description}</span>
+            <span className="text-[13px] font-medium text-foreground">{tpl.name}</span>
+            <span className="text-[11px] leading-snug text-muted-foreground">{tpl.description}</span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -118,7 +121,7 @@ export function WorkflowsView() {
       <div className="w-60 shrink-0 overflow-y-auto border-r p-2">
         {workflows.length === 0 ? (
           <p className="px-2 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            No workflows yet. Start from a template with “New”.
+            {t('No workflows yet. Start from a template with “New”.')}
           </p>
         ) : (
           <div className="flex flex-col gap-0.5">
@@ -141,7 +144,7 @@ export function WorkflowsView() {
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-11 items-center gap-2 border-b px-4">
             <span className="font-mono text-[12px] text-muted-foreground">workflows/{selected.id}.ts</span>
-            <Tooltip content="Run this workflow (requires Bun)">
+            <Tooltip content={t('Run this workflow (requires Bun)')}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -149,13 +152,13 @@ export function WorkflowsView() {
                 onClick={() => void startWorkflow(selected.id)}
               >
                 <Play className="size-3.5" />
-                Run
+                {t('Run')}
               </Button>
             </Tooltip>
             <Button variant={dirty ? 'omk' : 'outline'} size="sm" disabled={!dirty} onClick={() => void save()}>
-              Save
+              {t('Save')}
             </Button>
-            <Tooltip content="Delete workflow">
+            <Tooltip content={t('Delete workflow')}>
               <Button
                 variant="ghost"
                 size="icon-sm"

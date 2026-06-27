@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import type { CockpitEvent, CockpitEventKind, CockpitLevel } from '@shared/types';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n';
 
 const ICON: Record<CockpitEventKind, LucideIcon> = {
   status: Activity,
@@ -68,6 +69,7 @@ function FeedRow({ event }: { event: CockpitEvent }) {
 }
 
 export function CockpitFeed({ feed }: { feed: CockpitEvent[] }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   // 'agent' events feed the live roster (Agents view), not the activity log.
   const items = feed.filter((e) => e.kind !== 'agent');
@@ -79,7 +81,7 @@ export function CockpitFeed({ feed }: { feed: CockpitEvent[] }) {
   if (items.length === 0) {
     return (
       <div className="grid flex-1 place-items-center text-[12px] text-muted-foreground">
-        Waiting for the first event…
+        {t('Waiting for the first event…')}
       </div>
     );
   }

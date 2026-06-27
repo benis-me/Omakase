@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pause, Play, Send, Square, Trash2, X } from 'lucide-react';
 import type { AutonomyLevel, CockpitEvent, RunMode, SpecDoc } from '@shared/types';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,6 +22,7 @@ import { CockpitTabs } from './CockpitTabs';
 import { LIVE_STATUSES, RUN_DOT } from './run-status';
 
 function NewRunComposer() {
+  const t = useT();
   const startRun = useAppStore((s) => s.startRun);
   const settings = useAppStore((s) => s.settings);
   const [prompt, setPrompt] = useState('');
@@ -55,21 +57,21 @@ function NewRunComposer() {
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center gap-5 p-8">
       <div className="space-y-1.5">
-        <h1 className="text-[19px] font-semibold tracking-tight">Start a run</h1>
+        <h1 className="text-[19px] font-semibold tracking-tight">{t('Start a run')}</h1>
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          Hand a spec or a task to the loop. It plans, executes, verifies, and reports — you steer.
+          {t('Hand a spec or a task to the loop. It plans, executes, verifies, and reports — you steer.')}
         </p>
       </div>
 
       {specs.length > 0 && (
         <div className="space-y-1.5">
-          <Label>From a spec</Label>
+          <Label>{t('From a spec')}</Label>
           <Select value={specId} onValueChange={setSpecId}>
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="None — write a task below" />
+              <SelectValue placeholder={t('None — write a task below')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">None — write a task below</SelectItem>
+              <SelectItem value="none">{t('None — write a task below')}</SelectItem>
               {specs.map((s) => (
                 <SelectItem key={s.id} value={s.id}>
                   {s.title}
@@ -83,7 +85,7 @@ function NewRunComposer() {
       <Textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        placeholder={usingSpec ? 'Optional extra instructions…' : 'Describe the task…'}
+        placeholder={usingSpec ? t('Optional extra instructions…') : t('Describe the task…')}
         rows={5}
         className="resize-none font-mono"
       />
@@ -94,10 +96,10 @@ function NewRunComposer() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="auto">CLI: auto</SelectItem>
+            <SelectItem value="auto">{t('CLI:')} auto</SelectItem>
             {clis.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                CLI: {c.name}
+                {t('CLI:')} {c.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -118,7 +120,7 @@ function NewRunComposer() {
           <SelectContent>
             {(['off', 'low', 'medium', 'high'] as AutonomyLevel[]).map((a) => (
               <SelectItem key={a} value={a} className="capitalize">
-                autonomy: {a}
+                {t('autonomy:')} {a}
               </SelectItem>
             ))}
           </SelectContent>
@@ -128,13 +130,13 @@ function NewRunComposer() {
           min={0}
           value={maxTokens}
           onChange={(e) => setMaxTokens(e.target.value)}
-          placeholder="∞ tokens"
+          placeholder={t('∞ tokens')}
           className="h-7 w-28 text-[12px]"
-          title="Token budget — the run stops once spent"
+          title={t('Token budget — the run stops once spent')}
         />
         <Button variant="omk" className="ml-auto" disabled={!canRun} onClick={run}>
           <Play />
-          Run
+          {t('Run')}
         </Button>
       </div>
     </div>
@@ -142,6 +144,7 @@ function NewRunComposer() {
 }
 
 function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (answer: string) => void }) {
+  const t = useT();
   const [text, setText] = useState('');
   useEffect(() => setText(''), [gate?.gateId]);
 
@@ -154,7 +157,7 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
         className="max-w-md gap-4"
       >
         <DialogHeader>
-          <DialogTitle>The run needs your decision</DialogTitle>
+          <DialogTitle>{t('The run needs your decision')}</DialogTitle>
           <DialogDescription className="whitespace-pre-wrap text-foreground">
             {gate?.detail}
           </DialogDescription>
@@ -162,7 +165,7 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Optional guidance…"
+          placeholder={t('Optional guidance…')}
           rows={3}
           className="resize-none"
         />
@@ -172,14 +175,14 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
             size="sm"
             onClick={() => onAnswer(text.trim() || 'Hold — keep iterating, do not proceed yet.')}
           >
-            Hold
+            {t('Hold')}
           </Button>
           <Button
             variant="omk"
             size="sm"
             onClick={() => onAnswer(text.trim() ? `Proceed. ${text.trim()}` : 'Proceed.')}
           >
-            Approve &amp; proceed
+            {t('Approve & proceed')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -188,6 +191,7 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
 }
 
 function LiveCockpit({ runId }: { runId: string }) {
+  const t = useT();
   const feed = useAppStore((s) => s.feed);
   const runs = useAppStore((s) => s.runs);
   const controlRun = useAppStore((s) => s.controlRun);
@@ -226,7 +230,7 @@ function LiveCockpit({ runId }: { runId: string }) {
         {summary && (summary.spentTokens ?? 0) > 0 && (
           <span className="font-mono text-[11px] text-muted-foreground">{summary.spentTokens} tok</span>
         )}
-        <Tooltip content="Delete run">
+        <Tooltip content={t('Delete run')}>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -236,7 +240,7 @@ function LiveCockpit({ runId }: { runId: string }) {
             <Trash2 />
           </Button>
         </Tooltip>
-        <Tooltip content="Close">
+        <Tooltip content={t('Close')}>
           <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={closeRun}>
             <X />
           </Button>
@@ -254,29 +258,29 @@ function LiveCockpit({ runId }: { runId: string }) {
               if (e.key === 'Enter') sendSteer();
             }}
             disabled={!live}
-            placeholder={live ? 'Queue a steering message…' : 'This run has ended.'}
+            placeholder={live ? t('Queue a steering message…') : t('This run has ended.')}
           />
-          <Tooltip content="Queue message">
+          <Tooltip content={t('Queue message')}>
             <Button variant="ghost" size="icon" disabled={!live || !steer.trim()} onClick={sendSteer}>
               <Send />
             </Button>
           </Tooltip>
           {status === 'running' && (
-            <Tooltip content="Pause">
+            <Tooltip content={t('Pause')}>
               <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'pause' })}>
                 <Pause />
               </Button>
             </Tooltip>
           )}
           {status === 'paused' && (
-            <Tooltip content="Resume">
+            <Tooltip content={t('Resume')}>
               <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'resume' })}>
                 <Play />
               </Button>
             </Tooltip>
           )}
           {live && (
-            <Tooltip content="Stop">
+            <Tooltip content={t('Stop')}>
               <Button
                 variant="ghost"
                 size="icon"

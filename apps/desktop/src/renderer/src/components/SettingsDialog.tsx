@@ -103,15 +103,16 @@ function GeneralPanel() {
 function RunDefaultsPanel() {
   const settings = useAppStore((s) => s.settings);
   const update = useAppStore((s) => s.updateSettings);
+  const t = useT();
   if (!settings) return null;
   return (
     <div>
-      <SectionTitle>Run defaults</SectionTitle>
+      <SectionTitle>{t('Run defaults')}</SectionTitle>
       <p className="mb-2 text-[12px] text-muted-foreground">
-        Applied to new runs (overridable per run when you start one).
+        {t('Applied to new runs (overridable per run when you start one).')}
       </p>
       <div className="divide-y divide-border">
-        <Row label="Default autonomy" hint="How far a run proceeds before it pauses to ask">
+        <Row label={t('Default autonomy')} hint={t('How far a run proceeds before it pauses to ask')}>
           <Select
             value={settings.defaultAutonomy}
             onValueChange={(v) => void update({ defaultAutonomy: v as AutonomyLevel })}
@@ -128,7 +129,7 @@ function RunDefaultsPanel() {
             </SelectContent>
           </Select>
         </Row>
-        <Row label="Default work mode" hint="Agent + model selection strategy">
+        <Row label={t('Default work mode')} hint={t('Agent + model selection strategy')}>
           <Select
             value={settings.defaultMode}
             onValueChange={(v) => void update({ defaultMode: v as WorkModeName })}
@@ -159,27 +160,28 @@ function AgentsPanel({
   scanning: boolean;
   onRescan: () => void;
 }) {
+  const t = useT();
   return (
     <div>
       <SectionTitle
         action={
           <Button variant="outline" size="sm" className="gap-1.5" disabled={scanning} onClick={onRescan}>
             <RefreshCw className={cn('size-3.5', scanning && 'animate-spin')} />
-            {scanning ? 'Scanning…' : 'Rescan'}
+            {scanning ? t('Scanning…') : t('Rescan')}
           </Button>
         }
       >
-        Agent CLIs
+        {t('Agent CLIs')}
       </SectionTitle>
       <p className="mb-3 text-[12px] leading-relaxed text-muted-foreground">
-        Detected on your <span className="font-mono">PATH</span> and common toolchain dirs. Runs spawn their
-        sub-agents through these; pick which to use when you start a run.
+        {t('Detected on your')} <span className="font-mono">PATH</span>{' '}
+        {t('and common toolchain dirs. Runs spawn their sub-agents through these; pick which to use when you start a run.')}
       </p>
 
       {detected.length === 0 ? (
         <div className="rounded-lg border border-dashed p-6 text-center">
           <p className="text-[12px] leading-relaxed text-muted-foreground">
-            {scanning ? 'Scanning…' : 'No agent CLIs found. Install one and Rescan.'}
+            {scanning ? t('Scanning…') : t('No agent CLIs found. Install one and Rescan.')}
           </p>
         </div>
       ) : (
@@ -205,7 +207,7 @@ function AgentsPanel({
       )}
 
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-        Supported: {SUPPORTED.join(' · ')}. Any installed on your PATH is detected automatically.
+        {t('Supported:')} {SUPPORTED.join(' · ')}. {t('Any installed on your PATH is detected automatically.')}
       </p>
     </div>
   );
@@ -214,6 +216,7 @@ function AgentsPanel({
 export function SettingsDialog() {
   const open = useAppStore((s) => s.settingsOpen);
   const setOpen = useAppStore((s) => s.setSettingsOpen);
+  const t = useT();
   const [section, setSection] = useState<SectionId>('general');
   const [detected, setDetected] = useState<DetectedAgentDto[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -235,8 +238,8 @@ export function SettingsDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex h-[520px] max-w-2xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-5 py-3.5">
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription className="sr-only">App and run settings</DialogDescription>
+          <DialogTitle>{t('Settings')}</DialogTitle>
+          <DialogDescription className="sr-only">{t('App and run settings')}</DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1">
           <nav className="w-44 shrink-0 space-y-0.5 border-r p-2">
@@ -255,7 +258,7 @@ export function SettingsDialog() {
                   )}
                 >
                   <Icon className={cn('size-4 shrink-0', active && 'text-omk')} />
-                  {s.label}
+                  {t(s.label)}
                 </button>
               );
             })}

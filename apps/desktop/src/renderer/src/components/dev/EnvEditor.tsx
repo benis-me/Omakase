@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileCog, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
@@ -12,6 +13,7 @@ interface EnvFileRef {
 }
 
 export function EnvEditor({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const t = useT();
   const projects = useAppStore((s) => s.projects);
   const files = useMemo<EnvFileRef[]>(
     () =>
@@ -53,7 +55,7 @@ export function EnvEditor({ open, onOpenChange }: { open: boolean; onOpenChange:
       <DialogContent className="flex h-[480px] w-[700px] max-w-none flex-col gap-0 overflow-hidden p-0">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b pl-4 pr-12">
           <FileCog className="size-4 text-muted-foreground" />
-          <DialogTitle className="text-[13px] font-medium">Environment files</DialogTitle>
+          <DialogTitle className="text-[13px] font-medium">{t('Environment files')}</DialogTitle>
           <Button
             variant={dirty ? 'omk' : 'outline'}
             size="sm"
@@ -62,12 +64,12 @@ export function EnvEditor({ open, onOpenChange }: { open: boolean; onOpenChange:
             onClick={() => void save()}
           >
             <Save className="size-3.5" />
-            Save
+            {t('Save')}
           </Button>
         </div>
         {files.length === 0 ? (
           <div className="grid flex-1 place-items-center p-8 text-center text-[12px] text-muted-foreground">
-            No .env files in this workspace.
+            {t('No .env files in this workspace.')}
           </div>
         ) : (
           <div className="flex min-h-0 flex-1">

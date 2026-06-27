@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronsUpDown, FolderGit2, FolderOpen, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +20,7 @@ function WorkspacePicker({ onNew }: { onNew: () => void }) {
   const workspaces = useAppStore((s) => s.workspaces);
   const openWorkspace = useAppStore((s) => s.openWorkspace);
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
+  const t = useT();
 
   return (
     <div className="no-drag p-2">
@@ -29,28 +31,28 @@ function WorkspacePicker({ onNew }: { onNew: () => void }) {
               <FolderGit2 className="size-3.5" />
             </div>
             <span className="flex-1 truncate text-[13px] font-medium">
-              {active ? active.manifest.name : 'Select workspace'}
+              {active ? active.manifest.name : t('Select workspace')}
             </span>
             <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
-          {workspaces.length > 0 && <DropdownMenuLabel>Workspaces</DropdownMenuLabel>}
+          {workspaces.length > 0 && <DropdownMenuLabel>{t('Workspaces')}</DropdownMenuLabel>}
           {workspaces.map((w) => (
             <DropdownMenuItem key={w.path} onSelect={() => void openWorkspace(w.path)}>
               <StatusDot status={active?.path === w.path ? 'omk' : 'idle'} />
               <span className="flex-1 truncate">{w.name}</span>
-              {w.missing && <span className="text-[11px] text-destructive">missing</span>}
+              {w.missing && <span className="text-[11px] text-destructive">{t('missing')}</span>}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => void browseAndAdd()}>
             <FolderOpen />
-            Open folder…
+            {t('Open folder…')}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onNew}>
             <Plus />
-            New project…
+            {t('New project…')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -61,6 +63,7 @@ function WorkspacePicker({ onNew }: { onNew: () => void }) {
 function NavList() {
   const nav = useAppStore((s) => s.nav);
   const setNav = useAppStore((s) => s.setNav);
+  const t = useT();
 
   return (
     <nav className="space-y-0.5 px-2">
@@ -71,7 +74,7 @@ function NavList() {
           <button
             key={item.id}
             onClick={() => setNav(item.id)}
-            title={item.hint}
+            title={t(item.hint)}
             className={cn(
               'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
               isActive
@@ -80,7 +83,7 @@ function NavList() {
             )}
           >
             <Icon className={cn('size-4 shrink-0', isActive && 'text-omk')} />
-            {item.label}
+            {t(item.label)}
           </button>
         );
       })}
@@ -91,6 +94,7 @@ function NavList() {
 export function Sidebar() {
   const active = useAppStore((s) => s.active);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const t = useT();
 
   return (
     <aside className="flex h-full flex-col bg-sidebar/50">
@@ -101,7 +105,7 @@ export function Sidebar() {
           <NavList />
         ) : (
           <p className="px-4 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            No workspace open. Pick one above to begin.
+            {t('No workspace open. Pick one above to begin.')}
           </p>
         )}
       </div>

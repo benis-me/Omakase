@@ -3,6 +3,7 @@ import { Clock, Eye, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import type { SaveTriggerInput, SpecDoc, TriggerDto } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
@@ -48,7 +49,9 @@ function ago(at?: number): string {
 }
 
 export function AutomationsView() {
+  const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
+  const contentTick = useAppStore((s) => s.contentTick);
   const [triggers, setTriggers] = useState<TriggerDto[]>([]);
   const [specs, setSpecs] = useState<SpecDoc[]>([]);
   const [clis, setClis] = useState<{ id: string; name: string }[]>([]);
@@ -64,7 +67,7 @@ export function AutomationsView() {
     void window.omakase.agents
       .detect()
       .then((l) => setClis(l.filter((d) => d.available).map((d) => ({ id: d.id, name: d.name }))));
-  }, [activePath, reload]);
+  }, [activePath, reload, contentTick]);
 
   const toggle = async (t: TriggerDto): Promise<void> => {
     await window.omakase.triggers.save({ ...toInput(t), enabled: !t.enabled });
@@ -85,7 +88,7 @@ export function AutomationsView() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
-        <h2 className="text-[13px] font-medium">Automations</h2>
+        <h2 className="text-[13px] font-medium">{t('Automations')}</h2>
         <Button
           variant="omk"
           size="sm"
@@ -95,7 +98,7 @@ export function AutomationsView() {
           }
         >
           <Plus className="size-3.5" />
-          New automation
+          {t('New automation')}
         </Button>
       </header>
 
@@ -106,54 +109,55 @@ export function AutomationsView() {
               <Zap className="size-7" />
             </div>
             <p className="max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-              No automations yet. Create a trigger to start a run on a schedule or whenever files
-              change — the basis for unattended, self-iterating loops.
+              {t(
+                'No automations yet. Create a trigger to start a run on a schedule or whenever files change — the basis for unattended, self-iterating loops.',
+              )}
             </p>
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-2">
-            {triggers.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 rounded-lg border bg-card px-3.5 py-3">
-                <StatusDot status={t.enabled ? 'run' : 'idle'} pulse={t.enabled} />
+            {triggers.map((tr) => (
+              <div key={tr.id} className="flex items-center gap-3 rounded-lg border bg-card px-3.5 py-3">
+                <StatusDot status={tr.enabled ? 'run' : 'idle'} pulse={tr.enabled} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-[13px] font-medium">{t.name || 'Automation'}</span>
+                    <span className="truncate text-[13px] font-medium">{tr.name || t('Automation')}</span>
                     <Badge variant="outline" className="gap-1 normal-case">
-                      {t.kind === 'watch' ? <Eye className="size-3" /> : <Clock className="size-3" />}
-                      {t.kind === 'interval'
-                        ? `every ${t.intervalMinutes ?? 30}m`
-                        : t.kind === 'daily'
-                          ? `daily ${t.dailyTime ?? '02:00'}`
-                          : 'on changes'}
+                      {tr.kind === 'watch' ? <Eye className="size-3" /> : <Clock className="size-3" />}
+                      {tr.kind === 'interval'
+                        ? `${t('every')} ${tr.intervalMinutes ?? 30}m`
+                        : tr.kind === 'daily'
+                          ? `${t('daily')} ${tr.dailyTime ?? '02:00'}`
+                          : t('on changes')}
                     </Badge>
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {t.specId ? `spec: ${specTitle(t.specId)}` : t.prompt ? `task: ${t.prompt}` : 'no source'} ·{' '}
-                    {t.mode} · autonomy {t.autonomy}
-                    {t.agentId ? ` · ${t.agentId}` : ''} · fired {ago(t.lastFiredAt)}
+                    {tr.specId ? `${t('spec:')} ${specTitle(tr.specId)}` : tr.prompt ? `${t('task:')} ${tr.prompt}` : t('no source')} ·{' '}
+                    {tr.mode} · {t('autonomy')} {tr.autonomy}
+                    {tr.agentId ? ` · ${tr.agentId}` : ''} · {t('fired')} {ago(tr.lastFiredAt)}
                   </div>
                 </div>
-                <Tooltip content={t.enabled ? 'Enabled' : 'Disabled'}>
+                <Tooltip content={tr.enabled ? t('Enabled') : t('Disabled')}>
                   <span className="inline-flex">
-                    <Switch checked={t.enabled} onCheckedChange={() => void toggle(t)} />
+                    <Switch checked={tr.enabled} onCheckedChange={() => void toggle(tr)} />
                   </span>
                 </Tooltip>
-                <Tooltip content="Edit">
+                <Tooltip content={t('Edit')}>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     className="text-muted-foreground hover:text-foreground"
-                    onClick={() => setEditing(toInput(t))}
+                    onClick={() => setEditing(toInput(tr))}
                   >
                     <Pencil />
                   </Button>
                 </Tooltip>
-                <Tooltip content="Delete">
+                <Tooltip content={t('Delete')}>
                   <Button
                     variant="ghost"
                     size="icon-sm"
                     className="text-muted-foreground hover:text-destructive"
-                    onClick={() => void remove(t.id)}
+                    onClick={() => void remove(tr.id)}
                   >
                     <Trash2 />
                   </Button>
@@ -188,6 +192,7 @@ function TriggerDialog({
   onCancel: () => void;
   onSave: (v: SaveTriggerInput) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState<SaveTriggerInput>(value ?? { name: '', kind: 'interval' });
   useEffect(() => {
     if (value) setDraft(value);
@@ -202,26 +207,26 @@ function TriggerDialog({
     <Dialog open={value !== null} onOpenChange={(o) => !o && onCancel()}>
       <DialogContent className="max-w-lg gap-4">
         <DialogHeader>
-          <DialogTitle>{draft.id ? 'Edit automation' : 'New automation'}</DialogTitle>
+          <DialogTitle>{draft.id ? t('Edit automation') : t('New automation')}</DialogTitle>
           <DialogDescription>
-            A trigger starts a run automatically — on a schedule or when files change.
+            {t('A trigger starts a run automatically — on a schedule or when files change.')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3.5">
           <div className="space-y-1.5">
-            <Label htmlFor="trig-name">Name</Label>
+            <Label htmlFor="trig-name">{t('Name')}</Label>
             <Input
               id="trig-name"
               autoFocus
               value={draft.name}
               onChange={(e) => set({ name: e.target.value })}
-              placeholder="Nightly spec run"
+              placeholder={t('Nightly spec run')}
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label>Source</Label>
+            <Label>{t('Source')}</Label>
             <div className="flex gap-2">
               <Select
                 value={source}
@@ -233,14 +238,14 @@ function TriggerDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="spec">From a spec</SelectItem>
-                  <SelectItem value="prompt">A task</SelectItem>
+                  <SelectItem value="spec">{t('From a spec')}</SelectItem>
+                  <SelectItem value="prompt">{t('A task')}</SelectItem>
                 </SelectContent>
               </Select>
               {source === 'spec' ? (
                 <Select value={draft.specId ?? ''} onValueChange={(v) => set({ specId: v })}>
                   <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Choose a spec…" />
+                    <SelectValue placeholder={t('Choose a spec…')} />
                   </SelectTrigger>
                   <SelectContent>
                     {specs.map((s) => (
@@ -255,7 +260,7 @@ function TriggerDialog({
                   className="flex-1"
                   value={draft.prompt ?? ''}
                   onChange={(e) => set({ prompt: e.target.value })}
-                  placeholder="Describe the task…"
+                  placeholder={t('Describe the task…')}
                 />
               )}
             </div>
@@ -263,21 +268,21 @@ function TriggerDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Trigger</Label>
+              <Label>{t('Trigger')}</Label>
               <Select value={draft.kind} onValueChange={(v) => set({ kind: v as SaveTriggerInput['kind'] })}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="interval">Every N minutes</SelectItem>
-                  <SelectItem value="daily">Daily at a time</SelectItem>
-                  <SelectItem value="watch">On file changes</SelectItem>
+                  <SelectItem value="interval">{t('Every N minutes')}</SelectItem>
+                  <SelectItem value="daily">{t('Daily at a time')}</SelectItem>
+                  <SelectItem value="watch">{t('On file changes')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {draft.kind === 'interval' ? (
               <div className="space-y-1.5">
-                <Label htmlFor="trig-interval">Every (minutes)</Label>
+                <Label htmlFor="trig-interval">{t('Every (minutes)')}</Label>
                 <Input
                   id="trig-interval"
                   type="number"
@@ -288,7 +293,7 @@ function TriggerDialog({
               </div>
             ) : draft.kind === 'daily' ? (
               <div className="space-y-1.5">
-                <Label htmlFor="trig-time">At (local time)</Label>
+                <Label htmlFor="trig-time">{t('At (local time)')}</Label>
                 <Input
                   id="trig-time"
                   type="time"
@@ -298,7 +303,7 @@ function TriggerDialog({
               </div>
             ) : (
               <div className="space-y-1.5">
-                <Label htmlFor="trig-debounce">Debounce (ms)</Label>
+                <Label htmlFor="trig-debounce">{t('Debounce (ms)')}</Label>
                 <Input
                   id="trig-debounce"
                   type="number"
@@ -312,7 +317,7 @@ function TriggerDialog({
 
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
-              <Label>Mode</Label>
+              <Label>{t('Mode')}</Label>
               <Select value={draft.mode ?? 'normal'} onValueChange={(v) => set({ mode: v as 'normal' | 'max-power' })}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -324,7 +329,7 @@ function TriggerDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Autonomy</Label>
+              <Label>{t('Autonomy')}</Label>
               <Select
                 value={draft.autonomy ?? 'medium'}
                 onValueChange={(v) => set({ autonomy: v as SaveTriggerInput['autonomy'] })}
@@ -342,7 +347,7 @@ function TriggerDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Agent CLI</Label>
+              <Label>{t('Agent CLI')}</Label>
               <Select value={draft.agentId ?? 'auto'} onValueChange={(v) => set({ agentId: v === 'auto' ? undefined : v })}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -360,29 +365,29 @@ function TriggerDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="trig-budget">Token budget per run (optional)</Label>
+            <Label htmlFor="trig-budget">{t('Token budget per run (optional)')}</Label>
             <Input
               id="trig-budget"
               type="number"
               min={0}
               value={draft.maxTokens ?? ''}
               onChange={(e) => set({ maxTokens: Number(e.target.value) || undefined })}
-              placeholder="∞ — no cap"
+              placeholder={t('∞ — no cap')}
             />
           </div>
 
           <label className="flex items-center gap-2.5 pt-1">
             <Switch checked={draft.enabled ?? false} onCheckedChange={(v) => set({ enabled: v })} />
-            <span className="text-[13px]">Enabled — arm this trigger now</span>
+            <span className="text-[13px]">{t('Enabled — arm this trigger now')}</span>
           </label>
         </div>
 
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={onCancel}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button variant="omk" size="sm" disabled={!canSave} onClick={() => onSave(draft)}>
-            Save automation
+            {t('Save automation')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2,6 +2,7 @@ import { ExternalLink, Play, RotateCw, Square } from 'lucide-react';
 import type { ScriptStatus } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Tooltip } from '../ui/tooltip';
@@ -16,6 +17,7 @@ const DOT: Record<ScriptStatus, DotStatus> = {
 };
 
 export function ScriptList() {
+  const t = useT();
   const projects = useAppStore((s) => s.projects);
   const sessions = useAppStore((s) => s.sessions);
   const selected = useAppStore((s) => s.selectedTerminal);
@@ -27,7 +29,7 @@ export function ScriptList() {
   if (projects.length === 0) {
     return (
       <div className="grid h-full place-items-center p-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-        No runnable scripts found in this workspace.
+        {t('No runnable scripts found in this workspace.')}
       </div>
     );
   }
@@ -77,7 +79,7 @@ export function ScriptList() {
                 )}
                 {running ? (
                   <>
-                    <Tooltip content="Restart">
+                    <Tooltip content={t('Restart')}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -90,7 +92,7 @@ export function ScriptList() {
                         <RotateCw />
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Stop">
+                    <Tooltip content={t('Stop')}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -105,7 +107,7 @@ export function ScriptList() {
                     </Tooltip>
                   </>
                 ) : (
-                  <Tooltip content="Start">
+                  <Tooltip content={t('Start')}>
                     <Button
                       variant="ghost"
                       size="icon-sm"
