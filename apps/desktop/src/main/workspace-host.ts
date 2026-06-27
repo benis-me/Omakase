@@ -7,6 +7,7 @@
  */
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { detectStack } from './detect-stack.js';
 import {
   hasLegacyOmakase,
   importLegacyOmakase,
@@ -38,15 +39,19 @@ export class WorkspaceHost {
   }
 
   listWorkspaces(): WorkspaceInfo[] {
-    return this.registry.listWorkspaces().map((w) => ({
-      path: w.path,
-      id: w.id,
-      name: w.name,
-      pinned: w.pinned,
-      sortOrder: w.sortOrder,
-      lastOpened: w.lastOpened,
-      missing: w.missing || !existsSync(w.path),
-    }));
+    return this.registry.listWorkspaces().map((w) => {
+      const missing = w.missing || !existsSync(w.path);
+      return {
+        path: w.path,
+        id: w.id,
+        name: w.name,
+        pinned: w.pinned,
+        sortOrder: w.sortOrder,
+        lastOpened: w.lastOpened,
+        missing,
+        ...(missing ? {} : { stack: detectStack(w.path) }),
+      };
+    });
   }
 
   getActiveDto(): ActiveWorkspace | null {

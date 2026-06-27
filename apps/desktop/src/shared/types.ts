@@ -35,6 +35,8 @@ export interface WorkspaceInfo {
   sortOrder: number;
   lastOpened: number;
   missing: boolean;
+  /** Detected primary tech stack (e.g. 'Next.js', 'Rust') → sidebar brand icon. */
+  stack?: string;
 }
 
 export interface WorkspaceManifestDto {

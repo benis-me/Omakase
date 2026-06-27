@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   Asterisk,
   Command,
-  FolderGit2,
   FolderOpen,
   MoreHorizontal,
   Pin,
@@ -27,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { ThemeToggle } from './ThemeToggle';
+import { WorkspaceStackIcon } from './WorkspaceStackIcon';
 import { NewWorkspaceDialog } from './NewWorkspaceDialog';
 
 /** Pinned workspaces float to the top (stable within each group). */
@@ -166,8 +166,9 @@ export function Sidebar() {
                       'grid size-6 shrink-0 place-items-center rounded',
                       isActive ? 'bg-omk/15 text-omk' : 'bg-muted text-muted-foreground',
                     )}
+                    title={w.stack}
                   >
-                    <FolderGit2 className="size-3.5" />
+                    <WorkspaceStackIcon stack={w.stack} className="size-3.5" />
                   </div>
                   <span className="flex-1 truncate">{w.name}</span>
                   {w.pinned && <Pin className="size-3 shrink-0 text-muted-foreground/60" />}
