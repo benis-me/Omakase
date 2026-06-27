@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { nextDailyDelayMs, shouldFire, TRIGGER_COOLDOWN_MS } from './run-scheduler.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ensureWorkspace, saveTrigger } from '@omakase/storage';
+import { nextDailyDelayMs, RunScheduler, shouldFire, TRIGGER_COOLDOWN_MS } from './run-scheduler.js';
+import type { RunHost } from './run-host.js';
+import type { WorkspaceHost } from './workspace-host.js';
 
 const liveSet = (ids: string[]) => (id: string): boolean => ids.includes(id);
 
@@ -47,5 +53,52 @@ describe('nextDailyDelayMs', () => {
     const delay = nextDailyDelayMs(now, '08:00'); // already passed
     expect(new Date(now + delay).getHours()).toBe(8);
     expect(delay).toBeGreaterThan(22 * 3_600_000); // ~tomorrow
+  });
+});
+
+describe('RunScheduler integration', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('arms an enabled interval trigger and starts a run on fire', () => {
+    const root = mkdtempSync(join(tmpdir(), 'omk-sched-'));
+    ensureWorkspace(root, { now: 1 });
+    saveTrigger(root, {
+      name: 'Patrol',
+      kind: 'interval',
+      prompt: 'check things',
+      enabled: true,
+      intervalMinutes: 1,
+    });
+
+    const startRun = vi.fn((_input: unknown) => 'run-1');
+    const host = { activeWorkspace: { root } } as unknown as WorkspaceHost;
+    const runs = { startRun, listRuns: () => [] } as unknown as RunHost;
+    const scheduler = new RunScheduler(host, runs);
+
+    scheduler.reconfigure();
+    expect(startRun).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(60_000);
+    expect(startRun).toHaveBeenCalledTimes(1);
+    expect(startRun.mock.calls[0]?.[0]).toMatchObject({ prompt: 'check things', triggeredBy: 'Patrol' });
+
+    scheduler.shutdown();
+  });
+
+  it('does not arm a disabled trigger', () => {
+    const root = mkdtempSync(join(tmpdir(), 'omk-sched-'));
+    ensureWorkspace(root, { now: 1 });
+    saveTrigger(root, { name: 'Off', kind: 'interval', prompt: 'x', enabled: false, intervalMinutes: 1 });
+
+    const startRun = vi.fn(() => 'r');
+    const scheduler = new RunScheduler(
+      { activeWorkspace: { root } } as unknown as WorkspaceHost,
+      { startRun, listRuns: () => [] } as unknown as RunHost,
+    );
+    scheduler.reconfigure();
+    vi.advanceTimersByTime(120_000);
+    expect(startRun).not.toHaveBeenCalled();
+    scheduler.shutdown();
   });
 });
