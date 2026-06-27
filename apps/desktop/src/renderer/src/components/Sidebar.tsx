@@ -1,18 +1,38 @@
 import { useState } from 'react';
-import { Asterisk, Command, FolderGit2, FolderOpen, Plus, Search, Settings, X } from 'lucide-react';
+import {
+  Asterisk,
+  Command,
+  FolderGit2,
+  FolderOpen,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { useT } from '@/i18n';
+import type { WorkspaceInfo } from '@shared/types';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { ThemeToggle } from './ThemeToggle';
 import { NewWorkspaceDialog } from './NewWorkspaceDialog';
+
+/** Pinned workspaces float to the top (stable within each group). */
+function sortWorkspaces(list: WorkspaceInfo[]): WorkspaceInfo[] {
+  return [...list].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+}
 
 const IS_MAC = navigator.userAgent.includes('Mac');
 
@@ -25,17 +45,36 @@ export function Sidebar() {
   const workspaces = useAppStore((s) => s.workspaces);
   const openWorkspace = useAppStore((s) => s.openWorkspace);
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
+  const setPinned = useAppStore((s) => s.setPinned);
+  const removeWorkspace = useAppStore((s) => s.removeWorkspace);
+  const reorderWorkspaces = useAppStore((s) => s.reorderWorkspaces);
   const setPaletteOpen = useAppStore((s) => s.setPaletteOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [dragPath, setDragPath] = useState<string | null>(null);
   const t = useT();
 
   const q = query.trim().toLowerCase();
-  const filtered = q ? workspaces.filter((w) => w.name.toLowerCase().includes(q)) : workspaces;
+  const ordered = sortWorkspaces(workspaces);
+  const filtered = q ? ordered.filter((w) => w.name.toLowerCase().includes(q)) : ordered;
+
+  // Native drag-to-reorder. Disabled while searching (reordering a filtered subset
+  // is ambiguous). Drop moves the dragged workspace to the target's position.
+  const onDrop = (targetPath: string): void => {
+    if (!dragPath || dragPath === targetPath) return setDragPath(null);
+    const paths = ordered.map((w) => w.path);
+    const from = paths.indexOf(dragPath);
+    const to = paths.indexOf(targetPath);
+    if (from < 0 || to < 0) return setDragPath(null);
+    paths.splice(to, 0, paths.splice(from, 1)[0]);
+    void reorderWorkspaces(paths);
+    setDragPath(null);
+  };
+  const reveal = (path: string): void => void window.omakase.shell.openPath(path);
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-r bg-sidebar/50">
+    <aside className="flex h-full min-h-0 flex-col bg-sidebar/50">
       {/* Top strip — clears the macOS traffic lights and drags the window. */}
       <div
         className="drag flex h-11 shrink-0 items-center gap-2"
@@ -107,14 +146,19 @@ export function Sidebar() {
             {filtered.map((w) => {
               const isActive = active?.path === w.path;
               return (
-                <button
+                <div
                   key={w.path}
+                  draggable={!q}
+                  onDragStart={() => setDragPath(w.path)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => onDrop(w.path)}
                   onClick={() => void openWorkspace(w.path)}
                   className={cn(
-                    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
+                    'group flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors',
                     isActive
                       ? 'bg-accent font-medium text-foreground'
                       : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    dragPath === w.path && 'opacity-50',
                   )}
                 >
                   <div
@@ -126,8 +170,38 @@ export function Sidebar() {
                     <FolderGit2 className="size-3.5" />
                   </div>
                   <span className="flex-1 truncate">{w.name}</span>
+                  {w.pinned && <Pin className="size-3 shrink-0 text-muted-foreground/60" />}
                   {w.missing && <span className="text-[11px] text-destructive">{t('missing')}</span>}
-                </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={t('Workspace actions')}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none transition hover:bg-accent hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuItem onSelect={() => void setPinned(w.path, !w.pinned)}>
+                        {w.pinned ? <PinOff /> : <Pin />}
+                        {w.pinned ? t('Unpin') : t('Pin')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => reveal(w.path)}>
+                        <FolderOpen />
+                        {t('Reveal in Finder')}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => void removeWorkspace(w.path)}
+                      >
+                        <Trash2 />
+                        {t('Remove from list')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               );
             })}
           </div>
