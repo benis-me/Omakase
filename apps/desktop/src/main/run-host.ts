@@ -62,6 +62,9 @@ export interface RunHostEvents {
   runStatus(runId: string): void;
   /** The number of in-process live runs changed (drives the tray). */
   liveChanged(count: number): void;
+  /** A run reached a terminal state. Used to notify the user when an unattended
+   * (triggered) run can't finish cleanly. */
+  runFinished?(runId: string, status: string, triggeredBy?: string): void;
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -228,10 +231,11 @@ export class RunHost {
     } catch {
       /* the stream may end via error; result still settles below */
     }
-    await run.handle.result.catch(() => null);
+    const result = (await run.handle.result.catch(() => null)) as { status?: string } | null;
     this.live.delete(runId);
     this.events.liveChanged(this.live.size);
     this.events.runStatus(runId);
+    if (result?.status) this.events.runFinished?.(runId, result.status, this.triggeredBy.get(runId));
   }
 
   private maybeAutoAnswer(run: LiveRun, gateId: string, reason: string): void {

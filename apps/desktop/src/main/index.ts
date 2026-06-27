@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow, nativeTheme, Notification } from 'electron';
 import { join } from 'node:path';
 import { IPC } from '@shared/ipc';
 import { WorkspaceHost } from './workspace-host.js';
@@ -72,6 +72,15 @@ app.whenReady().then(() => {
     cockpitEvent: (runId, event) => send(IPC.EvtRunEvent, { runId, event }),
     runStatus: (runId) => send(IPC.EvtRunStatus, runId),
     liveChanged: (count) => tray?.update(count),
+    runFinished: (_runId, status, triggeredBy) => {
+      // Escalate unattended (automation-started) runs that couldn't finish cleanly.
+      if (triggeredBy && (status === 'incomplete' || status === 'failed') && Notification.isSupported()) {
+        new Notification({
+          title: `Automation "${triggeredBy}" needs attention`,
+          body: `Its run finished ${status}.`,
+        }).show();
+      }
+    },
   });
   scheduler = new RunScheduler(host, runs);
   // The active workspace drives both the dev workbench and the trigger scheduler.
