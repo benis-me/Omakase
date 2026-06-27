@@ -151,6 +151,8 @@ export interface OmakaseApi {
   onWorkspacesChanged(cb: (list: WorkspaceInfo[]) => void): () => void;
   onActiveWorkspaceChanged(cb: (ws: ActiveWorkspace | null) => void): () => void;
   onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
+  /** Fires when authored `.omks/` content changes (user edit or agent authoring). */
+  onContentChanged(cb: () => void): () => void;
   onScriptData(cb: (payload: { id: string; chunk: string }) => void): () => void;
   onScriptStatus(cb: (session: ScriptSession) => void): () => void;
   onScriptUrl(cb: (payload: { id: string; url: string }) => void): () => void;

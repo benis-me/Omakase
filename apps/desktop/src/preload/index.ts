@@ -127,6 +127,7 @@ const api: OmakaseApi = {
   onWorkspacesChanged: (cb) => sub(IPC.EvtWorkspacesChanged, cb),
   onActiveWorkspaceChanged: (cb) => sub(IPC.EvtActiveWorkspaceChanged, cb),
   onSettingsChanged: (cb) => sub(IPC.EvtSettingsChanged, cb),
+  onContentChanged: (cb) => sub(IPC.EvtContentChanged, cb),
   onScriptData: (cb) => sub(IPC.EvtScriptData, cb),
   onScriptStatus: (cb) => sub(IPC.EvtScriptStatus, cb),
   onScriptUrl: (cb) => sub(IPC.EvtScriptUrl, cb),

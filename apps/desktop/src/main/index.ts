@@ -6,6 +6,7 @@ import { DevController } from './dev-controller.js';
 import { ContentController } from './content-controller.js';
 import { RunHost } from './run-host.js';
 import { RunScheduler } from './run-scheduler.js';
+import { ContentWatcher } from './content-watcher.js';
 import { TrayController } from './tray.js';
 import { registerIpc } from './ipc/register.js';
 
@@ -14,6 +15,7 @@ let host: WorkspaceHost;
 let dev: DevController;
 let runs: RunHost;
 let scheduler: RunScheduler;
+let contentWatcher: ContentWatcher;
 let tray: TrayController | null = null;
 
 function showMainWindow(): void {
@@ -83,10 +85,13 @@ app.whenReady().then(() => {
     },
   });
   scheduler = new RunScheduler(host, runs);
-  // The active workspace drives both the dev workbench and the trigger scheduler.
+  contentWatcher = new ContentWatcher(host, () => send(IPC.EvtContentChanged, null));
+  // The active workspace drives the dev workbench, the trigger scheduler, and the
+  // `.omks/` content watcher (so the renderer refreshes when an agent authors a file).
   host.setActiveListener((ws) => {
     void dev.setWorkspace(ws);
     scheduler.reconfigure();
+    contentWatcher.reconfigure();
   });
 
   const settings = host.getSettings();
@@ -120,6 +125,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   scheduler?.shutdown();
+  contentWatcher?.shutdown();
   runs?.shutdown();
   dev?.shutdown();
   host?.shutdown();

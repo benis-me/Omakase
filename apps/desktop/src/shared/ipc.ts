@@ -104,6 +104,7 @@ export const IPC = {
   EvtWorkspacesChanged: 'evt:workspacesChanged',
   EvtActiveWorkspaceChanged: 'evt:activeWorkspaceChanged',
   EvtSettingsChanged: 'evt:settingsChanged',
+  EvtContentChanged: 'evt:contentChanged',
   EvtScriptData: 'evt:scriptData',
   EvtScriptStatus: 'evt:scriptStatus',
   EvtScriptUrl: 'evt:scriptUrl',

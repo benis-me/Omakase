@@ -50,6 +50,9 @@ interface AppState {
   currentRunId: string | null;
   feed: CockpitEvent[];
 
+  /** Bumped whenever authored `.omks/` content changes; content views watch it to refetch. */
+  contentTick: number;
+
   init: () => Promise<void>;
   setNav: (nav: NavSection) => void;
   setPaletteOpen: (open: boolean) => void;
@@ -109,6 +112,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runs: [],
   currentRunId: null,
   feed: [],
+  contentTick: 0,
 
   init: async () => {
     if (booted) return;
@@ -134,6 +138,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }),
     );
     api().onSettingsChanged((s) => set({ settings: s }));
+    api().onContentChanged(() => set((s) => ({ contentTick: s.contentTick + 1 })));
 
     api().onProjectsUpdated((projects) => set({ projects }));
     api().onScriptStatus((session) =>
