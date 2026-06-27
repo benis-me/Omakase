@@ -1358,6 +1358,26 @@ class RunController implements RunHandle {
     }
   }
 
+  /**
+   * Spec-driven nudge for spec-less runs: when no spec seeded the run (the user
+   * didn't pick one, so {@link hasUserAcceptanceCriteria} is false) and the
+   * workspace is writable, ask the planner to make authoring a durable spec its
+   * first task. The agent authors the spec with its own file tools — the
+   * orchestrator never templates `.omks/` files itself. Silent on spec-driven
+   * runs (the spec already exists) and on cwd-less runs (nothing to write to).
+   */
+  private specFirstDirective(): string {
+    if (this.hasUserAcceptanceCriteria || !this.request.cwd) return '';
+    return [
+      '',
+      'No spec drives this work yet. If the request is non-trivial (more than a quick one-off fix),',
+      'make your FIRST worker task author a spec at `.omks/specs/<slug>.md` — sections ## Summary,',
+      '## Acceptance criteria as `- [ ]` bullets mirroring the acceptanceCriteria you produce,',
+      '## Implementation plan, ## Test strategy — and have the implementation tasks dependOn it.',
+      'For a genuinely trivial request, skip the spec and plan the work directly.',
+    ].join('\n');
+  }
+
   private plannerPrompt(): string {
     const knowledge = this.knowledgeContext();
     const skills =
@@ -1381,6 +1401,7 @@ class RunController implements RunHandle {
       'Do not collapse unrelated work into one task.',
       'Do not include reporter, report-writing, wiki-curator, wiki-synthesis, sidecar, or support-agent tasks in tasks; Omakase runs those outside the main task graph.',
       'dependsOn uses zero-based indices of earlier tasks.',
+      this.specFirstDirective(),
       '',
       `Request: ${this.request.prompt}`,
       knowledge ? `\nProject context:\n${knowledge}` : '',

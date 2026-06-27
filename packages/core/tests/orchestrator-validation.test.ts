@@ -152,3 +152,49 @@ describe('agent capability briefing (autonomous .omks authoring)', () => {
     expect(prompts.some((p) => p.includes('.omks/specs/'))).toBe(false);
   });
 });
+
+describe('spec-first nudge (spec-driven development for spec-less runs)', () => {
+  const SPEC_FIRST = 'make your FIRST worker task author a spec';
+  // The nudge lives in the planner prompt, which only runs for non-simple routes.
+  const complexRouter: Router = {
+    route: () => ({ kind: 'complex', reason: 'complex', confidence: 1, signals: [], suggestedRole: 'worker' }),
+  };
+  function makeOrch(prompts: string[]) {
+    const exec = createScriptedAgent((input) => {
+      prompts.push(String(input.prompt));
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    return new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: complexRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+  }
+
+  it('asks the planner to author a spec first when no spec seeded the run', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({ prompt: 'build a feature', cwd: '/tmp/omks-spec' }).result;
+    expect(prompts.some((p) => p.includes(SPEC_FIRST))).toBe(true);
+  });
+
+  it('stays silent when a spec already drives the run (acceptance criteria seeded)', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({
+      prompt: 'build a feature',
+      cwd: '/tmp/omks-spec',
+      acceptanceCriteria: ['The feature works end to end'],
+    }).result;
+    // The capability briefing still appears (cwd is set), but not the spec-first nudge.
+    expect(prompts.some((p) => p.includes('.omks/specs/'))).toBe(true);
+    expect(prompts.some((p) => p.includes(SPEC_FIRST))).toBe(false);
+  });
+
+  it('stays silent when there is no writable workspace', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({ prompt: 'build a feature' }).result;
+    expect(prompts.some((p) => p.includes(SPEC_FIRST))).toBe(false);
+  });
+});
