@@ -101,6 +101,9 @@ export const zh: Record<string, string> = {
   // ── Automations ──────────────────────────────────────────────────────────
   'New automation': '新建自动化',
   'Edit automation': '编辑自动化',
+  Automation: '自动化',
+  'No automations yet. Create a trigger to start a run on a schedule or whenever files change — the basis for unattended, self-iterating loops.':
+    '还没有自动化。创建一个触发器，按计划或在文件变更时启动运行——这是无人值守、自我迭代循环的基础。',
   Name: '名称',
   Source: '来源',
   'A task': '一个任务',
