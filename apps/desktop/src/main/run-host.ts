@@ -319,8 +319,10 @@ export class RunHost {
       return () => clearInterval(timer);
     };
     const control: ControlSource = new FileControlSource(controlDir);
-    // Spec runs that have a test command get a closed-loop verifier as a hard gate.
-    const verifier = validate ? this.buildVerifier(ws) : undefined;
+    // Build the workspace test-runner verifier whenever one exists; the gate uses it
+    // for validate runs AND for runs that adopt a spec the agent authored (so the
+    // agent's own tests become the objective check). Undefined when there's no test.
+    const verifier = this.buildVerifier(ws);
     return new Orchestrator({
       runtime: this.runtime,
       store: ws.runStore,

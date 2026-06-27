@@ -77,6 +77,7 @@ describe('orchestrator validation gate', () => {
       router: simpleRouter,
       policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
       store: new MemoryRunStore(),
+      validate: true,
       // First check fails (tests red), second passes — an objective gate, no LLM.
       verifier: async () => {
         verifyCalls += 1;
@@ -103,6 +104,7 @@ describe('orchestrator validation gate', () => {
       router: simpleRouter,
       policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
       store: new MemoryRunStore(),
+      validate: true,
       verifier: async () => {
         verifyCalls += 1;
         return { passed: false, summary: 'still red' };
@@ -280,6 +282,38 @@ describe('adopting agent-authored spec criteria (closing the verification loop)'
     const spec = result.acceptance.criteria.filter((c) => c.source === 'spec');
     expect(spec.length).toBe(1);
     expect(spec[0].status).toBe('pass');
+  });
+
+  it('runs the workspace tests (verifier) as the objective gate for an adopted spec', async () => {
+    let verifyCalls = 0;
+    const exec = createScriptedAgent((input) => {
+      if (String(input.prompt).includes('independent VALIDATOR')) {
+        return [{ type: 'text_delta', delta: '{"passed": true, "gaps": []}' }];
+      }
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const orch = new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      clock: () => 0,
+      authoredSpecCriteria: () => ['wordCount handles empty input'],
+      // The agent's own tests: red first, green after the fix-loop.
+      verifier: async () => {
+        verifyCalls += 1;
+        return verifyCalls === 1
+          ? { passed: false, summary: '1 test failing' }
+          : { passed: true, summary: 'all green' };
+      },
+    });
+    const result = await orch.start({ prompt: 'build wordcount', cwd: '/tmp/omks-adopt', metadata: { supportAgents: true } }).result;
+
+    expect(verifyCalls).toBe(2); // ran the tests, failed, fixed, re-ran green
+    expect(result.plan.tasks.some((t) => t.tags.includes('verify-fix'))).toBe(true);
+    expect(result.status).toBe('succeeded');
+    expect(result.acceptance.criteria.find((c) => c.source === 'spec')?.status).toBe('pass');
   });
 
   it('leaves the run unchanged when no authored-spec provider is wired', async () => {

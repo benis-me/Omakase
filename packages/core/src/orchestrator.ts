@@ -841,7 +841,11 @@ class RunController implements RunHandle {
     // Adopt criteria from any spec the agent authored this run, so the loop is
     // held to the spec it wrote rather than the worker's own "done".
     await this.ingestAuthoredSpecCriteria();
-    if (!this.validateEnabled && !this.verifier && !this.adoptedSpec) return;
+    // The gate runs for an opted-in validate run or an adopted spec. A verifier, when
+    // present, is the objective first gate inside it — including for adopted specs, so
+    // the agent's own tests verify the spec it wrote. (Plain runs don't auto-run tests,
+    // which would otherwise chase pre-existing failures unrelated to the work.)
+    if (!this.validateEnabled && !this.adoptedSpec) return;
     let round = 0;
     let lastVerifierPassed = true;
     // Note: budget exhaustion does NOT skip the gate. The verifier (a shell check)
