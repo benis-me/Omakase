@@ -1385,6 +1385,7 @@ class RunController implements RunHandle {
       `Request: ${this.request.prompt}`,
       knowledge ? `\nProject context:\n${knowledge}` : '',
       skills.length > 0 ? `\nApplicable skills:\n${renderSkillContext(skills)}` : '',
+      this.capabilitiesBriefing(),
     ].join('\n');
   }
 
@@ -1587,6 +1588,33 @@ class RunController implements RunHandle {
     return selected.length > 0 ? `\n\n${renderSkillContext(selected)}` : '';
   }
 
+  /**
+   * The harness capability declaration: tells the agent it can autonomously author
+   * durable `.omks/` artifacts (specs, commands/skills, workflows, automations) with
+   * its file tools — so the loop doesn't depend on a human writing them. Empty when
+   * the run has no cwd (the agent can't touch the workspace). Instruction-level
+   * memory (AGENTS.md / rules) is intentionally off-limits to avoid self-poisoning.
+   */
+  private capabilitiesBriefing(): string {
+    if (!this.request.cwd) return '';
+    return [
+      '',
+      'Workspace authoring — you MAY create or update durable artifacts under `.omks/` in the',
+      'working directory with your normal file tools, and you SHOULD do so autonomously whenever',
+      'it serves the task (you decide; no human will write these for you):',
+      '- `.omks/specs/<slug>.md` — a spec capturing requirements before non-trivial work (sections:',
+      '  ## Summary, ## Acceptance criteria as `- [ ]` bullets, ## Implementation plan, ## Test strategy).',
+      '- `.omks/commands/<slug>.md` — a reusable prompt recipe ("skill"), invoked later as /<slug>',
+      '  (supports `$ARGUMENTS`); save one when you find a repeatable workflow worth reusing.',
+      '- `.omks/workflows/<slug>.ts` — a dynamic orchestration script: `export default async function(w){…}`',
+      '  using w.phase / w.agent / w.parallel / w.pipeline / w.loopUntil / w.budget to coordinate sub-agents.',
+      '- `.omks/triggers.json` — automations: an array of {"name","kind":"interval"|"daily"|"watch",',
+      '  "specId"|"prompt","mode","autonomy",…} that re-run work on a schedule or on file changes.',
+      'Do NOT modify `.omks/memory/AGENTS.md` or `.omks/memory/rules/` unless explicitly asked —',
+      'instruction-level memory biases every future run.',
+    ].join('\n');
+  }
+
   private buildPrompt(role: AgentRole, task: TaskNode): string {
     const knowledge = this.knowledgeContext();
     const skills = this.skillContext(role, `${task.title} ${task.description}`);
@@ -1647,6 +1675,7 @@ class RunController implements RunHandle {
       `Original request: ${this.request.prompt}`,
       knowledge ? `\nProject context:\n${knowledge}` : '',
       skills,
+      this.capabilitiesBriefing(),
     ].join('\n');
   }
 

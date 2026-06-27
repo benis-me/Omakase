@@ -119,3 +119,36 @@ describe('orchestrator validation gate', () => {
     expect(verifyCalls).toBe(2); // bounded by maxValidationRounds
   });
 });
+
+describe('agent capability briefing (autonomous .omks authoring)', () => {
+  function makeOrch(prompts: string[]) {
+    const exec = createScriptedAgent((input) => {
+      prompts.push(String(input.prompt));
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    return new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+    });
+  }
+
+  it('tells agents they can author specs / commands / workflows / automations when a cwd is set', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({ prompt: 'do a thing', cwd: '/tmp/omks-cap' }).result;
+    const briefed = prompts.find((p) => p.includes('.omks/specs/'));
+    expect(briefed).toBeDefined();
+    expect(briefed).toContain('.omks/commands/');
+    expect(briefed).toContain('.omks/workflows/');
+    expect(briefed).toContain('.omks/triggers.json');
+  });
+
+  it('omits the authoring briefing when there is no cwd', async () => {
+    const prompts: string[] = [];
+    await makeOrch(prompts).start({ prompt: 'do a thing' }).result;
+    expect(prompts.some((p) => p.includes('.omks/specs/'))).toBe(false);
+  });
+});
