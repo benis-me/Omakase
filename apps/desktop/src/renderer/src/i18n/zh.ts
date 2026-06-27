@@ -33,6 +33,7 @@ export const zh: Record<string, string> = {
   // ── Title bar / sidebar / workspace ──────────────────────────────────────
   'Select workspace': '选择工作区',
   Workspaces: '工作区',
+  'No workspaces yet — add one with the + above.': '还没有工作区——点上方的 + 添加。',
   'Open folder…': '打开文件夹…',
   'New project…': '新建项目…',
   'No workspace open. Pick one above to begin.': '未打开工作区。在上方选择一个开始。',
@@ -93,6 +94,7 @@ export const zh: Record<string, string> = {
   'Approve & proceed': '批准并继续',
   'Queue a steering message…': '排入一条引导消息…',
   'This run has ended.': '此运行已结束。',
+  'This run was interrupted — resume to continue.': '此运行已中断——恢复以继续。',
   'No uncommitted changes in the workspace.': '工作区没有未提交的改动。',
   'Loading diff…': '加载改动…',
   idle: '空闲',

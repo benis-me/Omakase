@@ -80,14 +80,17 @@ export function CockpitFeed({ feed }: { feed: CockpitEvent[] }) {
 
   if (items.length === 0) {
     return (
-      <div className="grid flex-1 place-items-center text-[12px] text-muted-foreground">
+      <div className="grid h-full place-items-center text-[12px] text-muted-foreground">
         {t('Waiting for the first event…')}
       </div>
     );
   }
 
+  // h-full (not flex-1) because the tab content host is a block, not a flex column —
+  // matching the sibling panels. flex-1 there is ignored, so the feed would grow and
+  // overrun the steering input instead of scrolling.
   return (
-    <div ref={ref} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+    <div ref={ref} className="h-full space-y-2 overflow-y-auto p-4">
       {items.map((e) => (
         <FeedRow key={e.seq} event={e} />
       ))}

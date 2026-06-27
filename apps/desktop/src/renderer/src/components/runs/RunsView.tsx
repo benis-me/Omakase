@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { StatusDot } from '../StatusDot';
 import { Cockpit } from './Cockpit';
-import { RUN_DOT } from './run-status';
+import { RUN_DOT, effectiveStatus } from './run-status';
 
 export function RunsView() {
   const t = useT();
@@ -66,8 +66,8 @@ export function RunsView() {
                 >
                   <div className="flex items-center gap-2">
                     <StatusDot
-                      status={RUN_DOT[r.status] ?? 'idle'}
-                      pulse={r.status === 'running'}
+                      status={RUN_DOT[effectiveStatus(r.status, r.live)] ?? 'idle'}
+                      pulse={r.live && r.status === 'running'}
                       glow={r.live && r.status === 'running'}
                     />
                     <button
@@ -88,7 +88,7 @@ export function RunsView() {
                     )}
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 pl-4 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    <span>{r.status}</span>
+                    <span>{effectiveStatus(r.status, r.live)}</span>
                     {r.live && <span className="text-run">live</span>}
                     <span>·</span>
                     <span>{r.mode}</span>
@@ -107,7 +107,7 @@ export function RunsView() {
           )}
         </div>
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-h-0 min-w-0 flex-1">
         <Cockpit />
       </div>
     </div>

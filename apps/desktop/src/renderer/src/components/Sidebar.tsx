@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronsUpDown, FolderGit2, FolderOpen, Plus } from 'lucide-react';
+import { FolderGit2, FolderOpen, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { useT } from '@/i18n';
@@ -7,108 +7,83 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { NAV_SECTIONS } from './nav';
-import { StatusDot } from './StatusDot';
+import { Button } from '@/components/ui/button';
 import { NewWorkspaceDialog } from './NewWorkspaceDialog';
 
-function WorkspacePicker({ onNew }: { onNew: () => void }) {
+/**
+ * The left rail: a persistent list of workspaces (DevDock-style). Picking one makes
+ * it active; the project's sections live in the horizontal {@link TabBar} on the right.
+ */
+export function Sidebar() {
   const active = useAppStore((s) => s.active);
   const workspaces = useAppStore((s) => s.workspaces);
   const openWorkspace = useAppStore((s) => s.openWorkspace);
   const browseAndAdd = useAppStore((s) => s.browseAndAdd);
-  const t = useT();
-
-  return (
-    <div className="no-drag p-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left outline-none transition-colors hover:border-border hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40">
-            <div className="grid size-6 shrink-0 place-items-center rounded bg-omk/15 text-omk">
-              <FolderGit2 className="size-3.5" />
-            </div>
-            <span className="flex-1 truncate text-[13px] font-medium">
-              {active ? active.manifest.name : t('Select workspace')}
-            </span>
-            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
-          {workspaces.length > 0 && <DropdownMenuLabel>{t('Workspaces')}</DropdownMenuLabel>}
-          {workspaces.map((w) => (
-            <DropdownMenuItem key={w.path} onSelect={() => void openWorkspace(w.path)}>
-              <StatusDot status={active?.path === w.path ? 'omk' : 'idle'} />
-              <span className="flex-1 truncate">{w.name}</span>
-              {w.missing && <span className="text-[11px] text-destructive">{t('missing')}</span>}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => void browseAndAdd()}>
-            <FolderOpen />
-            {t('Open folder…')}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onNew}>
-            <Plus />
-            {t('New project…')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-function NavList() {
-  const nav = useAppStore((s) => s.nav);
-  const setNav = useAppStore((s) => s.setNav);
-  const t = useT();
-
-  return (
-    <nav className="space-y-0.5 px-2">
-      {NAV_SECTIONS.map((item) => {
-        const Icon = item.icon;
-        const isActive = nav === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => setNav(item.id)}
-            title={t(item.hint)}
-            className={cn(
-              'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
-              isActive
-                ? 'bg-accent font-medium text-foreground'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-            )}
-          >
-            <Icon className={cn('size-4 shrink-0', isActive && 'text-omk')} />
-            {t(item.label)}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-export function Sidebar() {
-  const active = useAppStore((s) => s.active);
   const [dialogOpen, setDialogOpen] = useState(false);
   const t = useT();
 
   return (
-    <aside className="flex h-full flex-col bg-sidebar/50">
-      <WorkspacePicker onNew={() => setDialogOpen(true)} />
-      <div className="h-px bg-border" />
-      <div className="flex-1 overflow-y-auto py-2">
-        {active ? (
-          <NavList />
-        ) : (
-          <p className="px-4 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
-            {t('No workspace open. Pick one above to begin.')}
+    <aside className="flex h-full min-h-0 flex-col bg-sidebar/50">
+      <header className="no-drag flex h-11 shrink-0 items-center gap-2 border-b px-3">
+        <span className="text-[13px] font-medium">{t('Workspaces')}</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground">
+              <Plus className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => void browseAndAdd()}>
+              <FolderOpen />
+              {t('Open folder…')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
+              <Plus />
+              {t('New project…')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {workspaces.length === 0 ? (
+          <p className="px-3 py-8 text-center text-[12px] leading-relaxed text-muted-foreground">
+            {t('No workspaces yet — add one with the + above.')}
           </p>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {workspaces.map((w) => {
+              const isActive = active?.path === w.path;
+              return (
+                <button
+                  key={w.path}
+                  onClick={() => void openWorkspace(w.path)}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
+                    isActive
+                      ? 'bg-accent font-medium text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                  )}
+                >
+                  <div
+                    className={cn(
+                      'grid size-6 shrink-0 place-items-center rounded',
+                      isActive ? 'bg-omk/15 text-omk' : 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    <FolderGit2 className="size-3.5" />
+                  </div>
+                  <span className="flex-1 truncate">{w.name}</span>
+                  {w.missing && <span className="text-[11px] text-destructive">{t('missing')}</span>}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
+
       <NewWorkspaceDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </aside>
   );

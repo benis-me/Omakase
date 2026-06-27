@@ -19,7 +19,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusDot } from '../StatusDot';
 import { CockpitTabs } from './CockpitTabs';
-import { LIVE_STATUSES, RUN_DOT } from './run-status';
+import { effectiveStatus, RUN_DOT } from './run-status';
 
 function NewRunComposer() {
   const t = useT();
@@ -198,11 +198,16 @@ function LiveCockpit({ runId }: { runId: string }) {
   const controlRun = useAppStore((s) => s.controlRun);
   const closeRun = useAppStore((s) => s.closeRun);
   const deleteRun = useAppStore((s) => s.deleteRun);
+  const resumeRun = useAppStore((s) => s.resumeRun);
   const [steer, setSteer] = useState('');
 
   const summary = runs.find((r) => r.id === runId);
   const status = summary?.status ?? 'running';
-  const live = LIVE_STATUSES.has(status);
+  // "Live" is the actual in-process flag — NOT whether the status is non-terminal.
+  // After a restart a record still says `running`, but nothing is running.
+  const live = summary?.live ?? false;
+  const resumable = summary?.resumable ?? false;
+  const displayStatus = effectiveStatus(status, live);
 
   const openGate = useMemo(() => {
     const answered = new Set(
@@ -225,8 +230,8 @@ function LiveCockpit({ runId }: { runId: string }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
-        <StatusDot status={RUN_DOT[status] ?? 'idle'} pulse={status === 'running'} glow={status === 'running'} />
-        <span className="text-[13px] font-medium capitalize">{status.replace(/-/g, ' ')}</span>
+        <StatusDot status={RUN_DOT[displayStatus] ?? 'idle'} pulse={live && status === 'running'} glow={live && status === 'running'} />
+        <span className="text-[13px] font-medium capitalize">{displayStatus.replace(/-/g, ' ')}</span>
         <span className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">{summary?.summary}</span>
         {summary && (summary.spentTokens ?? 0) > 0 && (
           <span className="font-mono text-[11px] text-muted-foreground">{summary.spentTokens} tok</span>
@@ -259,21 +264,27 @@ function LiveCockpit({ runId }: { runId: string }) {
               if (e.key === 'Enter') sendSteer();
             }}
             disabled={!live}
-            placeholder={live ? t('Queue a steering message…') : t('This run has ended.')}
+            placeholder={
+              live
+                ? t('Queue a steering message…')
+                : resumable
+                  ? t('This run was interrupted — resume to continue.')
+                  : t('This run has ended.')
+            }
           />
           <Tooltip content={t('Queue message')}>
             <Button variant="ghost" size="icon" disabled={!live || !steer.trim()} onClick={sendSteer}>
               <Send />
             </Button>
           </Tooltip>
-          {status === 'running' && (
+          {live && status === 'running' && (
             <Tooltip content={t('Pause')}>
               <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'pause' })}>
                 <Pause />
               </Button>
             </Tooltip>
           )}
-          {status === 'paused' && (
+          {live && status === 'paused' && (
             <Tooltip content={t('Resume')}>
               <Button variant="ghost" size="icon" onClick={() => void controlRun({ command: 'resume' })}>
                 <Play />
@@ -289,6 +300,14 @@ function LiveCockpit({ runId }: { runId: string }) {
                 onClick={() => void controlRun({ command: 'stop' })}
               >
                 <Square />
+              </Button>
+            </Tooltip>
+          )}
+          {!live && resumable && (
+            <Tooltip content={t('Resume run')}>
+              <Button variant="omk" size="sm" className="gap-1.5" onClick={() => void resumeRun(runId)}>
+                <Play className="size-3.5" />
+                {t('Resume')}
               </Button>
             </Tooltip>
           )}

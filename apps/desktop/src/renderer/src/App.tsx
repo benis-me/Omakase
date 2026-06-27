@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAppStore } from '@/store/useAppStore';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
+import { TabBar } from './components/TabBar';
 import { DetailPane } from './components/DetailPane';
 import { EmptyState } from './components/EmptyState';
 import { CommandPalette } from './components/CommandPalette';
@@ -71,8 +72,19 @@ export default function App() {
           </Panel>
           <PanelResizeHandle className="relative w-px shrink-0 bg-border outline-none transition-colors data-[resize-handle-state=hover]:bg-omk/60 data-[resize-handle-state=drag]:bg-omk after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-['']" />
           <Panel minSize={40} className="min-w-0">
-            <main className="h-full min-w-0 bg-background">
-              {active ? <DetailPane /> : <EmptyState />}
+            <main className="flex h-full min-w-0 flex-col bg-background">
+              {active ? (
+                <>
+                  <TabBar />
+                  {/* min-h-0 lets the active view own its own scrolling instead of
+                      overflowing the pane (the cockpit feed, long lists, etc.). */}
+                  <div className="min-h-0 flex-1">
+                    <DetailPane />
+                  </div>
+                </>
+              ) : (
+                <EmptyState />
+              )}
             </main>
           </Panel>
         </PanelGroup>
