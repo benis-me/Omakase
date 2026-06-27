@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type {
+  AcceptanceView,
   ActiveWorkspace,
   AppInfo,
   AppSettings,
@@ -13,6 +14,14 @@ import type {
   ThemeMode,
   WorkspaceInfo,
 } from '@shared/types';
+
+/** The latest acceptance snapshot carried on a cockpit feed, or null if none yet. */
+function latestAcceptance(events: CockpitEvent[]): AcceptanceView | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].acceptance) return events[i].acceptance ?? null;
+  }
+  return null;
+}
 
 export type NavSection =
   | 'runs'
@@ -49,6 +58,8 @@ interface AppState {
   runs: RunSummaryDto[];
   currentRunId: string | null;
   feed: CockpitEvent[];
+  /** The current run's acceptance criteria + progress, for the cockpit panel. */
+  acceptance: AcceptanceView | null;
 
   /** Bumped whenever authored `.omks/` content changes; content views watch it to refetch. */
   contentTick: number;
@@ -112,6 +123,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runs: [],
   currentRunId: null,
   feed: [],
+  acceptance: null,
   contentTick: 0,
 
   init: async () => {
@@ -135,6 +147,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         runs: [],
         currentRunId: null,
         feed: [],
+        acceptance: null,
       }),
     );
     api().onSettingsChanged((s) => set({ settings: s }));
@@ -158,7 +171,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     api().onRunEvent(({ runId, event }) => {
-      if (runId === get().currentRunId) set((s) => ({ feed: [...s.feed, event] }));
+      if (runId === get().currentRunId)
+        set((s) => ({
+          feed: [...s.feed, event],
+          ...(event.acceptance ? { acceptance: event.acceptance } : {}),
+        }));
     });
     api().onRunStatus(() => void get().loadRuns());
 
@@ -191,9 +208,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   openRun: async (id) => {
     const detail = await api().runs.get(id);
-    set({ currentRunId: id, feed: detail?.events ?? [] });
+    const events = detail?.events ?? [];
+    set({ currentRunId: id, feed: events, acceptance: latestAcceptance(events) });
   },
-  closeRun: () => set({ currentRunId: null, feed: [] }),
+  closeRun: () => set({ currentRunId: null, feed: [], acceptance: null }),
   startRun: async (input) => {
     const settings = get().settings;
     try {
@@ -205,7 +223,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(input.agentId ? { agentId: input.agentId } : {}),
         ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
       });
-      set({ currentRunId: id, feed: [] });
+      set({ currentRunId: id, feed: [], acceptance: null });
       void get().loadRuns();
     } catch (err) {
       toast.error(`Could not start run: ${err instanceof Error ? err.message : String(err)}`);
@@ -221,7 +239,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const autonomy = get().settings?.defaultAutonomy ?? 'low';
     try {
       const runId = await api().runs.startWorkflow(workflowId, autonomy);
-      set({ nav: 'runs', currentRunId: runId, feed: [] });
+      set({ nav: 'runs', currentRunId: runId, feed: [], acceptance: null });
       void get().loadRuns();
     } catch (err) {
       toast.error(`Could not start workflow: ${err instanceof Error ? err.message : String(err)}`);
@@ -233,7 +251,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   deleteRun: async (id) => {
     await api().runs.delete(id);
-    if (get().currentRunId === id) set({ currentRunId: null, feed: [] });
+    if (get().currentRunId === id) set({ currentRunId: null, feed: [], acceptance: null });
     void get().loadRuns();
   },
 

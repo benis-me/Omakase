@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CockpitEvent } from '@shared/types';
+import type { AcceptanceView, CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +18,15 @@ const TASK_DOT: Record<string, DotStatus> = {
   cancelled: 'idle',
 };
 
-type TabId = 'activity' | 'tasks' | 'reports' | 'knowledge' | 'diffs';
+const CRITERION_DOT: Record<AcceptanceView['criteria'][number]['status'], DotStatus> = {
+  pass: 'run',
+  fail: 'fail',
+  pending: 'idle',
+  unknown: 'warn',
+  'needs-user': 'warn',
+};
+
+type TabId = 'activity' | 'tasks' | 'acceptance' | 'reports' | 'knowledge' | 'diffs';
 
 /** The workspace's working-tree diff (what the run changed), with +/- coloring. */
 function DiffsPanel() {
@@ -102,6 +110,46 @@ function TasksPanel({ tasks }: { tasks: TaskRow[] }) {
   );
 }
 
+function AcceptancePanel({ acceptance }: { acceptance: AcceptanceView | null }) {
+  const t = useT();
+  if (!acceptance || acceptance.criteria.length === 0)
+    return <EmptyPanel>No acceptance criteria yet — they appear once a spec drives the run, or the agent authors one.</EmptyPanel>;
+  const adopted = acceptance.criteria.filter((c) => c.source === 'spec').length;
+  return (
+    <div className="h-full overflow-y-auto p-3">
+      <div className="mb-3 flex items-center gap-2 px-2 text-[12px] text-muted-foreground">
+        <span className="font-medium tabular-nums text-foreground">
+          {acceptance.passed}/{acceptance.total}
+        </span>
+        <span>{t('criteria met')}</span>
+        {adopted > 0 && (
+          <Badge variant="outline" className="ml-auto text-omk">
+            {adopted} {t('from agent spec')}
+          </Badge>
+        )}
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {acceptance.criteria.map((c, i) => (
+          <div key={i} className="flex items-start gap-2.5 rounded-md px-2 py-1.5">
+            <span className="mt-1">
+              <StatusDot status={CRITERION_DOT[c.status]} pulse={false} />
+            </span>
+            <span className="flex-1 text-[13px] leading-relaxed">{c.title}</span>
+            {c.source === 'spec' && (
+              <Badge variant="outline" className="shrink-0 text-[10px] text-omk">
+                {t('agent spec')}
+              </Badge>
+            )}
+            <span className="w-12 shrink-0 text-right text-[11px] capitalize text-muted-foreground">
+              {t(c.status)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReportsPanel({ reports }: { reports: CockpitEvent[] }) {
   const t = useT();
   if (reports.length === 0)
@@ -156,7 +204,7 @@ function KnowledgePanel({ items }: { items: CockpitEvent[] }) {
   );
 }
 
-export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
+export function CockpitTabs({ feed, acceptance }: { feed: CockpitEvent[]; acceptance: AcceptanceView | null }) {
   const t = useT();
   const [tab, setTab] = useState<TabId>('activity');
 
@@ -175,6 +223,7 @@ export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
   const tabs: { id: TabId; label: string; count: number }[] = [
     { id: 'activity', label: 'Activity', count: feed.length },
     { id: 'tasks', label: 'Tasks', count: tasks.length },
+    { id: 'acceptance', label: 'Acceptance', count: acceptance?.total ?? 0 },
     { id: 'reports', label: 'Reports', count: reports.length },
     { id: 'knowledge', label: 'Knowledge', count: knowledge.length },
     { id: 'diffs', label: 'Diffs', count: 0 },
@@ -200,6 +249,7 @@ export function CockpitTabs({ feed }: { feed: CockpitEvent[] }) {
       <div className="min-h-0 flex-1">
         {tab === 'activity' && <CockpitFeed feed={feed} />}
         {tab === 'tasks' && <TasksPanel tasks={tasks} />}
+        {tab === 'acceptance' && <AcceptancePanel acceptance={acceptance} />}
         {tab === 'reports' && <ReportsPanel reports={reports} />}
         {tab === 'knowledge' && <KnowledgePanel items={knowledge} />}
         {tab === 'diffs' && <DiffsPanel />}

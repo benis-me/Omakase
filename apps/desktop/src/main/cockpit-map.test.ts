@@ -11,6 +11,32 @@ describe('toCockpitEvent', () => {
     ).toMatchObject({ kind: 'task', title: 'Build', level: 'success', status: 'succeeded' });
   });
 
+  it('carries the full acceptance snapshot (incl. adopted-spec source) on an acceptance note', () => {
+    const event = toCockpitEvent(
+      ev({
+        type: 'acceptance-updated',
+        acceptance: {
+          progress: { passed: 1, total: 2, complete: false },
+          criteria: [
+            { title: 'lowercases input', status: 'pass', source: 'spec' },
+            { title: 'handles empty', status: 'pending', source: 'spec' },
+          ],
+        },
+      }),
+      0,
+    );
+    expect(event).toMatchObject({ kind: 'note', title: 'Acceptance 1/2' });
+    expect(event?.acceptance).toEqual({
+      passed: 1,
+      total: 2,
+      complete: false,
+      criteria: [
+        { title: 'lowercases input', status: 'pass', source: 'spec' },
+        { title: 'handles empty', status: 'pending', source: 'spec' },
+      ],
+    });
+  });
+
   it('maps an agent-assigned event to a roster entry with its CLI and model', () => {
     expect(
       toCockpitEvent(

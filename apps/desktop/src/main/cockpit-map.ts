@@ -84,6 +84,16 @@ export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEv
     case 'acceptance-updated':
       return make(seq, 'note', `Acceptance ${event.acceptance.progress.passed}/${event.acceptance.progress.total}`, {
         level: event.acceptance.progress.complete ? 'success' : 'info',
+        acceptance: {
+          passed: event.acceptance.progress.passed,
+          total: event.acceptance.progress.total,
+          complete: event.acceptance.progress.complete,
+          criteria: event.acceptance.criteria.map((c) => ({
+            title: c.title,
+            status: c.status,
+            source: c.source,
+          })),
+        },
       });
     case 'report-created':
       return make(seq, 'report', `Report: ${event.report.title}`, { detail: event.report.summary });

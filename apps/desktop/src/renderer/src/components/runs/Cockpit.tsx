@@ -193,6 +193,7 @@ function GateDialog({ gate, onAnswer }: { gate: CockpitEvent | null; onAnswer: (
 function LiveCockpit({ runId }: { runId: string }) {
   const t = useT();
   const feed = useAppStore((s) => s.feed);
+  const acceptance = useAppStore((s) => s.acceptance);
   const runs = useAppStore((s) => s.runs);
   const controlRun = useAppStore((s) => s.controlRun);
   const closeRun = useAppStore((s) => s.closeRun);
@@ -247,7 +248,7 @@ function LiveCockpit({ runId }: { runId: string }) {
         </Tooltip>
       </header>
 
-      <CockpitTabs feed={feed} />
+      <CockpitTabs feed={feed} acceptance={acceptance} />
 
       <div className="shrink-0 border-t bg-card/40 p-2">
         <div className="flex items-center gap-1.5">

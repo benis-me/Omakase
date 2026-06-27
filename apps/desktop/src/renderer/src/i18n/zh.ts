@@ -77,6 +77,17 @@ export const zh: Record<string, string> = {
   Reports: '报告',
   Knowledge: '知识',
   Diffs: '改动',
+  // ── Acceptance panel ─────────────────────────────────────────────────────
+  'criteria met': '条标准达成',
+  'from agent spec': '来自 agent 规格',
+  'agent spec': 'agent 规格',
+  'No acceptance criteria yet — they appear once a spec drives the run, or the agent authors one.':
+    '还没有验收标准——当 spec 驱动运行,或 agent 自己写出 spec 时,标准会出现在这里。',
+  pending: '待定',
+  pass: '通过',
+  fail: '未通过',
+  unknown: '未知',
+  'needs-user': '待人工',
   'The run needs your decision': '运行需要你的决定',
   Hold: '暂缓',
   'Approve & proceed': '批准并继续',

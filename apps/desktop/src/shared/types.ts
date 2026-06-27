@@ -301,6 +301,24 @@ export type CockpitEventKind =
 
 export type CockpitLevel = 'info' | 'warn' | 'error' | 'success';
 
+export type AcceptanceCriterionStatus = 'pending' | 'pass' | 'fail' | 'unknown' | 'needs-user';
+export type AcceptanceCriterionSource = 'planner' | 'user' | 'reviewer' | 'replan' | 'spec';
+
+export interface AcceptanceCriterionDto {
+  title: string;
+  status: AcceptanceCriterionStatus;
+  /** `spec` = adopted from a spec the agent authored mid-run. */
+  source: AcceptanceCriterionSource;
+}
+
+/** The run's current acceptance state — progress plus each criterion's verdict. */
+export interface AcceptanceView {
+  passed: number;
+  total: number;
+  complete: boolean;
+  criteria: AcceptanceCriterionDto[];
+}
+
 export interface CockpitEvent {
   seq: number;
   kind: CockpitEventKind;
@@ -316,6 +334,8 @@ export interface CockpitEvent {
   model?: string | null;
   /** Links an 'agent'/'task' event to its plan task, so a roster can join status. */
   taskId?: string;
+  /** On 'acceptance-updated' notes: the full criteria snapshot for the panel. */
+  acceptance?: AcceptanceView;
 }
 
 export interface RunDetailDto {
