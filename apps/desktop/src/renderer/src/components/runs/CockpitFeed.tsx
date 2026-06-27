@@ -46,19 +46,30 @@ const LEVEL_COLOR: Record<CockpitLevel, string> = {
 
 function FeedRow({ event }: { event: CockpitEvent }) {
   const Icon = ICON[event.kind];
+  // Tool calls read best on one line: "Read · src/foo.ts" — the title is the tool,
+  // the detail is its target rendered inline in mono. Other kinds keep a wrapped
+  // detail block (reports, errors, knowledge…).
+  const inlineDetail = event.kind === 'tool';
   return (
-    <div className="flex gap-2.5">
+    <div className="flex gap-2.5 rounded-md px-2 py-1 transition-colors hover:bg-accent/30">
       <Icon className={cn('mt-0.5 size-3.5 shrink-0', LEVEL_COLOR[event.level])} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="text-[13px] leading-snug">{event.title}</span>
+          <span className={cn('shrink-0 text-[13px] leading-snug', inlineDetail && 'font-medium')}>
+            {event.title}
+          </span>
+          {inlineDetail && event.detail && (
+            <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground/90">
+              {event.detail}
+            </span>
+          )}
           {event.role && (
-            <span className="shrink-0 font-mono text-[10px] uppercase text-muted-foreground/70">
+            <span className="ml-auto shrink-0 font-mono text-[10px] uppercase text-muted-foreground/70">
               {event.role}
             </span>
           )}
         </div>
-        {event.detail && (
+        {!inlineDetail && event.detail && (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-muted-foreground">
             {event.detail.length > 600 ? `${event.detail.slice(0, 600)}…` : event.detail}
           </p>

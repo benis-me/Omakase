@@ -382,6 +382,9 @@ class RunController implements RunHandle {
    * true success. */
   private verificationFailed = false;
   private readonly maxAttempts: number;
+  /** taskId → its stable agent-run id, so a retried task reuses ONE roster entry
+   * (its attempt counter rises) instead of spawning a fresh "agent" each attempt. */
+  private readonly taskAgentRunIds = new Map<string, string>();
   private readonly maxConcurrency: number;
   private readonly budget: RunBudget | undefined;
   private spentTokens = 0;
@@ -698,8 +701,17 @@ class RunController implements RunHandle {
     role: AgentRole,
     taskId: string | null,
   ): { agentRunId: string; agentLabel: string } {
-    const agentRunId = this.ids.next('agent-run');
     const suffix = taskId ?? role;
+    // A retried task keeps its agent-run id, so the roster shows one agent whose
+    // status/attempts update — not a new clone per attempt. Out-of-band roles
+    // (planner/reviewer/…) have no taskId and get a fresh id each time.
+    let agentRunId: string;
+    if (taskId) {
+      agentRunId = this.taskAgentRunIds.get(taskId) ?? this.ids.next('agent-run');
+      this.taskAgentRunIds.set(taskId, agentRunId);
+    } else {
+      agentRunId = this.ids.next('agent-run');
+    }
     return { agentRunId, agentLabel: `${assignment.agentId}#${suffix}` };
   }
 
@@ -2028,7 +2040,7 @@ class RunController implements RunHandle {
       .emit('beforeAgentRun', { role: task.role, assignment, input, task })
       .catch((e) => this.emit({ type: 'error', phase: 'beforeAgentRun', message: errorMessage(e) }));
 
-    this.emit({ type: 'agent-assigned', role: task.role, taskId: task.id, title: task.title, assignment, ...identity });
+    this.emit({ type: 'agent-assigned', role: task.role, taskId: task.id, title: task.title, assignment, attempts: task.attempts, ...identity });
     await this.checkpointProgress();
 
     const acc = createResultAccumulator();

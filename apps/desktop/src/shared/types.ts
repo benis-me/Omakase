@@ -336,6 +336,8 @@ export interface CockpitEvent {
   model?: string | null;
   /** Links an 'agent'/'task' event to its plan task, so a roster can join status. */
   taskId?: string;
+  /** On 'agent' events: the task's attempt number (≥2 means it's a retry). */
+  attempts?: number;
   /** On 'acceptance-updated' notes: the full criteria snapshot for the panel. */
   acceptance?: AcceptanceView;
 }

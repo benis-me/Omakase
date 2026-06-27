@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { RotateCw } from 'lucide-react';
 import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
@@ -18,6 +19,8 @@ interface AgentRow {
   taskId?: string;
   title: string;
   status: 'running' | 'done' | 'failed';
+  /** Highest attempt seen — >1 means the task was retried on this same agent. */
+  attempts?: number;
 }
 
 const AGENT_DOT: Record<AgentRow['status'], DotStatus> = {
@@ -46,9 +49,11 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
     if (e.kind !== 'agent' || !e.agentRunId) continue;
     const prev = byAgent.get(e.agentRunId);
     if (prev) {
-      // A later event (the terminal 'done') updates only the status — the first
-      // event (agent-assigned) carries the descriptive task title/CLI/model.
+      // Later events update the status (terminal 'done', or a retry's fresh
+      // 'running') and the attempt count; the first event (agent-assigned)
+      // keeps the descriptive task title/CLI/model.
       prev.eventStatus = e.status;
+      if (e.attempts && e.attempts > (prev.attempts ?? 1)) prev.attempts = e.attempts;
     } else {
       byAgent.set(e.agentRunId, {
         agentRunId: e.agentRunId,
@@ -58,6 +63,7 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
         taskId: e.taskId,
         title: e.title,
         eventStatus: e.status,
+        ...(e.attempts ? { attempts: e.attempts } : {}),
       });
     }
   }
@@ -77,6 +83,7 @@ function deriveRoster(feed: CockpitEvent[], runTerminal: boolean): AgentRow[] {
       taskId: a.taskId,
       title: a.title,
       status,
+      ...(a.attempts ? { attempts: a.attempts } : {}),
     };
   });
 }
@@ -202,6 +209,15 @@ export function AgentsView() {
                         {a.model && <span>· {a.model}</span>}
                       </div>
                     </div>
+                    {a.attempts && a.attempts > 1 && (
+                      <span
+                        className="flex shrink-0 items-center gap-0.5 text-[11px] text-warn"
+                        title={t('Retried on the same agent')}
+                      >
+                        <RotateCw className="size-3" />
+                        {a.attempts - 1}
+                      </span>
+                    )}
                     <span className="shrink-0 text-[11px] capitalize text-muted-foreground">{a.status}</span>
                   </div>
                 ))}

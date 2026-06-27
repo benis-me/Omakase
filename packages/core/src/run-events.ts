@@ -117,6 +117,8 @@ export type OrchestratorEvent =
       agentRunId?: string;
       /** User-facing label that distinguishes concurrent runs on the same adapter. */
       agentLabel?: string;
+      /** Which attempt this is for the task (1 on the first run, ≥2 on a retry). */
+      attempts?: number;
     }
   | {
       type: 'agent-event';

@@ -16,6 +16,21 @@ function make(
   return { seq, kind, title, level: extra.level ?? 'info', ...extra };
 }
 
+/** A human-readable one-liner for a tool call's target — the command, path, or
+ *  pattern it acted on — so the feed reads "Read · src/foo.ts", not just "Read". */
+function summarizeToolInput(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const o = input as Record<string, unknown>;
+  const pick = o.command ?? o.file_path ?? o.path ?? o.pattern ?? o.url ?? o.query ?? o.prompt;
+  const clip = (s: string): string => (s.length > 240 ? `${s.slice(0, 240)}…` : s);
+  if (typeof pick === 'string' && pick.trim()) return clip(pick.trim());
+  try {
+    return clip(JSON.stringify(o));
+  } catch {
+    return undefined;
+  }
+}
+
 export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEvent | null {
   switch (event.type) {
     case 'run-started':
@@ -47,12 +62,19 @@ export function toCockpitEvent(event: OrchestratorEvent, seq: number): CockpitEv
         agentId: event.assignment.agentId,
         model: event.assignment.model,
         ...(event.taskId ? { taskId: event.taskId } : {}),
+        ...(event.attempts && event.attempts > 1 ? { attempts: event.attempts } : {}),
       });
     case 'agent-event': {
       const ae = event.event;
       if (ae.type === 'tool_use') {
         const name = (ae as { name?: string }).name ?? 'tool';
-        return make(seq, 'tool', `${event.role}: ${name}`, { role: event.role });
+        // Title is just the tool; the role badge carries the role (no "worker:
+        // Read worker" doubling). The detail surfaces the tool's actual target.
+        return make(seq, 'tool', name, {
+          role: event.role,
+          detail: summarizeToolInput((ae as { input?: unknown }).input),
+          ...(event.taskId ? { taskId: event.taskId } : {}),
+        });
       }
       if (ae.type === 'error') {
         return make(seq, 'error', `${event.role} error`, {
