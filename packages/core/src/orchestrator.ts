@@ -152,10 +152,22 @@ export interface OrchestratorOptions {
    * upgrade — objective pass/fail, not agent self-assessment. Omit to skip.
    */
   verifier?: RunVerifier;
+  /**
+   * Closes the loop on agent self-authored specs. When a run authors a spec
+   * mid-flight (e.g. a spec-less prompt where the agent writes `.omks/specs/*.md`),
+   * this returns that spec's acceptance criteria so the loop adopts and verifies
+   * against them — instead of trusting the worker's own "done". The implementer
+   * (RunHost / CLI) reads the workspace and returns criteria from specs authored
+   * during this run. Omit to skip (the run keeps its prior, looser acceptance).
+   */
+  authoredSpecCriteria?: AuthoredSpecCriteria;
 }
 
 /** A deterministic finish-line check — typically running the workspace's tests. */
 export type RunVerifier = () => Promise<{ passed: boolean; summary: string }>;
+
+/** Returns acceptance criteria from specs the agent authored during the run. */
+export type AuthoredSpecCriteria = (cwd: string) => string[] | Promise<string[]>;
 
 const REVIEW_REJECTS =
   /\b(reject|rejected|needs work|needs more|incomplete|not done|insufficient|revise|fail(?:ed|s)?)\b/;
@@ -361,6 +373,10 @@ class RunController implements RunHandle {
   private readonly validateEnabled: boolean;
   private readonly maxValidationRounds: number;
   private readonly verifier?: RunVerifier;
+  private readonly authoredSpecCriteria?: AuthoredSpecCriteria;
+  /** Set once we adopt criteria from a spec the agent authored this run, so the
+   * finish-line gate runs and the run is held to that spec (not implicitly passed). */
+  private adoptedSpec = false;
   /** Set when closed-loop verification never passed within maxValidationRounds —
    * the run did its tasks but its objective check is still red, so it isn't a
    * true success. */
@@ -450,6 +466,7 @@ class RunController implements RunHandle {
     this.streamFlushMs = Math.max(0, options.streamFlushMs ?? 0);
     this.detectionOptions = options.detectionOptions;
     this.maxIterations = options.maxIterations ?? 50;
+    this.authoredSpecCriteria = options.authoredSpecCriteria;
     this.validateEnabled = options.validate ?? false;
     this.maxValidationRounds = options.maxValidationRounds ?? 2;
     this.verifier = options.verifier;
@@ -780,19 +797,60 @@ class RunController implements RunHandle {
   }
 
   /**
+   * Adopt acceptance criteria from a spec the agent authored during this run.
+   * Each becomes a 'spec'-sourced criterion, which forces explicit acceptance (so
+   * the work isn't implicitly passed) and is scored by the validator. Wired only
+   * when an {@link AuthoredSpecCriteria} provider is supplied and the workspace is
+   * writable; a read failure must never break the run.
+   */
+  private async ingestAuthoredSpecCriteria(): Promise<void> {
+    if (!this.authoredSpecCriteria || !this.request.cwd) return;
+    let criteria: string[];
+    try {
+      criteria = await this.authoredSpecCriteria(this.request.cwd);
+    } catch {
+      return;
+    }
+    for (const raw of criteria) {
+      const added = this.appendAcceptanceCriterion(raw, 'spec');
+      // Only count genuinely new spec criteria (append dedupes by title).
+      if (added && added.source === 'spec') this.adoptedSpec = true;
+    }
+  }
+
+  /** Mark every still-open acceptance criterion as passed with shared evidence. */
+  private markAcceptanceSatisfied(note: string): void {
+    const now = this.clock();
+    this.setAcceptance(
+      this.acceptance.criteria.map((criterion) =>
+        criterion.status === 'pass'
+          ? criterion
+          : { ...criterion, status: 'pass', evidence: [...criterion.evidence, { text: note, createdAt: now }], updatedAt: now },
+      ),
+    );
+  }
+
+  /**
    * Independent validation gate. When a run would otherwise succeed, an
    * independent validator judges the work against the acceptance criteria; on a
    * gap verdict it injects fix-tasks and re-runs the loop, bounded by
-   * {@link maxValidationRounds}. A no-op unless {@link validateEnabled}.
+   * {@link maxValidationRounds}. Runs when validation/verification is enabled, or
+   * when the agent authored a spec this run (its criteria are then verified).
    */
   private async validationGate(): Promise<void> {
-    if (!this.validateEnabled && !this.verifier) return;
+    // Adopt criteria from any spec the agent authored this run, so the loop is
+    // held to the spec it wrote rather than the worker's own "done".
+    await this.ingestAuthoredSpecCriteria();
+    if (!this.validateEnabled && !this.verifier && !this.adoptedSpec) return;
     let round = 0;
     let lastVerifierPassed = true;
     while (round < this.maxValidationRounds && !this.cancelled && !this.budgetExhausted) {
       this.applyImplicitAcceptanceIfNeeded();
-      // Only gate a run that would otherwise succeed — nothing to validate otherwise.
-      if (this.computeFinalStatus() !== 'succeeded') return;
+      const status = this.computeFinalStatus();
+      // Gate a run that would otherwise succeed. For an adopted spec, 'incomplete'
+      // just means its criteria are still pending — that IS what we verify here; only
+      // bail on a real failure (failed/blocked tasks) or a non-adopted incomplete.
+      if (status !== 'succeeded' && !(this.adoptedSpec && status === 'incomplete')) return;
 
       const fixes: { title: string; description: string; tag: string }[] = [];
 
@@ -815,8 +873,9 @@ class RunController implements RunHandle {
         }
       }
 
-      // 2. Independent LLM validator — only once verification is clean.
-      if (this.validateEnabled && fixes.length === 0) {
+      // 2. Independent LLM validator — only once verification is clean. Also runs
+      // for an adopted spec, to judge the work against the agent's own criteria.
+      if ((this.validateEnabled || this.adoptedSpec) && fixes.length === 0) {
         const verdict = await this.runValidator();
         this.wiki.addNote({
           title: `Validation — ${verdict.passed ? 'passed' : 'gaps found'}`,
@@ -831,7 +890,15 @@ class RunController implements RunHandle {
         }
       }
 
-      if (fixes.length === 0) return; // every gate is clean (or rejected with no actionable fix)
+      if (fixes.length === 0) {
+        // Every gate is clean. For an adopted spec, the verifier/validator just
+        // confirmed the work meets the agent's own criteria — mark them satisfied
+        // so the run reaches a true 'succeeded' instead of a pending 'incomplete'.
+        if (this.adoptedSpec) {
+          this.markAcceptanceSatisfied('Verified against the agent-authored spec.');
+        }
+        return;
+      }
       for (const fix of fixes) {
         this.graph.addTask({ title: fix.title, description: fix.description, role: 'worker', tags: [fix.tag] });
       }
@@ -846,7 +913,9 @@ class RunController implements RunHandle {
   }
 
   private async runValidator(): Promise<ReturnType<typeof parseValidationVerdict>> {
-    const criteria = this.request.acceptanceCriteria ?? [];
+    // Validate against the run's full accepted criteria set (seeded + planner +
+    // adopted spec), not just the request's — so agent-authored criteria are judged.
+    const criteria = this.acceptanceCriteriaText();
     const prompt = buildValidationPrompt(this.request.prompt, criteria, this.supportContext());
     const { result } = await this.runSupportAgent('validator', prompt);
     // No real validator available (offline / scripted gating) → don't block finishing.
@@ -2223,7 +2292,11 @@ class RunController implements RunHandle {
     return (
       this.hasUserAcceptanceCriteria ||
       this.acceptance.criteria.some(
-        (criterion) => criterion.source === 'user' || criterion.source === 'reviewer' || criterion.source === 'replan',
+        (criterion) =>
+          criterion.source === 'user' ||
+          criterion.source === 'reviewer' ||
+          criterion.source === 'replan' ||
+          criterion.source === 'spec',
       )
     );
   }

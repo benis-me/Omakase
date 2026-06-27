@@ -199,6 +199,65 @@ describe('spec-first nudge (spec-driven development for spec-less runs)', () => 
   });
 });
 
+describe('adopting agent-authored spec criteria (closing the verification loop)', () => {
+  function makeOrch(opts: {
+    validatorText: string;
+    provider?: (cwd: string) => string[];
+  }) {
+    const exec = createScriptedAgent((input) => {
+      const p = String(input.prompt);
+      if (p.includes('independent VALIDATOR')) return [{ type: 'text_delta', delta: opts.validatorText }];
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    return new Orchestrator({
+      runtime: createAgentRuntime({ executors: { scripted: exec }, now: () => 0 }),
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'scripted' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 0,
+      detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
+      ...(opts.provider ? { authoredSpecCriteria: opts.provider } : {}),
+    });
+  }
+
+  it('adopts the authored criteria and succeeds when the validator confirms them', async () => {
+    const result = await makeOrch({
+      validatorText: '{"passed": true, "gaps": [], "notes": "all criteria met"}',
+      provider: () => ['slugify lowercases input', 'empty input returns empty string'],
+    }).start({ prompt: 'build slugify', cwd: '/tmp/omks-adopt', metadata: { supportAgents: true } }).result;
+
+    expect(result.status).toBe('succeeded');
+    const spec = result.acceptance.criteria.filter((c) => c.source === 'spec');
+    expect(spec.map((c) => c.title)).toEqual([
+      'slugify lowercases input',
+      'empty input returns empty string',
+    ]);
+    // Explicitly verified (marked pass), NOT implicitly passed.
+    expect(spec.every((c) => c.status === 'pass')).toBe(true);
+  });
+
+  it('does not rubber-stamp: a validator gap keeps the run from a false success', async () => {
+    const result = await makeOrch({
+      validatorText: '{"passed": false, "gaps": ["empty input is not handled"], "notes": "incomplete"}',
+      provider: () => ['empty input returns empty string'],
+    }).start({ prompt: 'build slugify', cwd: '/tmp/omks-adopt', metadata: { supportAgents: true } }).result;
+
+    // The worker reported done, but the loop held it to the agent's own spec.
+    expect(result.status).not.toBe('succeeded');
+    expect(result.plan.tasks.some((t) => t.tags?.includes('validator-fix'))).toBe(true);
+  });
+
+  it('leaves the run unchanged when no authored-spec provider is wired', async () => {
+    const result = await makeOrch({
+      validatorText: '{"passed": true, "gaps": []}',
+      // no provider
+    }).start({ prompt: 'do a thing', cwd: '/tmp/omks-adopt', metadata: { supportAgents: true } }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.acceptance.criteria.some((c) => c.source === 'spec')).toBe(false);
+  });
+});
+
 describe('command curation (/learn-style, post-run)', () => {
   const CURATION = 'Command curation:';
   function makeOrch(prompts: string[]) {

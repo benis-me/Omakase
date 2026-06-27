@@ -53,7 +53,15 @@ export {
 export type { FrontmatterDoc } from './omks/frontmatter.js';
 export { slugify, shortId, slugId } from './omks/slug.js';
 
-export { listSpecs, readSpec, writeSpec, createSpec, deleteSpec } from './omks/specs.js';
+export {
+  listSpecs,
+  readSpec,
+  writeSpec,
+  createSpec,
+  deleteSpec,
+  extractAcceptanceCriteria,
+  authoredSpecCriteriaSince,
+} from './omks/specs.js';
 export type { SpecDoc, SpecStatus, CreateSpecInput } from './omks/specs.js';
 export { listTriggers, saveTrigger, deleteTrigger, markTriggerFired } from './omks/triggers.js';
 export type { Trigger, TriggerKind, SaveTriggerInput } from './omks/triggers.js';

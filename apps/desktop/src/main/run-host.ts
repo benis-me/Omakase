@@ -21,6 +21,7 @@ import {
   type ControlPoll,
   type ControlSource,
   type OrchestratorEvent,
+  type AuthoredSpecCriteria,
   type OrchestratorOptions,
   type RunRecord,
   type RunStatus,
@@ -30,6 +31,8 @@ import type { OpenWorkspace } from '@omakase/storage';
 import {
   readSpec,
   readWorkflow,
+  extractAcceptanceCriteria,
+  authoredSpecCriteriaSince,
   snapshotInstructionMemory,
   diffInstructionMemory,
   instructionMemoryDrifted,
@@ -132,13 +135,9 @@ export class RunHost {
     const spec = input.specId ? readSpec(ws.root, input.specId) : null;
     const prompt = (spec?.body ?? input.prompt ?? '').trim();
     if (!prompt) throw new Error('A spec or prompt is required.');
-    // Prefer the spec's structured acceptance criteria (the guided phase machine);
-    // fall back to extracting them from the body.
-    const acceptanceCriteria = spec
-      ? spec.acceptanceCriteria.length
-        ? spec.acceptanceCriteria
-        : extractCriteria(spec.body)
-      : [];
+    // Structured frontmatter criteria (the guided phase machine), or the bullets
+    // under the spec body's Acceptance heading.
+    const acceptanceCriteria = spec ? extractAcceptanceCriteria(spec) : [];
 
     const controlDir = this.controlDir(ws);
     // Spec-driven runs get an independent validator at the finish line.
@@ -333,9 +332,23 @@ export class RunHost {
       // A run-level CLI choice pins every role to that agent.
       ...(agentId ? { policy: createModelPolicy('custom', { custom: { default: { agentId } } }) } : {}),
       ...(verifier ? { verifier } : {}),
+      // Hold the run to any spec the agent authors mid-flight (closes the loop on
+      // spec-less prompts where the agent writes its own `.omks/specs/*.md`).
+      authoredSpecCriteria: this.buildAuthoredSpecCriteria(ws),
       ...(maxTokens && maxTokens > 0 ? { budget: { maxTokens } } : {}),
       ...this.overrides,
     });
+  }
+
+  /**
+   * Returns the acceptance criteria of any spec authored during this run — detected
+   * by file mtime against run-start, since an agent-authored raw spec has no
+   * frontmatter `updatedAt`. The orchestrator adopts these so it verifies the work
+   * against the spec the agent wrote, rather than trusting the worker's own "done".
+   */
+  private buildAuthoredSpecCriteria(ws: OpenWorkspace): AuthoredSpecCriteria {
+    const startedAt = Date.now();
+    return () => authoredSpecCriteriaSince(ws.root, startedAt);
   }
 
   /**
@@ -428,14 +441,3 @@ function recordSummary(r: RunRecord, live: boolean): RunSummaryDto {
 }
 
 /** Pull acceptance-criteria lines from a spec body (under an "acceptance" heading). */
-function extractCriteria(body: string): string[] {
-  const out: string[] = [];
-  let inAcceptance = false;
-  for (const line of body.split(/\r?\n/)) {
-    if (/^#{1,6}\s/.test(line)) inAcceptance = /acceptance/i.test(line);
-    if (!inAcceptance) continue;
-    const m = line.match(/^\s*[-*]\s*(?:\[[ xX]?\]\s*)?(.+)$/);
-    if (m && m[1].trim()) out.push(m[1].trim());
-  }
-  return out;
-}

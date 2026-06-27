@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -25,6 +25,8 @@ import {
   writeCommand,
   writeRule,
   deleteRule,
+  extractAcceptanceCriteria,
+  authoredSpecCriteriaSince,
   snapshotInstructionMemory,
   diffInstructionMemory,
   instructionMemoryDrifted,
@@ -208,6 +210,55 @@ describe('omks authored documents', () => {
     const wf = createWorkflow(root, 'Nightly Audit');
     expect(wf.id).toBe('nightly-audit');
     expect(listWorkflows(root).map((w) => w.name)).toContain('Nightly Audit');
+  });
+});
+
+describe('authored-spec acceptance criteria (closing the verification loop)', () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'omks-authored-'));
+    ensureWorkspace(root, { now: 1000 });
+  });
+
+  // What an agent writes mid-run: a raw markdown spec with NO frontmatter criteria.
+  const RAW_AGENT_SPEC = [
+    '## Summary',
+    'A slugify helper.',
+    '',
+    '## Acceptance criteria',
+    '- [ ] slugify lowercases input',
+    '- [ ] empty input returns an empty string',
+    '',
+    '## Implementation plan',
+    '1. Write tests first.',
+  ].join('\n');
+
+  it('extracts criteria from a raw agent-authored spec body (no frontmatter)', () => {
+    writeFileSync(join(root, '.omks', 'specs', 'slugify.md'), RAW_AGENT_SPEC);
+    const spec = readSpec(root, 'slugify');
+    expect(spec).not.toBeNull();
+    expect(spec!.acceptanceCriteria).toEqual([]); // none in frontmatter
+    expect(extractAcceptanceCriteria(spec!)).toEqual([
+      'slugify lowercases input',
+      'empty input returns an empty string',
+    ]);
+  });
+
+  it('prefers structured frontmatter criteria over body parsing when present', () => {
+    const spec = createSpec(root, { title: 'Has Frontmatter', now: 1000 });
+    writeSpec(root, { ...spec, acceptanceCriteria: ['Criterion A', 'Criterion B'], updatedAt: 2000 });
+    expect(extractAcceptanceCriteria(readSpec(root, spec.id)!)).toEqual(['Criterion A', 'Criterion B']);
+  });
+
+  it('returns criteria only from specs modified at/after the run-start cutoff', () => {
+    writeFileSync(join(root, '.omks', 'specs', 'slugify.md'), RAW_AGENT_SPEC);
+    // Everything authored since epoch is in scope.
+    expect(authoredSpecCriteriaSince(root, 0)).toEqual([
+      'slugify lowercases input',
+      'empty input returns an empty string',
+    ]);
+    // A cutoff far in the future excludes the already-written spec.
+    expect(authoredSpecCriteriaSince(root, 2_000_000_000_000)).toEqual([]);
   });
 });
 

@@ -21,7 +21,7 @@ import {
   type WorkMode,
   type WikiEntryKind,
 } from '@omakase/core';
-import { openWorkspace, type OpenWorkspace } from '@omakase/storage';
+import { openWorkspace, authoredSpecCriteriaSince, type OpenWorkspace } from '@omakase/storage';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createServer, type ServeConfig } from './serve.js';
@@ -369,6 +369,7 @@ export function createCli(deps: CliDeps = {}): Cli {
     // Every real run persists to the project's `.omks` workspace: runs land in
     // `omks.db`, knowledge renders to `.omks/memory/`.
     const ws = resolveWorkspace(cwd);
+    const startedAt = Date.now();
     try {
       const orchestrator = new Orchestrator({
         runtime,
@@ -379,6 +380,8 @@ export function createCli(deps: CliDeps = {}): Cli {
           ? { policy: createModelPolicy('custom', { custom: { default: { agentId: agentOverride } } }) }
           : {}),
         ...(budget ? { budget } : {}),
+        // Hold the run to any spec the agent authors mid-flight.
+        authoredSpecCriteria: () => authoredSpecCriteriaSince(ws.root, startedAt),
         ...(deps.detectionOptions ? { detectionOptions: deps.detectionOptions } : {}),
       });
       return await driveRun(orchestrator, request, mode, options);

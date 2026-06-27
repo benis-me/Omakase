@@ -1,7 +1,7 @@
 import type { ReviewCriterion } from './run-events.js';
 
 export type AcceptanceStatus = 'pending' | 'pass' | 'fail' | 'unknown' | 'needs-user';
-export type AcceptanceSource = 'planner' | 'user' | 'reviewer' | 'replan';
+export type AcceptanceSource = 'planner' | 'user' | 'reviewer' | 'replan' | 'spec';
 
 export interface AcceptanceEvidence {
   text: string;

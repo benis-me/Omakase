@@ -4,7 +4,7 @@
  * holding the spec itself (summary, acceptance criteria, plan, test strategy).
  * The file is the source of truth; the spec-mode loop reads/advances it.
  */
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SpecPhase, SpecTransition } from '@omakase/core';
 import { specsDir } from './workspace.js';
@@ -101,6 +101,51 @@ export function readSpec(root: string, id: string): SpecDoc | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Acceptance criteria of a spec: its structured frontmatter list, or — for a raw
+ * agent-authored spec with no frontmatter — the bullet lines under the
+ * `## Acceptance criteria` heading (checkboxes included).
+ */
+export function extractAcceptanceCriteria(spec: SpecDoc): string[] {
+  if (spec.acceptanceCriteria.length) return spec.acceptanceCriteria;
+  const out: string[] = [];
+  let inAcceptance = false;
+  for (const line of spec.body.split(/\r?\n/)) {
+    if (/^#{1,6}\s/.test(line)) inAcceptance = /acceptance/i.test(line);
+    if (!inAcceptance) continue;
+    const m = line.match(/^\s*[-*]\s*(?:\[[ xX]?\]\s*)?(.+)$/);
+    if (m && m[1].trim()) out.push(m[1].trim());
+  }
+  return out;
+}
+
+/**
+ * Acceptance criteria of every spec file modified at or after `sinceMs` — i.e.
+ * specs authored or edited during a run. Detection is by file mtime because a raw
+ * agent-authored spec carries no frontmatter `updatedAt`.
+ */
+export function authoredSpecCriteriaSince(root: string, sinceMs: number): string[] {
+  let files: string[];
+  try {
+    files = readdirSync(specsDir(root)).filter((f) => f.endsWith('.md'));
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const file of files) {
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(path.join(specsDir(root), file)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (mtimeMs < sinceMs) continue;
+    const spec = readSpec(root, file.slice(0, -'.md'.length));
+    if (spec) out.push(...extractAcceptanceCriteria(spec));
+  }
+  return out;
 }
 
 export function writeSpec(root: string, spec: SpecDoc): void {

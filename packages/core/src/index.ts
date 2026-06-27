@@ -144,6 +144,7 @@ export type {
   RunResult,
   RunBudget,
   RunVerifier,
+  AuthoredSpecCriteria,
   StructuredReview,
 } from './orchestrator.js';
 
