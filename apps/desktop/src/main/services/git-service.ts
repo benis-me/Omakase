@@ -9,7 +9,8 @@ export type GitRunner = (args: string[], cwd: string) => Promise<{ ok: boolean; 
 
 const defaultRunner: GitRunner = (args, cwd) =>
   new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], { timeout: 4000 }, (err, stdout) => {
+    // 16MB so a large `git diff` isn't silently truncated (status output is tiny).
+    execFile('git', ['-C', cwd, ...args], { timeout: 8000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       resolve({ ok: !err, out: (stdout ?? '').toString() });
     });
   });

@@ -191,16 +191,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeRun: () => set({ currentRunId: null, feed: [] }),
   startRun: async (input) => {
     const settings = get().settings;
-    const id = await api().runs.start({
-      mode: input.mode ?? settings?.defaultMode ?? 'normal',
-      autonomy: input.autonomy ?? settings?.defaultAutonomy ?? 'low',
-      prompt: input.prompt,
-      specId: input.specId,
-      ...(input.agentId ? { agentId: input.agentId } : {}),
-      ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
-    });
-    set({ currentRunId: id, feed: [] });
-    void get().loadRuns();
+    try {
+      const id = await api().runs.start({
+        mode: input.mode ?? settings?.defaultMode ?? 'normal',
+        autonomy: input.autonomy ?? settings?.defaultAutonomy ?? 'low',
+        prompt: input.prompt,
+        specId: input.specId,
+        ...(input.agentId ? { agentId: input.agentId } : {}),
+        ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
+      });
+      set({ currentRunId: id, feed: [] });
+      void get().loadRuns();
+    } catch (err) {
+      toast.error(`Could not start run: ${err instanceof Error ? err.message : String(err)}`);
+    }
   },
   resumeRun: async (id) => {
     const autonomy = get().settings?.defaultAutonomy ?? 'low';

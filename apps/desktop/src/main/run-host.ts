@@ -202,6 +202,7 @@ export class RunHost {
     } catch {
       /* already done */
     }
+    this.triggeredBy.delete(id);
     await this.host.activeWorkspace?.runStore.delete(id);
   }
 
