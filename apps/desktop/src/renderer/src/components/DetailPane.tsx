@@ -6,6 +6,7 @@ import { AgentsView } from './content/AgentsView';
 import { AutomationsView } from './content/AutomationsView';
 import { MemoryView } from './content/MemoryView';
 import { WorkflowsView } from './content/WorkflowsView';
+import { CommandsView } from './content/CommandsView';
 
 export function DetailPane() {
   const nav = useAppStore((s) => s.nav);
@@ -22,6 +23,8 @@ export function DetailPane() {
       return <MemoryView />;
     case 'workflows':
       return <WorkflowsView />;
+    case 'commands':
+      return <CommandsView />;
     case 'dev':
       return <DevWorkbench />;
     default:

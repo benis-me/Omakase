@@ -78,6 +78,13 @@ export const IPC = {
   WorkflowsSave: 'workflows:save',
   WorkflowsDelete: 'workflows:delete',
 
+  // Commands (reusable prompt recipes / skills)
+  CommandsList: 'commands:list',
+  CommandsGet: 'commands:get',
+  CommandsCreate: 'commands:create',
+  CommandsSave: 'commands:save',
+  CommandsDelete: 'commands:delete',
+
   // Runs cockpit
   RunsList: 'runs:list',
   RunsGet: 'runs:get',

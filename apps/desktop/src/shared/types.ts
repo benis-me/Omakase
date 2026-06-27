@@ -169,6 +169,13 @@ export interface WorkflowDoc {
   path: string;
 }
 
+/** A reusable prompt recipe ("skill") under `.omks/commands/<name>.md`. Mirrors storage's CommandDoc. */
+export interface CommandDocDto {
+  name: string;
+  description: string;
+  body: string;
+}
+
 /** A starter workflow offered in the "New workflow" menu (source resolved in main). */
 export interface WorkflowTemplateDto {
   id: string;

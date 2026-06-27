@@ -3,6 +3,7 @@ import {
   Brain,
   FileText,
   ListTree,
+  SquareSlash,
   TerminalSquare,
   Workflow,
   Zap,
@@ -24,5 +25,6 @@ export const NAV_SECTIONS: readonly NavItem[] = [
   { id: 'automations', label: 'Automations', icon: Zap, hint: 'Triggers that start runs on a schedule or on file changes' },
   { id: 'memory', label: 'Memory', icon: Brain, hint: 'AGENTS.md, wiki, and accumulated knowledge' },
   { id: 'workflows', label: 'Workflows', icon: Workflow, hint: 'Dynamic orchestration scripts' },
+  { id: 'commands', label: 'Commands', icon: SquareSlash, hint: 'Reusable prompt recipes (skills)' },
   { id: 'dev', label: 'Dev', icon: TerminalSquare, hint: 'Scripts, ports, terminals, open with' },
 ];

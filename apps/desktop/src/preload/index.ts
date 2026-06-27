@@ -96,6 +96,13 @@ const api: OmakaseApi = {
     save: (id, source) => ipcRenderer.invoke(IPC.WorkflowsSave, id, source),
     delete: (id) => ipcRenderer.invoke(IPC.WorkflowsDelete, id),
   },
+  commands: {
+    list: () => ipcRenderer.invoke(IPC.CommandsList),
+    get: (name) => ipcRenderer.invoke(IPC.CommandsGet, name),
+    create: (name) => ipcRenderer.invoke(IPC.CommandsCreate, name),
+    save: (name, body) => ipcRenderer.invoke(IPC.CommandsSave, name, body),
+    delete: (name) => ipcRenderer.invoke(IPC.CommandsDelete, name),
+  },
   runs: {
     list: () => ipcRenderer.invoke(IPC.RunsList),
     get: (id) => ipcRenderer.invoke(IPC.RunsGet, id),

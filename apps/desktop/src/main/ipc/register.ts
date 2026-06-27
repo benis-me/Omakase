@@ -160,6 +160,13 @@ export function registerIpc(
   ipcMain.handle(IPC.WorkflowsSave, (_e, id: string, source: string) => content.saveWorkflow(id, source));
   ipcMain.handle(IPC.WorkflowsDelete, (_e, id: string) => content.deleteWorkflow(id));
 
+  // Commands (reusable prompt recipes / skills)
+  ipcMain.handle(IPC.CommandsList, () => content.listCommands());
+  ipcMain.handle(IPC.CommandsGet, (_e, name: string) => content.getCommand(name));
+  ipcMain.handle(IPC.CommandsCreate, (_e, name: string) => content.createCommand(name));
+  ipcMain.handle(IPC.CommandsSave, (_e, name: string, body: string) => content.saveCommand(name, body));
+  ipcMain.handle(IPC.CommandsDelete, (_e, name: string) => content.deleteCommand(name));
+
   // Runs cockpit
   ipcMain.handle(IPC.RunsList, () => runs.listRuns());
   ipcMain.handle(IPC.RunsGet, (_e, id: string) => runs.getRun(id));

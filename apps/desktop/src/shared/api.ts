@@ -10,6 +10,7 @@ import type {
   AppVersions,
   AutonomyLevel,
   CockpitEvent,
+  CommandDocDto,
   DetectedAgentDto,
   GitInfo,
   KnowledgeEventDto,
@@ -122,6 +123,13 @@ export interface OmakaseApi {
     create(name: string, templateId?: string): Promise<WorkflowDoc | null>;
     save(id: string, source: string): Promise<void>;
     delete(id: string): Promise<void>;
+  };
+  commands: {
+    list(): Promise<CommandDocDto[]>;
+    get(name: string): Promise<CommandDocDto | null>;
+    create(name: string): Promise<CommandDocDto | null>;
+    save(name: string, body: string): Promise<void>;
+    delete(name: string): Promise<void>;
   };
   runs: {
     list(): Promise<RunSummaryDto[]>;

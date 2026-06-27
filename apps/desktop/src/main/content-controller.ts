@@ -8,20 +8,24 @@ import {
   createSpec,
   createWorkflow,
   deleteAgent,
+  deleteCommand,
   deleteRule,
   deleteSpec,
   deleteWorkflow,
   listAgents,
+  listCommands,
   listRules,
   listSpecs,
   listWorkflows,
   readAgent,
   readAgentsMd,
+  readCommand,
   readSpec,
   readWikiMarkdown,
   readWorkflow,
   writeAgent,
   writeAgentsMd,
+  writeCommand,
   writeRule,
   writeSpec,
   writeWorkflow,
@@ -31,6 +35,7 @@ import {
   saveTrigger,
   deleteTrigger,
   type AgentDoc,
+  type CommandDoc,
   type SaveTriggerInput,
   type SpecDoc,
   type Trigger,
@@ -201,6 +206,37 @@ export class ContentController {
   deleteWorkflow(id: string): void {
     const root = this.root();
     if (root) deleteWorkflow(root, id);
+  }
+
+  // ── Commands (reusable prompt recipes / skills) ──────────────────────────
+  listCommands(): CommandDoc[] {
+    const root = this.root();
+    return root ? listCommands(root) : [];
+  }
+  getCommand(name: string): CommandDoc | null {
+    const root = this.root();
+    return root ? readCommand(root, name) : null;
+  }
+  createCommand(name: string): CommandDoc | null {
+    const root = this.root();
+    if (!root) return null;
+    const doc: CommandDoc = {
+      name,
+      description: '',
+      body: `Describe what running /${name} should do.\n\nUse $ARGUMENTS to interpolate the text passed after the command.\n`,
+    };
+    writeCommand(root, doc);
+    return doc;
+  }
+  saveCommand(name: string, body: string): void {
+    const root = this.root();
+    if (!root) return;
+    const existing = readCommand(root, name);
+    writeCommand(root, { name, description: existing?.description ?? '', body });
+  }
+  deleteCommand(name: string): void {
+    const root = this.root();
+    if (root) deleteCommand(root, name);
   }
 
   // ── Triggers (automations) ───────────────────────────────────────────────
