@@ -8,15 +8,6 @@ import { CodeEditor } from '../ui/code-editor';
 import { Tooltip } from '../ui/tooltip';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
-/** Turn free text into a safe `.omks/commands/<name>.md` slug (the command's identity). */
-function slugify(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 export function CommandsView() {
   const activePath = useAppStore((s) => s.active?.path);
   const [commands, setCommands] = useState<CommandDocDto[]>([]);
@@ -39,14 +30,10 @@ export function CommandsView() {
   }, [selectedName, commands]);
 
   const create = async (): Promise<void> => {
-    const raw = window.prompt('Command name (used as /<name>)');
-    if (raw == null) return;
-    const name = slugify(raw);
-    if (!name) return;
-    if (commands.some((c) => c.name === name)) {
-      setSelectedName(name);
-      return;
-    }
+    // Electron's renderer has no window.prompt(); create with a unique default
+    // name (the file name = the /command), like Memory rules.
+    let name = 'new-command';
+    for (let i = 2; commands.some((c) => c.name === name); i += 1) name = `new-command-${i}`;
     const doc = await window.omakase.commands.create(name);
     if (doc) {
       setCommands((p) => [...p, doc].sort((a, b) => a.name.localeCompare(b.name)));

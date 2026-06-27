@@ -15,6 +15,7 @@ import {
   listTriggers,
   listWorkflows,
   openWorkspace,
+  WORKFLOW_TEMPLATES,
   saveTrigger,
   readAgent,
   readAgentsMd,
@@ -48,14 +49,19 @@ describe('omks workspace', () => {
     expect(ensureWorkspace(root, { now: 2000 }).id).toBe(manifest.id);
   });
 
-  it('seeds runnable workflow templates that pass the dynamic-workflow validator', () => {
-    ensureWorkspace(root, { name: 'WF', now: 1 });
-    for (const file of ['mission.ts', 'tdd.ts']) {
-      const source = readFileSync(join(root, '.omks', 'workflows', file), 'utf8');
-      // The real runner contract: a default export, and no forbidden globals.
-      expect(source).toMatch(/export default async function/);
-      expect(() => validateWorkflowScriptSource(source)).not.toThrow();
+  it('ships workflow templates that pass the dynamic-workflow validator', () => {
+    // Templates are offered via the "New" menu (not auto-seeded); they must still
+    // satisfy the runner contract: a default export and no forbidden globals.
+    expect(WORKFLOW_TEMPLATES.length).toBeGreaterThan(0);
+    for (const t of WORKFLOW_TEMPLATES) {
+      expect(t.source).toMatch(/export default async function/);
+      expect(() => validateWorkflowScriptSource(t.source)).not.toThrow();
     }
+  });
+
+  it('does not auto-seed workflow files into a fresh workspace', () => {
+    ensureWorkspace(root, { name: 'WF', now: 1 });
+    expect(listWorkflows(root)).toEqual([]);
   });
 
   it('persists triggers (automations) with defaults, upserts, and deletes', () => {
@@ -192,8 +198,7 @@ describe('omks authored documents', () => {
     expect(cmd?.body.trim()).toBe('Remember: $ARGUMENTS');
   });
 
-  it('seeds a mission template and creates workflows from a // name: hint', () => {
-    expect(listWorkflows(root).some((w) => w.name === 'Mission')).toBe(true);
+  it('creates a workflow and reads its name from the // name: hint', () => {
     const wf = createWorkflow(root, 'Nightly Audit');
     expect(wf.id).toBe('nightly-audit');
     expect(listWorkflows(root).map((w) => w.name)).toContain('Nightly Audit');

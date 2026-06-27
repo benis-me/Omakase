@@ -256,11 +256,9 @@ export function ensureWorkspace(root: string, options: EnsureWorkspaceOptions = 
   const agentsMd = path.join(memoryDir(root), 'AGENTS.md');
   if (!existsSync(agentsMd)) writeFileSync(agentsMd, STARTER_AGENTS_MD, 'utf8');
 
-  const missionFile = path.join(workflowsDir(root), 'mission.ts');
-  if (!existsSync(missionFile)) writeFileSync(missionFile, MISSION_TEMPLATE, 'utf8');
-
-  const tddFile = path.join(workflowsDir(root), 'tdd.ts');
-  if (!existsSync(tddFile)) writeFileSync(tddFile, TDD_TEMPLATE, 'utf8');
+  // Workflows are NOT auto-seeded — Mission / TDD are available on demand via the
+  // Workflows "New" template menu (WORKFLOW_TEMPLATES), so an imported project's
+  // .omks/ stays clean.
 
   let manifest = readWorkspace(root);
   if (!manifest) {
