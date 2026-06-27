@@ -180,6 +180,22 @@ export class RunHost {
     return true;
   }
 
+  /** Re-run a finished run that failed/stalled — resets its failed tasks and resumes. */
+  async retryRun(id: string, autonomy: AutonomyLevel): Promise<boolean> {
+    if (this.live.has(id)) return true;
+    const ws = this.host.activeWorkspace;
+    if (!ws) return false;
+    const record = await ws.runStore.load(id);
+    if (!record) return false;
+    const controlDir = this.controlDir(ws);
+    rmSync(join(controlDir, `${id}.control.json`), { force: true });
+    const handle = await this.buildOrchestrator(ws, controlDir, record.mode).retry(id);
+    if (!handle) return false;
+    this.memBaseline.set(handle.id, { root: ws.root, snapshot: snapshotInstructionMemory(ws.root) });
+    this.track(handle, autonomy, controlDir, toCockpitFeed(record.events).length);
+    return true;
+  }
+
   /** Run a dynamic workflow script as a run (requires Bun on PATH). */
   startWorkflow(workflowId: string, autonomy: AutonomyLevel): string {
     const ws = this.requireWorkspace();

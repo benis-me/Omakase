@@ -92,6 +92,7 @@ export const IPC = {
   RunsStart: 'runs:start',
   RunsStartWorkflow: 'runs:startWorkflow',
   RunsResume: 'runs:resume',
+  RunsRetry: 'runs:retry',
   RunsControl: 'runs:control',
   RunsDelete: 'runs:delete',
 

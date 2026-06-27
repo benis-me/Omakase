@@ -138,6 +138,8 @@ export interface OmakaseApi {
     start(input: RunStartInput): Promise<string>;
     startWorkflow(workflowId: string, autonomy: AutonomyLevel): Promise<string>;
     resume(id: string, autonomy: AutonomyLevel): Promise<boolean>;
+    /** Re-run a failed/stalled run: reset its failed tasks and resume. */
+    retry(id: string, autonomy: AutonomyLevel): Promise<boolean>;
     control(id: string, command: RunControl): Promise<void>;
     delete(id: string): Promise<void>;
   };

@@ -82,6 +82,7 @@ interface AppState {
     maxTokens?: number;
   }) => Promise<void>;
   resumeRun: (id: string) => Promise<void>;
+  retryRun: (id: string) => Promise<void>;
   startWorkflow: (workflowId: string) => Promise<void>;
   controlRun: (command: RunControl) => Promise<void>;
   deleteRun: (id: string) => Promise<void>;
@@ -234,6 +235,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   resumeRun: async (id) => {
     const autonomy = get().settings?.defaultAutonomy ?? 'low';
     await api().runs.resume(id, autonomy);
+    await get().openRun(id);
+    void get().loadRuns();
+  },
+  retryRun: async (id) => {
+    const autonomy = get().settings?.defaultAutonomy ?? 'low';
+    await api().runs.retry(id, autonomy);
     await get().openRun(id);
     void get().loadRuns();
   },

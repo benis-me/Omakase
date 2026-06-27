@@ -110,6 +110,7 @@ const api: OmakaseApi = {
     start: (input) => ipcRenderer.invoke(IPC.RunsStart, input),
     startWorkflow: (workflowId, autonomy) => ipcRenderer.invoke(IPC.RunsStartWorkflow, workflowId, autonomy),
     resume: (id, autonomy) => ipcRenderer.invoke(IPC.RunsResume, id, autonomy),
+    retry: (id, autonomy) => ipcRenderer.invoke(IPC.RunsRetry, id, autonomy),
     control: (id, command) => ipcRenderer.invoke(IPC.RunsControl, id, command),
     delete: (id) => ipcRenderer.invoke(IPC.RunsDelete, id),
   },

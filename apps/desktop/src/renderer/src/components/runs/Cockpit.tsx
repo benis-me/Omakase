@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pause, Play, Send, Square, Trash2, X } from 'lucide-react';
+import { Pause, Play, RotateCw, Send, Square, Trash2, X } from 'lucide-react';
 import type { AutonomyLevel, CockpitEvent, RunMode, SpecDoc } from '@shared/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useT } from '@/i18n';
@@ -197,6 +197,7 @@ function LiveCockpit({ runId }: { runId: string }) {
   const closeRun = useAppStore((s) => s.closeRun);
   const deleteRun = useAppStore((s) => s.deleteRun);
   const resumeRun = useAppStore((s) => s.resumeRun);
+  const retryRun = useAppStore((s) => s.retryRun);
   const [steer, setSteer] = useState('');
 
   const summary = runs.find((r) => r.id === runId);
@@ -306,6 +307,14 @@ function LiveCockpit({ runId }: { runId: string }) {
               <Button variant="omk" size="sm" className="gap-1.5" onClick={() => void resumeRun(runId)}>
                 <Play className="size-3.5" />
                 {t('Resume')}
+              </Button>
+            </Tooltip>
+          )}
+          {!live && status === 'failed' && (
+            <Tooltip content={t('Reset the failed tasks and run again')}>
+              <Button variant="omk" size="sm" className="gap-1.5" onClick={() => void retryRun(runId)}>
+                <RotateCw className="size-3.5" />
+                {t('Retry')}
               </Button>
             </Tooltip>
           )}

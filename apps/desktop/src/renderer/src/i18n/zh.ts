@@ -107,6 +107,8 @@ export const zh: Record<string, string> = {
   'Queue a steering message…': '排入一条引导消息…',
   'This run has ended.': '此运行已结束。',
   'This run was interrupted — resume to continue.': '此运行已中断——恢复以继续。',
+  Retry: '重试',
+  'Reset the failed tasks and run again': '重置失败的任务并重新运行',
   'No uncommitted changes in the workspace.': '工作区没有未提交的改动。',
   'Loading diff…': '加载改动…',
   idle: '空闲',

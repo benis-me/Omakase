@@ -2492,4 +2492,24 @@ export class Orchestrator {
     if (!record) return null;
     return new RunController(this.options, record.request, record);
   }
+
+  /**
+   * Re-run a finished run that didn't fully succeed: reset its failed/blocked tasks
+   * to pending with fresh attempts (clearing the stale failure result) and resume.
+   * Unlike {@link resume} this revives terminal-failed work — the user's explicit
+   * "try again" after a Run failed.
+   */
+  async retry(runId: string): Promise<RunHandle | null> {
+    const store = this.options.store ?? null;
+    if (!store) return null;
+    const record = await store.load(runId);
+    if (!record) return null;
+    const tasks = record.plan.tasks.map((t) => {
+      if (t.status !== 'failed' && t.status !== 'blocked') return t;
+      const { result: _cleared, ...rest } = t;
+      return { ...rest, status: 'pending' as const, attempts: 0 };
+    });
+    const revived = { ...record, status: 'pending' as const, plan: { ...record.plan, tasks } };
+    return new RunController(this.options, record.request, revived);
+  }
 }
