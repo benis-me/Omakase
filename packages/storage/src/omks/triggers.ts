@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { omksDir } from './workspace.js';
 
-export type TriggerKind = 'interval' | 'watch';
+export type TriggerKind = 'interval' | 'daily' | 'watch';
 
 export interface Trigger {
   id: string;
@@ -27,6 +27,8 @@ export interface Trigger {
   maxTokens?: number;
   /** kind === 'interval': minutes between fires. */
   intervalMinutes?: number;
+  /** kind === 'daily': local time of day to fire, "HH:MM". */
+  dailyTime?: string;
   /** kind === 'watch': quiet period after the last change before firing. */
   debounceMs?: number;
   /** Last time the scheduler fired this trigger. */
@@ -62,6 +64,7 @@ export interface SaveTriggerInput {
   agentId?: string;
   maxTokens?: number;
   intervalMinutes?: number;
+  dailyTime?: string;
   debounceMs?: number;
 }
 
@@ -81,6 +84,7 @@ export function saveTrigger(root: string, input: SaveTriggerInput): Trigger {
     agentId: input.agentId,
     maxTokens: input.maxTokens ?? existing?.maxTokens,
     intervalMinutes: input.intervalMinutes ?? existing?.intervalMinutes ?? 30,
+    dailyTime: input.dailyTime ?? existing?.dailyTime ?? '02:00',
     debounceMs: input.debounceMs ?? existing?.debounceMs ?? 5000,
     lastFiredAt: existing?.lastFiredAt,
   };

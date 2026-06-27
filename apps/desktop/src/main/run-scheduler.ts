@@ -43,6 +43,17 @@ export function shouldFire(
   return true;
 }
 
+/** Milliseconds from `now` until the next local "HH:MM" (today if still ahead, else tomorrow). */
+export function nextDailyDelayMs(now: number, hhmm: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm ?? '').trim());
+  const hours = m ? Math.min(23, Math.max(0, Number(m[1]))) : 2;
+  const minutes = m ? Math.min(59, Math.max(0, Number(m[2]))) : 0;
+  const target = new Date(now);
+  target.setHours(hours, minutes, 0, 0);
+  if (target.getTime() <= now) target.setDate(target.getDate() + 1);
+  return target.getTime() - now;
+}
+
 export class RunScheduler {
   private root: string | null = null;
   private readonly armed = new Map<string, ArmedTrigger>();
@@ -75,6 +86,8 @@ export class RunScheduler {
       const ms = Math.max(1, trigger.intervalMinutes ?? 30) * 60_000;
       entry.timer = setInterval(() => this.fire(trigger.id), ms);
       entry.timer.unref?.();
+    } else if (trigger.kind === 'daily') {
+      this.armDaily(entry);
     } else if (this.root) {
       const watcher = watch(this.root, { ignored: IGNORED, ignoreInitial: true, persistent: true });
       const onChange = (): void => {
@@ -89,6 +102,16 @@ export class RunScheduler {
       entry.watcher = watcher;
     }
     this.armed.set(trigger.id, entry);
+  }
+
+  private armDaily(entry: ArmedTrigger): void {
+    const delay = nextDailyDelayMs(this.now(), entry.trigger.dailyTime ?? '02:00');
+    entry.timer = setTimeout(() => {
+      this.fire(entry.trigger.id);
+      // Re-arm for the next day, unless this entry was torn down meanwhile.
+      if (this.armed.get(entry.trigger.id) === entry) this.armDaily(entry);
+    }, delay);
+    entry.timer.unref?.();
   }
 
   private fire(id: string): void {

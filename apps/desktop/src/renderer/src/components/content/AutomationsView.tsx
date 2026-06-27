@@ -119,8 +119,12 @@ export function AutomationsView() {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-[13px] font-medium">{t.name || 'Automation'}</span>
                     <Badge variant="outline" className="gap-1 normal-case">
-                      {t.kind === 'interval' ? <Clock className="size-3" /> : <Eye className="size-3" />}
-                      {t.kind === 'interval' ? `every ${t.intervalMinutes ?? 30}m` : 'on changes'}
+                      {t.kind === 'watch' ? <Eye className="size-3" /> : <Clock className="size-3" />}
+                      {t.kind === 'interval'
+                        ? `every ${t.intervalMinutes ?? 30}m`
+                        : t.kind === 'daily'
+                          ? `daily ${t.dailyTime ?? '02:00'}`
+                          : 'on changes'}
                     </Badge>
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -265,7 +269,8 @@ function TriggerDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="interval">On a schedule</SelectItem>
+                  <SelectItem value="interval">Every N minutes</SelectItem>
+                  <SelectItem value="daily">Daily at a time</SelectItem>
                   <SelectItem value="watch">On file changes</SelectItem>
                 </SelectContent>
               </Select>
@@ -279,6 +284,16 @@ function TriggerDialog({
                   min={1}
                   value={draft.intervalMinutes ?? 30}
                   onChange={(e) => set({ intervalMinutes: Math.max(1, Number(e.target.value) || 30) })}
+                />
+              </div>
+            ) : draft.kind === 'daily' ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="trig-time">At (local time)</Label>
+                <Input
+                  id="trig-time"
+                  type="time"
+                  value={draft.dailyTime ?? '02:00'}
+                  onChange={(e) => set({ dailyTime: e.target.value })}
                 />
               </div>
             ) : (

@@ -218,7 +218,7 @@ export interface RunStartInput {
 
 // ── Triggers (automations) ───────────────────────────────────────────────────
 
-export type TriggerKind = 'interval' | 'watch';
+export type TriggerKind = 'interval' | 'daily' | 'watch';
 
 /** A saved automation that starts a run on an interval or on file changes. */
 export interface TriggerDto {
@@ -233,6 +233,7 @@ export interface TriggerDto {
   agentId?: string;
   maxTokens?: number;
   intervalMinutes?: number;
+  dailyTime?: string;
   debounceMs?: number;
   lastFiredAt?: number;
 }
@@ -249,6 +250,7 @@ export interface SaveTriggerInput {
   agentId?: string;
   maxTokens?: number;
   intervalMinutes?: number;
+  dailyTime?: string;
   debounceMs?: number;
 }
 
