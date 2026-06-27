@@ -80,6 +80,8 @@ export interface RunHostEvents {
   /** A run changed instruction-level memory (AGENTS.md / rules) — the
    * self-poisoning guardrail. `summary` names what drifted. */
   instructionDrift?(runId: string, summary: string): void;
+  /** A run hit a usage limit and was parked; it auto-resumes at `resetAt` (ms). */
+  rateLimited?(runId: string, resetAt: number): void;
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -237,6 +239,11 @@ export class RunHost {
     }
     this.triggeredBy.delete(id);
     this.memBaseline.delete(id);
+    const tm = this.rateLimitTimers.get(id);
+    if (tm) {
+      clearTimeout(tm);
+      this.rateLimitTimers.delete(id);
+    }
     await this.host.activeWorkspace?.runStore.delete(id);
   }
 
@@ -248,6 +255,8 @@ export class RunHost {
     // Do NOT cancel live runs on quit — cancelling marks them terminal, which
     // would defeat resume. The process is exiting; their last checkpoint stays
     // non-terminal in omks.db, so they show up as resumable on the next launch.
+    for (const tm of this.rateLimitTimers.values()) clearTimeout(tm);
+    this.rateLimitTimers.clear();
     this.live.clear();
   }
 
@@ -266,12 +275,38 @@ export class RunHost {
     } catch {
       /* the stream may end via error; result still settles below */
     }
-    const result = (await run.handle.result.catch(() => null)) as { status?: string } | null;
+    const result = (await run.handle.result.catch(() => null)) as
+      | { status?: string; rateLimitedUntil?: number }
+      | null;
     this.live.delete(runId);
     this.events.liveChanged(this.live.size);
     this.events.runStatus(runId);
     if (result?.status) this.events.runFinished?.(runId, result.status, this.triggeredBy.get(runId));
     this.auditInstructionMemory(runId);
+    // Hit a usage limit — don't retry now; schedule a resume once it resets.
+    if (result?.rateLimitedUntil) this.scheduleRateLimitResume(runId, result.rateLimitedUntil, run.autonomy);
+  }
+
+  /** runId → the pending auto-resume timer for a rate-limited run. */
+  private readonly rateLimitTimers = new Map<string, NodeJS.Timeout>();
+
+  /**
+   * Schedule an automatic resume once a run's usage limit resets. In-memory only:
+   * if the app restarts before then, the run stays 'incomplete' (resumable) and a
+   * manual/supervisor resume re-detects the limit and reschedules.
+   */
+  private scheduleRateLimitResume(runId: string, resetAt: number, autonomy: AutonomyLevel): void {
+    const existing = this.rateLimitTimers.get(runId);
+    if (existing) clearTimeout(existing);
+    // A few seconds of slack past the reset; clamp so a bad parse can't sleep forever.
+    const delay = Math.min(Math.max(resetAt - Date.now() + 5_000, 1_000), 24 * 60 * 60 * 1000);
+    this.events.rateLimited?.(runId, resetAt);
+    const timer = setTimeout(() => {
+      this.rateLimitTimers.delete(runId);
+      void this.resumeRun(runId, autonomy);
+    }, delay);
+    timer.unref?.();
+    this.rateLimitTimers.set(runId, timer);
   }
 
   /**

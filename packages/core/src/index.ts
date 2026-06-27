@@ -121,6 +121,8 @@ export type {
 } from './acceptance.js';
 export { createIteration, finishIteration } from './iterations.js';
 export type { IterationSnapshot, IterationStatus } from './iterations.js';
+export { detectRateLimit, parseResetTime, RATE_LIMIT_DEFAULT_BACKOFF_MS } from './rate-limit.js';
+export type { RateLimitInfo } from './rate-limit.js';
 export { answerRiskGate, createRiskGate } from './risk-gates.js';
 export type { RiskGateReason, RiskGateSnapshot, RiskGateStatus } from './risk-gates.js';
 export { cleanAgentArtifactText, createReportArtifact } from './reports.js';

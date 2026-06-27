@@ -38,6 +38,7 @@ import { createIteration, finishIteration, type IterationSnapshot } from './iter
 import { answerRiskGate, createRiskGate, type RiskGateSnapshot } from './risk-gates.js';
 import { cleanAgentArtifactText, createReportArtifact, type ReportArtifact, type ReportKind } from './reports.js';
 import { buildValidationPrompt, parseValidationVerdict } from './validation.js';
+import { detectRateLimit, RATE_LIMIT_DEFAULT_BACKOFF_MS } from './rate-limit.js';
 import {
   createKnowledgeEvent,
   knowledgeEventToWikiEntry,
@@ -85,6 +86,9 @@ export interface RunResult {
   events: OrchestratorEvent[];
   spentTokens: number;
   spentCostUsd: number;
+  /** Set when the run stopped because an agent hit a usage limit — wall-clock ms the
+   * limit resets at, so the host can schedule an automatic resume. */
+  rateLimitedUntil?: number;
 }
 
 export interface RunHandle {
@@ -390,6 +394,9 @@ class RunController implements RunHandle {
   private spentTokens = 0;
   private spentCostUsd = 0;
   private budgetExhausted = false;
+  /** Wall-clock ms an agent's usage limit resets at — set when a task hits a rate
+   * limit, which stops the loop gracefully (resumable) so the host can resume then. */
+  private rateLimitedUntil: number | null = null;
   private readonly hasUserAcceptanceCriteria: boolean;
 
   private readonly stream = createPushStream<OrchestratorEvent>();
@@ -1945,7 +1952,7 @@ class RunController implements RunHandle {
 
   private async loop(): Promise<void> {
     let iterations = 0;
-    while (!this.cancelled && !this.budgetExhausted && iterations < this.maxIterations) {
+    while (!this.cancelled && !this.budgetExhausted && this.rateLimitedUntil === null && iterations < this.maxIterations) {
       await this.waitIfPaused();
       if (this.cancelled) break;
 
@@ -1982,7 +1989,7 @@ class RunController implements RunHandle {
     let next = 0;
     let laneError: unknown;
     const worker = async (): Promise<void> => {
-      while (next < tasks.length && !this.cancelled && !this.budgetExhausted && laneError === undefined) {
+      while (next < tasks.length && !this.cancelled && !this.budgetExhausted && this.rateLimitedUntil === null && laneError === undefined) {
         const task = tasks[next];
         next += 1;
         if (!task) break;
@@ -2082,6 +2089,26 @@ class RunController implements RunHandle {
 
     const summary = (result.text || result.error || '').slice(0, 300);
     const ranCleanly = result.status === 'completed' && !result.error;
+
+    // A usage/rate limit isn't a failure a retry can fix — refund the attempt, leave
+    // the task pending, record when it resets, and stop the run gracefully (it stays
+    // resumable). The host auto-resumes after the reset rather than burning attempts.
+    if (!ranCleanly) {
+      const limit = detectRateLimit(`${result.error ?? ''}\n${result.text}`, this.clock());
+      if (limit) {
+        this.graph.decrementAttempts(task.id);
+        this.graph.setStatus(task.id, 'pending');
+        this.rateLimitedUntil = limit.resetAt ?? this.clock() + RATE_LIMIT_DEFAULT_BACKOFF_MS;
+        this.wiki.addNote({
+          title: 'Usage limit reached',
+          body: `${limit.raw}\nPausing; the run will resume after the limit resets.`,
+          tags: ['rate-limit'],
+          source: `run:${this.id}`,
+        });
+        this.emit({ type: 'error', phase: 'rate-limit', message: limit.raw });
+        return;
+      }
+    }
 
     if (task.role === 'reviewer') {
       // A reviewer that crashed/timed out/was cancelled has NOT reviewed
@@ -2466,6 +2493,7 @@ class RunController implements RunHandle {
       events: [...this.eventLog],
       spentTokens: this.spentTokens,
       spentCostUsd: this.spentCostUsd,
+      ...(this.rateLimitedUntil !== null ? { rateLimitedUntil: this.rateLimitedUntil } : {}),
     };
   }
 }

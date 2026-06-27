@@ -93,6 +93,17 @@ app.whenReady().then(() => {
         }).show();
       }
     },
+    rateLimited: (_runId, resetAt) => {
+      // The run hit a usage limit and was parked; it auto-resumes once the limit
+      // resets. Let the user know rather than leave it looking silently stalled.
+      if (Notification.isSupported()) {
+        const at = new Date(resetAt).toLocaleTimeString();
+        new Notification({
+          title: 'Usage limit reached — run paused',
+          body: `It will resume automatically around ${at}.`,
+        }).show();
+      }
+    },
   });
   scheduler = new RunScheduler(host, runs);
   contentWatcher = new ContentWatcher(host, () => send(IPC.EvtContentChanged, null));
