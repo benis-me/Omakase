@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RotateCw } from 'lucide-react';
+import { ChevronRight, RotateCw } from 'lucide-react';
 import type { CockpitEvent } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
@@ -7,6 +7,7 @@ import { useT } from '@/i18n';
 import { Badge } from '../ui/badge';
 import { StatusDot, type DotStatus } from '../StatusDot';
 import { RUN_DOT } from '../runs/run-status';
+import { TaskActivity } from '../runs/TaskActivity';
 import { ContentLayout, EmptyDetail } from './ContentLayout';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'incomplete']);
@@ -98,6 +99,7 @@ export function AgentsView() {
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [snapshotFeed, setSnapshotFeed] = useState<CockpitEvent[]>([]);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
   useEffect(() => {
     void loadRuns();
@@ -189,38 +191,51 @@ export function AgentsView() {
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                {roster.map((a) => (
-                  <div
-                    key={a.agentRunId}
-                    className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
-                  >
-                    <StatusDot
-                      status={AGENT_DOT[a.status]}
-                      pulse={a.status === 'running'}
-                      glow={a.status === 'running'}
-                    />
-                    <Badge variant="outline" className="shrink-0">
-                      {a.role}
-                    </Badge>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px]">{a.title}</div>
-                      <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-                        <span>{a.agentId}</span>
-                        {a.model && <span>· {a.model}</span>}
-                      </div>
-                    </div>
-                    {a.attempts && a.attempts > 1 && (
-                      <span
-                        className="flex shrink-0 items-center gap-0.5 text-[11px] text-warn"
-                        title={t('Retried on the same agent')}
+                {roster.map((a) => {
+                  const expanded = expandedAgent === a.agentRunId;
+                  return (
+                    <div key={a.agentRunId} className="overflow-hidden rounded-lg border bg-card">
+                      <button
+                        onClick={() => setExpandedAgent(expanded ? null : a.agentRunId)}
+                        className="flex w-full items-center gap-3 px-3 py-2.5 text-left outline-none transition-colors hover:bg-accent/30"
                       >
-                        <RotateCw className="size-3" />
-                        {a.attempts - 1}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-[11px] capitalize text-muted-foreground">{a.status}</span>
-                  </div>
-                ))}
+                        <ChevronRight
+                          className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')}
+                        />
+                        <StatusDot
+                          status={AGENT_DOT[a.status]}
+                          pulse={a.status === 'running'}
+                          glow={a.status === 'running'}
+                        />
+                        <Badge variant="outline" className="shrink-0">
+                          {a.role}
+                        </Badge>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px]">{a.title}</div>
+                          <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                            <span>{a.agentId}</span>
+                            {a.model && <span>· {a.model}</span>}
+                          </div>
+                        </div>
+                        {a.attempts && a.attempts > 1 && (
+                          <span
+                            className="flex shrink-0 items-center gap-0.5 text-[11px] text-warn"
+                            title={t('Retried on the same agent')}
+                          >
+                            <RotateCw className="size-3" />
+                            {a.attempts - 1}
+                          </span>
+                        )}
+                        <span className="shrink-0 text-[11px] capitalize text-muted-foreground">{a.status}</span>
+                      </button>
+                      {expanded && (
+                        <div className="border-t bg-background/40 px-3 py-1.5">
+                          <TaskActivity feed={feed} taskId={a.taskId} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

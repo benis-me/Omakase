@@ -5,8 +5,10 @@ import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MarkdownPreview } from '@/components/ui/markdown-preview';
+import { ChevronRight } from 'lucide-react';
 import { StatusDot, type DotStatus } from '../StatusDot';
 import { CockpitFeed } from './CockpitFeed';
+import { TaskActivity } from './TaskActivity';
 
 const TASK_DOT: Record<string, DotStatus> = {
   running: 'omk',
@@ -76,6 +78,7 @@ function DiffsPanel() {
 }
 
 interface TaskRow {
+  taskId?: string;
   title: string;
   status: string;
   role?: string;
@@ -90,21 +93,39 @@ function EmptyPanel({ children }: { children: string }) {
   );
 }
 
-function TasksPanel({ tasks }: { tasks: TaskRow[] }) {
+function TasksPanel({ tasks, feed }: { tasks: TaskRow[]; feed: CockpitEvent[] }) {
+  const [open, setOpen] = useState<string | null>(null);
   if (tasks.length === 0) return <EmptyPanel>No tasks yet — the planner will break the work down here.</EmptyPanel>;
   return (
     <div className="h-full overflow-y-auto p-3">
       <div className="flex flex-col gap-0.5">
-        {tasks.map((task) => (
-          <div key={task.title} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
-            <StatusDot status={TASK_DOT[task.status] ?? 'idle'} pulse={task.status === 'running'} />
-            <span className="flex-1 truncate text-[13px]">{task.title}</span>
-            {task.role && <Badge variant="outline">{task.role}</Badge>}
-            <span className="w-16 shrink-0 text-right text-[11px] capitalize text-muted-foreground">
-              {task.status}
-            </span>
-          </div>
-        ))}
+        {tasks.map((task) => {
+          const key = task.taskId ?? task.title;
+          const expanded = open === key;
+          return (
+            <div key={key}>
+              <button
+                onClick={() => setOpen(expanded ? null : key)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:bg-accent/40"
+              >
+                <ChevronRight
+                  className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')}
+                />
+                <StatusDot status={TASK_DOT[task.status] ?? 'idle'} pulse={task.status === 'running'} />
+                <span className="flex-1 truncate text-[13px]">{task.title}</span>
+                {task.role && <Badge variant="outline">{task.role}</Badge>}
+                <span className="w-16 shrink-0 text-right text-[11px] capitalize text-muted-foreground">
+                  {task.status}
+                </span>
+              </button>
+              {expanded && (
+                <div className="pb-1 pl-4">
+                  <TaskActivity feed={feed} taskId={task.taskId} />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -212,7 +233,8 @@ export function CockpitTabs({ feed, acceptance }: { feed: CockpitEvent[]; accept
     const map = new Map<string, TaskRow>();
     for (const e of feed) {
       if (e.kind === 'task') {
-        map.set(e.title, { title: e.title, status: e.status ?? 'running', role: e.role });
+        const key = e.taskId ?? e.title;
+        map.set(key, { taskId: e.taskId, title: e.title, status: e.status ?? 'running', role: e.role });
       }
     }
     return [...map.values()];
@@ -248,7 +270,7 @@ export function CockpitTabs({ feed, acceptance }: { feed: CockpitEvent[]; accept
       </div>
       <div className="min-h-0 flex-1">
         {tab === 'activity' && <CockpitFeed feed={feed} />}
-        {tab === 'tasks' && <TasksPanel tasks={tasks} />}
+        {tab === 'tasks' && <TasksPanel tasks={tasks} feed={feed} />}
         {tab === 'acceptance' && <AcceptancePanel acceptance={acceptance} />}
         {tab === 'reports' && <ReportsPanel reports={reports} />}
         {tab === 'knowledge' && <KnowledgePanel items={knowledge} />}

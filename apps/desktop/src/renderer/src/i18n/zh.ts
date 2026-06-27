@@ -123,6 +123,7 @@ export const zh: Record<string, string> = {
   // ── Agents (roster) ──────────────────────────────────────────────────────
   'No runs yet. Agents appear here as a run spawns them.': '还没有运行。智能体会在运行生成它们时出现。',
   'Retried on the same agent': '在同一智能体上重试',
+  'No recorded activity yet.': '还没有记录的活动。',
 
   // ── Automations ──────────────────────────────────────────────────────────
   'New automation': '新建自动化',
