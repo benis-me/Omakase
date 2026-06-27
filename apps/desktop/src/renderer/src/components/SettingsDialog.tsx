@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Cpu, Play, RefreshCw, SlidersHorizontal } from 'lucide-react';
-import type { AutonomyLevel, DetectedAgentDto, ThemeMode, WorkModeName } from '@shared/types';
+import type { AutonomyLevel, DetectedAgentDto, Language, ThemeMode, WorkModeName } from '@shared/types';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
+import { useT } from '@/i18n';
 import {
   Dialog,
   DialogContent,
@@ -18,6 +19,10 @@ const THEMES: { value: ThemeMode; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+];
+const LANGUAGES: { value: Language; label: string }[] = [
+  { value: 'en', label: 'English' },
+  { value: 'zh', label: '中文' },
 ];
 const AUTONOMY: AutonomyLevel[] = ['off', 'low', 'medium', 'high'];
 // 'custom' is omitted — it has no configurable policy yet, so it behaves like the default.
@@ -55,21 +60,36 @@ function SectionTitle({ children, action }: { children: ReactNode; action?: Reac
 function GeneralPanel() {
   const settings = useAppStore((s) => s.settings);
   const update = useAppStore((s) => s.updateSettings);
+  const t = useT();
   if (!settings) return null;
   return (
     <div>
-      <SectionTitle>General</SectionTitle>
-      <p className="mb-2 text-[12px] text-muted-foreground">Appearance and app-level preferences.</p>
+      <SectionTitle>{t('General')}</SectionTitle>
+      <p className="mb-2 text-[12px] text-muted-foreground">{t('Appearance and app-level preferences.')}</p>
       <div className="divide-y divide-border">
-        <Row label="Theme" hint="App appearance">
+        <Row label={t('Theme')} hint={t('App appearance')}>
           <Select value={settings.theme} onValueChange={(v) => void update({ theme: v as ThemeMode })}>
             <SelectTrigger className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {THEMES.map((t) => (
-                <SelectItem key={t.value} value={t.value}>
-                  {t.label}
+              {THEMES.map((th) => (
+                <SelectItem key={th.value} value={th.value}>
+                  {t(th.label)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Row>
+        <Row label={t('Language')} hint="">
+          <Select value={settings.language} onValueChange={(v) => void update({ language: v as Language })}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LANGUAGES.map((l) => (
+                <SelectItem key={l.value} value={l.value}>
+                  {l.label}
                 </SelectItem>
               ))}
             </SelectContent>

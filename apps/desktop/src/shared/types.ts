@@ -4,11 +4,14 @@
  */
 
 export type ThemeMode = 'light' | 'dark' | 'system';
+export type Language = 'en' | 'zh';
 export type AutonomyLevel = 'off' | 'low' | 'medium' | 'high';
 export type WorkModeName = 'normal' | 'max-power' | 'custom';
 
 export interface AppSettings {
   theme: ThemeMode;
+  /** UI language. */
+  language: Language;
   defaultAutonomy: AutonomyLevel;
   defaultMode: WorkModeName;
   /** Last active workspace path, restored on launch. */
@@ -17,6 +20,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
+  language: 'en',
   defaultAutonomy: 'low',
   defaultMode: 'normal',
   lastWorkspace: null,

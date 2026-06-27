@@ -132,6 +132,7 @@ export class WorkspaceHost {
   getSettings(): AppSettings {
     return {
       theme: this.registry.getSetting('theme', DEFAULT_SETTINGS.theme),
+      language: this.registry.getSetting('language', DEFAULT_SETTINGS.language),
       defaultAutonomy: this.registry.getSetting('defaultAutonomy', DEFAULT_SETTINGS.defaultAutonomy),
       defaultMode: this.registry.getSetting('defaultMode', DEFAULT_SETTINGS.defaultMode),
       lastWorkspace: this.registry.getSetting('lastWorkspace', DEFAULT_SETTINGS.lastWorkspace),
