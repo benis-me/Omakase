@@ -23,6 +23,8 @@ export interface Trigger {
   mode: 'normal' | 'max-power';
   autonomy: 'off' | 'low' | 'medium' | 'high';
   agentId?: string;
+  /** Hard token budget for each run this trigger starts. */
+  maxTokens?: number;
   /** kind === 'interval': minutes between fires. */
   intervalMinutes?: number;
   /** kind === 'watch': quiet period after the last change before firing. */
@@ -58,6 +60,7 @@ export interface SaveTriggerInput {
   mode?: 'normal' | 'max-power';
   autonomy?: 'off' | 'low' | 'medium' | 'high';
   agentId?: string;
+  maxTokens?: number;
   intervalMinutes?: number;
   debounceMs?: number;
 }
@@ -76,6 +79,7 @@ export function saveTrigger(root: string, input: SaveTriggerInput): Trigger {
     mode: input.mode ?? existing?.mode ?? 'normal',
     autonomy: input.autonomy ?? existing?.autonomy ?? 'medium',
     agentId: input.agentId,
+    maxTokens: input.maxTokens ?? existing?.maxTokens,
     intervalMinutes: input.intervalMinutes ?? existing?.intervalMinutes ?? 30,
     debounceMs: input.debounceMs ?? existing?.debounceMs ?? 5000,
     lastFiredAt: existing?.lastFiredAt,

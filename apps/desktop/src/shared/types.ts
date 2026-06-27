@@ -210,6 +210,10 @@ export interface RunStartInput {
   specId?: string;
   /** Pin every role of this run to a specific agent CLI (detected id). Omit = auto. */
   agentId?: string;
+  /** Hard token budget — the run stops once it's spent (0/undefined = no cap). */
+  maxTokens?: number;
+  /** Name of the automation that started this run (for the "auto" badge). */
+  triggeredBy?: string;
 }
 
 // ── Triggers (automations) ───────────────────────────────────────────────────
@@ -227,6 +231,7 @@ export interface TriggerDto {
   mode: 'normal' | 'max-power';
   autonomy: AutonomyLevel;
   agentId?: string;
+  maxTokens?: number;
   intervalMinutes?: number;
   debounceMs?: number;
   lastFiredAt?: number;
@@ -242,6 +247,7 @@ export interface SaveTriggerInput {
   mode?: 'normal' | 'max-power';
   autonomy?: AutonomyLevel;
   agentId?: string;
+  maxTokens?: number;
   intervalMinutes?: number;
   debounceMs?: number;
 }
@@ -259,6 +265,8 @@ export interface RunSummaryDto {
   live: boolean;
   /** True if a non-live, non-terminal run can be resumed. */
   resumable: boolean;
+  /** Name of the automation that started this run, if any (this session). */
+  triggeredBy?: string;
 }
 
 export type CockpitEventKind =

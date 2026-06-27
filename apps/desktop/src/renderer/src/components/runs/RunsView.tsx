@@ -74,6 +74,14 @@ export function RunsView() {
                     {r.live && <span className="text-run">live</span>}
                     <span>·</span>
                     <span>{r.mode}</span>
+                    {r.triggeredBy && (
+                      <>
+                        <span>·</span>
+                        <span className="text-omk" title={`Automation: ${r.triggeredBy}`}>
+                          auto
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}

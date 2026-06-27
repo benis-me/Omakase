@@ -7,8 +7,9 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { createAgentRuntime, type AgentRuntime } from '@omakase/daemon';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { createAgentRuntime, wellKnownToolchainDirs, type AgentRuntime } from '@omakase/daemon';
 import {
   BunWorkflowScriptRunner,
   createModelPolicy,
@@ -74,6 +75,8 @@ const GATE_MIN_AUTONOMY: Record<string, number> = {
 export class RunHost {
   private runtime: AgentRuntime | null = null;
   private readonly live = new Map<string, LiveRun>();
+  /** runId → the automation name that started it (this session, for the "auto" badge). */
+  private readonly triggeredBy = new Map<string, string>();
 
   constructor(
     private readonly host: WorkspaceHost,
@@ -86,7 +89,11 @@ export class RunHost {
   listRuns(): RunSummaryDto[] {
     const ws = this.host.activeWorkspace;
     if (!ws) return [];
-    return ws.runStore.summaries().map((s) => toSummaryDto(s, this.live.has(s.id)));
+    return ws.runStore.summaries().map((s) => {
+      const dto = toSummaryDto(s, this.live.has(s.id));
+      const tb = this.triggeredBy.get(s.id);
+      return tb ? { ...dto, triggeredBy: tb } : dto;
+    });
   }
 
   async getRun(id: string): Promise<RunDetailDto | null> {
@@ -107,16 +114,31 @@ export class RunHost {
     const spec = input.specId ? readSpec(ws.root, input.specId) : null;
     const prompt = (spec?.body ?? input.prompt ?? '').trim();
     if (!prompt) throw new Error('A spec or prompt is required.');
-    const acceptanceCriteria = spec ? extractCriteria(spec.body) : [];
+    // Prefer the spec's structured acceptance criteria (the guided phase machine);
+    // fall back to extracting them from the body.
+    const acceptanceCriteria = spec
+      ? spec.acceptanceCriteria.length
+        ? spec.acceptanceCriteria
+        : extractCriteria(spec.body)
+      : [];
 
     const controlDir = this.controlDir(ws);
     // Spec-driven runs get an independent validator at the finish line.
-    const handle = this.buildOrchestrator(ws, controlDir, input.mode, Boolean(input.specId), input.agentId).start({
+    const handle = this.buildOrchestrator(
+      ws,
+      controlDir,
+      input.mode,
+      Boolean(input.specId),
+      input.agentId,
+      input.maxTokens,
+    ).start({
       prompt,
       cwd: ws.root,
       mode: input.mode,
       ...(acceptanceCriteria.length ? { acceptanceCriteria } : {}),
+      ...(input.triggeredBy ? { metadata: { triggeredBy: input.triggeredBy } } : {}),
     });
+    if (input.triggeredBy) this.triggeredBy.set(handle.id, input.triggeredBy);
     this.track(handle, input.autonomy, controlDir, 0);
     return handle.id;
   }
@@ -243,6 +265,7 @@ export class RunHost {
     defaultMode: RunStartInput['mode'],
     validate = false,
     agentId?: string,
+    maxTokens?: number,
   ): Orchestrator {
     this.runtime ??=
       this.overrides?.runtime ?? createAgentRuntime({ fallbackToBuiltin: true, detectionCacheTtlMs: 10_000 });
@@ -265,6 +288,7 @@ export class RunHost {
       // A run-level CLI choice pins every role to that agent.
       ...(agentId ? { policy: createModelPolicy('custom', { custom: { default: { agentId } } }) } : {}),
       ...(verifier ? { verifier } : {}),
+      ...(maxTokens && maxTokens > 0 ? { budget: { maxTokens } } : {}),
       ...this.overrides,
     });
   }
@@ -292,12 +316,18 @@ export class RunHost {
         : existsSync(join(ws.root, 'bun.lockb'))
           ? 'bun'
           : 'npm';
+    // GUI-launched apps inherit a minimal PATH; add the common toolchain dirs so
+    // the package manager resolves (mirrors agent-CLI detection).
+    const env = {
+      ...process.env,
+      PATH: [process.env.PATH ?? '', ...wellKnownToolchainDirs(homedir())].filter(Boolean).join(delimiter),
+    };
     return () =>
       new Promise((resolve) => {
         execFile(
           pm,
           ['test'],
-          { cwd: ws.root, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+          { cwd: ws.root, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env },
           (err, stdout, stderr) => {
             // Don't fail the gate just because the runner isn't on PATH.
             if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') {

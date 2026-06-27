@@ -57,6 +57,7 @@ interface AppState {
     mode?: AppSettings['defaultMode'];
     autonomy?: AppSettings['defaultAutonomy'];
     agentId?: string;
+    maxTokens?: number;
   }) => Promise<void>;
   resumeRun: (id: string) => Promise<void>;
   startWorkflow: (workflowId: string) => Promise<void>;
@@ -188,6 +189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       prompt: input.prompt,
       specId: input.specId,
       ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
     });
     set({ currentRunId: id, feed: [] });
     void get().loadRuns();

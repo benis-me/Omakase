@@ -32,6 +32,7 @@ function toInput(t: TriggerDto): SaveTriggerInput {
     mode: t.mode,
     autonomy: t.autonomy,
     agentId: t.agentId,
+    maxTokens: t.maxTokens,
     intervalMinutes: t.intervalMinutes,
     debounceMs: t.debounceMs,
   };
@@ -341,6 +342,18 @@ function TriggerDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="trig-budget">Token budget per run (optional)</Label>
+            <Input
+              id="trig-budget"
+              type="number"
+              min={0}
+              value={draft.maxTokens ?? ''}
+              onChange={(e) => set({ maxTokens: Number(e.target.value) || undefined })}
+              placeholder="∞ — no cap"
+            />
           </div>
 
           <label className="flex items-center gap-2.5 pt-1">

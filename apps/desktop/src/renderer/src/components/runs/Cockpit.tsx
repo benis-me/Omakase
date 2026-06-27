@@ -29,6 +29,7 @@ function NewRunComposer() {
   const [mode, setMode] = useState<RunMode>(settings?.defaultMode ?? 'normal');
   const [autonomy, setAutonomy] = useState<AutonomyLevel>(settings?.defaultAutonomy ?? 'low');
   const [agentId, setAgentId] = useState('auto');
+  const [maxTokens, setMaxTokens] = useState('');
   const [clis, setClis] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -47,6 +48,7 @@ function NewRunComposer() {
       mode,
       autonomy,
       ...(agentId !== 'auto' ? { agentId } : {}),
+      ...(Number(maxTokens) > 0 ? { maxTokens: Number(maxTokens) } : {}),
     });
   };
 
@@ -121,6 +123,15 @@ function NewRunComposer() {
             ))}
           </SelectContent>
         </Select>
+        <Input
+          type="number"
+          min={0}
+          value={maxTokens}
+          onChange={(e) => setMaxTokens(e.target.value)}
+          placeholder="∞ tokens"
+          className="h-7 w-28 text-[12px]"
+          title="Token budget — the run stops once spent"
+        />
         <Button variant="omk" className="ml-auto" disabled={!canRun} onClick={run}>
           <Play />
           Run

@@ -101,9 +101,11 @@ export class RunScheduler {
       entry.lastRunId = this.runs.startRun({
         mode: trigger.mode,
         autonomy: trigger.autonomy,
+        triggeredBy: trigger.name,
         ...(trigger.specId ? { specId: trigger.specId } : {}),
         ...(trigger.prompt ? { prompt: trigger.prompt } : {}),
         ...(trigger.agentId ? { agentId: trigger.agentId } : {}),
+        ...(trigger.maxTokens ? { maxTokens: trigger.maxTokens } : {}),
       });
       entry.lastFiredAt = this.now();
       markTriggerFired(this.root, trigger.id, entry.lastFiredAt);

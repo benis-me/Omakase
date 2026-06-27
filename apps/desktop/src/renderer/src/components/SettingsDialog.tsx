@@ -20,7 +20,8 @@ const THEMES: { value: ThemeMode; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 const AUTONOMY: AutonomyLevel[] = ['off', 'low', 'medium', 'high'];
-const MODES: WorkModeName[] = ['normal', 'max-power', 'custom'];
+// 'custom' is omitted — it has no configurable policy yet, so it behaves like the default.
+const MODES: WorkModeName[] = ['normal', 'max-power'];
 const SUPPORTED = ['claude', 'codex', 'copilot', 'cursor-agent', 'gemini', 'opencode', 'pi', 'qwen'];
 
 type SectionId = 'general' | 'runs' | 'agents';
