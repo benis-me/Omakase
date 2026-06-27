@@ -3,7 +3,6 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAppStore } from '@/store/useAppStore';
-import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { DetailPane } from './components/DetailPane';
@@ -64,9 +63,10 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="flex h-full flex-col">
-        <TitleBar />
-        <PanelGroup direction="horizontal" className="min-h-0 flex-1">
+      {/* True left-right split: the sidebar runs full-height on the left (it owns the
+          top, including the macOS traffic lights); the right side has its own tab bar. */}
+      <div className="h-full w-full overflow-hidden">
+        <PanelGroup direction="horizontal" className="h-full w-full">
           <Panel defaultSize={20} minSize={15} maxSize={32} className="min-w-0">
             <Sidebar />
           </Panel>

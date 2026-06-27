@@ -10,7 +10,8 @@ export function TabBar() {
   const t = useT();
 
   return (
-    <div className="no-drag flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-2">
+    // `drag` so the empty space moves the window; the tab buttons opt out with `no-drag`.
+    <div className="drag flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-2">
       {NAV_SECTIONS.map((item) => {
         const Icon = item.icon;
         const isActive = nav === item.id;
@@ -20,7 +21,7 @@ export function TabBar() {
             onClick={() => setNav(item.id)}
             title={t(item.hint)}
             className={cn(
-              'flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
+              'no-drag flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40',
               isActive
                 ? 'bg-accent font-medium text-foreground'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',

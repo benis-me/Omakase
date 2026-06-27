@@ -59,8 +59,9 @@ export function RunsView() {
               {runs.map((r) => (
                 <div
                   key={r.id}
+                  onClick={() => void openRun(r.id)}
                   className={cn(
-                    'group rounded-md px-2.5 py-2 transition-colors',
+                    'group cursor-pointer rounded-md px-2.5 py-2 transition-colors',
                     currentRunId === r.id ? 'bg-accent' : 'hover:bg-accent/50',
                   )}
                 >
@@ -70,16 +71,14 @@ export function RunsView() {
                       pulse={r.live && r.status === 'running'}
                       glow={r.live && r.status === 'running'}
                     />
-                    <button
-                      onClick={() => void openRun(r.id)}
-                      className="flex-1 truncate text-left text-[13px] outline-none"
-                    >
-                      {r.summary || t('Run')}
-                    </button>
+                    <span className="flex-1 truncate text-[13px]">{r.summary || t('Run')}</span>
                     {r.resumable && (
                       <Tooltip content={t('Resume run')}>
                         <button
-                          onClick={() => void resumeRun(r.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void resumeRun(r.id);
+                          }}
                           className="text-muted-foreground opacity-0 outline-none transition-opacity hover:text-run group-hover:opacity-100"
                         >
                           <Play className="size-3.5" />
