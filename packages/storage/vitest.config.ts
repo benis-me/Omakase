@@ -15,5 +15,6 @@ export default defineConfig({
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
     passWithNoTests: true,
     environment: 'node',
+    globalSetup: ['../../scripts/ensure-node-sqlite.mjs'],
   },
 });

@@ -35,20 +35,33 @@ apps/desktop ─┐
 A workspace is any folder; opening it scaffolds a `.omks/` directory. The left
 rail switches a workspace's surfaces; the right pane edits/views them:
 
-- **Runs** — start a run from a spec or a prompt and watch the live, single-column
-  feed (routing, plan, tasks, tool calls, reviews, reports, knowledge, gates,
-  finish). Pause / resume / stop, queue a steering message, and answer risk
-  gates. The **autonomy dial** (off / low / medium / high) auto-proceeds past
-  gates up to its risk threshold; higher gates pause for your decision.
-- **Specs** — first-class markdown specs (phase + status) you hand to the loop.
-- **Agents** — author custom agent definitions; see the agent CLIs detected
-  locally.
-- **Memory** — the `AGENTS.md` briefing, rules, the accumulated project wiki, and
-  the agent knowledge log.
-- **Workflows** — dynamic orchestration scripts.
+- **Runs** — start a run from a spec or a prompt; pick which **agent CLI** powers
+  it and set a **token budget**. Watch the live cockpit (Activity / Tasks /
+  Reports / Knowledge tabs): routing, plan, tasks, tool calls, reviews, reports,
+  knowledge, gates, finish. Pause / resume / stop, queue a steering message, and
+  answer risk gates. The **autonomy dial** (off / low / medium / high)
+  auto-proceeds past gates up to its risk threshold; higher gates pause for you.
+- **Specs** — a **guided phase machine** (idea → spec → acceptance → test-plan →
+  tasks → done) with content guards on each advance; the run reads the spec's
+  acceptance criteria and verifies against them.
+- **Agents** — the **live roster** of sub-agents a run spawns (role, resolved
+  CLI + model, status). Installed CLIs + a Rescan live in Settings.
+- **Automations** — triggers that start a run on a schedule (every N minutes or
+  daily at a time) or when files change, for unattended self-iterating loops; an
+  unattended run that can't finish cleanly raises a system notification.
+- **Memory** — the `AGENTS.md` briefing, rules, the accumulated project wiki
+  (rendered), and the agent knowledge log.
+- **Commands** — reusable prompt recipes ("skills").
+- **Workflows** — dynamic orchestration scripts with first-class loop primitives
+  (`pipeline` / `loopUntil` / `budget`) and starter templates (Mission, TDD).
 - **Dev** — a DevDock-style workbench: scan and run project scripts with live
   xterm terminals, free conflicting ports, edit `.env` files, see git status,
   and "open with" your editor/terminal.
+
+Spec runs close the loop with **objective verification** — they run the
+workspace's `test` script as a hard finish-line gate ahead of an independent
+LLM validator; a run whose tests never go green finishes `incomplete`, not
+`succeeded`.
 
 ## Requirements
 
@@ -68,9 +81,11 @@ pnpm --filter @omakase/desktop dev     # launch the Electron app
 
 > **Native modules:** `better-sqlite3` and `node-pty` stay compiled for Node so
 > the test suite runs under Node. `pnpm --filter @omakase/desktop dev` rebuilds
-> them for Electron's ABI (`electron-builder install-app-deps`); after running
-> the app, run `pnpm rebuild better-sqlite3` before `pnpm -r test` again. Package
-> a distributable with `pnpm --filter @omakase/desktop dist:mac`.
+> them for Electron's ABI (`electron-builder install-app-deps`). The test suite
+> **self-heals** this: a vitest `globalSetup` detects an Electron-ABI
+> `better-sqlite3` and rebuilds it for Node before the run, so `pnpm -r test`
+> works right after running the app. Package a distributable with
+> `pnpm --filter @omakase/desktop dist:mac`.
 
 ## Headless CLI
 
