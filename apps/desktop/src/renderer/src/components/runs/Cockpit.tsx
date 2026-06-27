@@ -19,6 +19,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusDot } from '../StatusDot';
 import { CockpitTabs } from './CockpitTabs';
+import { PromptComposer } from './PromptComposer';
 import { effectiveStatus, RUN_DOT } from './run-status';
 
 function NewRunComposer() {
@@ -82,12 +83,9 @@ function NewRunComposer() {
         </div>
       )}
 
-      <Textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
+      <PromptComposer
+        onChange={setPrompt}
         placeholder={usingSpec ? t('Optional extra instructions…') : t('Describe the task…')}
-        rows={5}
-        className="resize-none font-mono"
       />
 
       <div className="flex items-center gap-2">

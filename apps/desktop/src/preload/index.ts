@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '@shared/ipc';
 import type { OmakaseApi } from '@shared/api';
 
@@ -124,6 +124,9 @@ const api: OmakaseApi = {
     chrome: process.versions.chrome ?? '',
     app: '0.1.0',
   },
+  // Modern Electron removed `File.path`; this resolves the absolute filesystem
+  // path of a dropped/picked File via the safe webUtils bridge.
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   onWorkspacesChanged: (cb) => sub(IPC.EvtWorkspacesChanged, cb),
   onActiveWorkspaceChanged: (cb) => sub(IPC.EvtActiveWorkspaceChanged, cb),
   onSettingsChanged: (cb) => sub(IPC.EvtSettingsChanged, cb),

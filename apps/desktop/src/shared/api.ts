@@ -148,6 +148,12 @@ export interface OmakaseApi {
   };
   versions: AppVersions;
 
+  /**
+   * Resolve the absolute filesystem path of a dropped/picked `File`. Modern
+   * Electron removed `File.path`; this wraps `webUtils.getPathForFile`.
+   */
+  getPathForFile(file: File): string;
+
   onWorkspacesChanged(cb: (list: WorkspaceInfo[]) => void): () => void;
   onActiveWorkspaceChanged(cb: (ws: ActiveWorkspace | null) => void): () => void;
   onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
