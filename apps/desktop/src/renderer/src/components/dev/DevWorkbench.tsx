@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { FileCog, RefreshCw } from 'lucide-react';
+import { FileCog, Play, RefreshCw, Square } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { useT } from '@/i18n';
 import { Button } from '../ui/button';
@@ -15,7 +15,14 @@ export function DevWorkbench() {
   const t = useT();
   const activePath = useAppStore((s) => s.active?.path);
   const scanDev = useAppStore((s) => s.scanDev);
+  const startAllScripts = useAppStore((s) => s.startAllScripts);
+  const stopAllScripts = useAppStore((s) => s.stopAllScripts);
+  const sessions = useAppStore((s) => s.sessions);
   const [envOpen, setEnvOpen] = useState(false);
+
+  const liveCount = Object.values(sessions).filter(
+    (s) => s.status === 'running' || s.status === 'starting',
+  ).length;
 
   useEffect(() => {
     void scanDev();
@@ -27,6 +34,28 @@ export function DevWorkbench() {
         <h2 className="text-[13px] font-medium">{t('Dev')}</h2>
         <GitBadge />
         <div className="ml-auto flex items-center gap-1">
+          <Tooltip content={t('Start all services')}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-run"
+              onClick={() => void startAllScripts()}
+            >
+              <Play className="size-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip content={t('Stop all')}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive disabled:opacity-40"
+              disabled={liveCount === 0}
+              onClick={() => void stopAllScripts()}
+            >
+              <Square className="size-3.5" />
+            </Button>
+          </Tooltip>
+          <div className="mx-1 h-4 w-px bg-border" />
           <Button
             variant="ghost"
             size="sm"

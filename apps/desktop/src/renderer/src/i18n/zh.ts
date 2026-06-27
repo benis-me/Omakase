@@ -289,6 +289,8 @@ export const zh: Record<string, string> = {
   // ── Dev ──────────────────────────────────────────────────────────────────
   Env: '环境',
   'Rescan scripts': '重新扫描脚本',
+  'Start all services': '启动所有服务',
+  'Stop all': '停止全部',
   'No runnable scripts found in this workspace.': '此工作区未找到可运行的脚本。',
   Restart: '重启',
   Start: '启动',

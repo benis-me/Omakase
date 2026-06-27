@@ -90,6 +90,8 @@ interface AppState {
   startScript: (id: string) => Promise<void>;
   stopScript: (id: string) => Promise<void>;
   restartScript: (id: string) => Promise<void>;
+  startAllScripts: () => Promise<void>;
+  stopAllScripts: () => Promise<void>;
   selectTerminal: (id: string | null) => void;
   loadGit: () => Promise<void>;
   killPortAndRestart: (id: string, port: number) => Promise<void>;
@@ -265,6 +267,26 @@ export const useAppStore = create<AppState>((set, get) => ({
   restartScript: async (id) => {
     set({ selectedTerminal: id });
     await api().scripts.restart(id);
+  },
+  // Batch service control (DevDock parity). Start spins up every long-running
+  // service that isn't already live; stop halts everything currently running.
+  startAllScripts: async () => {
+    const sessions = get().sessions;
+    const live = (id: string): boolean => {
+      const s = sessions[id]?.status;
+      return s === 'running' || s === 'starting';
+    };
+    const targets = get()
+      .projects.flatMap((p) => p.scripts)
+      .filter((s) => s.kind === 'long-running' && !live(s.id));
+    for (const s of targets) await api().scripts.start(s.id);
+  },
+  stopAllScripts: async () => {
+    const sessions = get().sessions;
+    const running = Object.keys(sessions).filter(
+      (id) => sessions[id]?.status === 'running' || sessions[id]?.status === 'starting',
+    );
+    for (const id of running) await api().scripts.stop(id);
   },
   selectTerminal: (id) => set({ selectedTerminal: id }),
 
