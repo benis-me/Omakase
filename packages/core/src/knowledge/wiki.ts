@@ -6,6 +6,7 @@
  * upserted by run-scoped task id).
  */
 import { createIdGenerator, type IdGenerator } from '../ids.js';
+import { retrieveRelevant } from './retrieval.js';
 
 export type WikiEntryKind = 'fact' | 'decision' | 'risk' | 'task' | 'note';
 
@@ -298,6 +299,23 @@ export class ProjectWiki {
     }
     const omitted = this.size - recent.length;
     if (omitted > 0) out.push(`_(+${omitted} older ${omitted === 1 ? 'entry' : 'entries'}.)_`);
+    return out.join('\n').trim();
+  }
+
+  /**
+   * The entries most RELEVANT to `query` (keyword retrieval), rendered with bodies —
+   * for injecting targeted knowledge for the current task rather than the whole wiki
+   * or just titles. Empty when nothing matches (the index + on-disk file still cover it).
+   */
+  toRelevantMarkdown(query: string, maxChars = 1600, limit = 6, perEntryChars = 320): string {
+    const hits = retrieveRelevant(this.list(), query, { limit, maxChars, perEntryChars });
+    if (hits.length === 0) return '';
+    const out: string[] = [];
+    for (const e of hits) {
+      out.push(`### ${sanitizeTitle(e.title)} _(${e.kind})_`);
+      if (e.body) out.push(clipBody(sanitizeBody(e.body), perEntryChars));
+      out.push('');
+    }
     return out.join('\n').trim();
   }
 

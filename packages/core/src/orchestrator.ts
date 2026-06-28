@@ -1531,7 +1531,7 @@ class RunController implements RunHandle {
   }
 
   private plannerPrompt(): string {
-    const knowledge = this.knowledgeContext();
+    const knowledge = this.knowledgeContext(this.request.prompt);
     const skills =
       this.skills.length > 0
         ? selectSkillsForPrompt(this.skills, this.request.prompt, {
@@ -1697,7 +1697,7 @@ class RunController implements RunHandle {
         request: this.request,
         idGenerator: this.ids,
         clock: this.clock,
-        knowledge: this.knowledgeContext(),
+        knowledge: this.knowledgeContext(this.request.prompt),
         skills:
           this.skills.length > 0
             ? selectSkillsForPrompt(this.skills, this.request.prompt, {
@@ -1742,17 +1742,20 @@ class RunController implements RunHandle {
     return parsed?.graph ?? fallback();
   }
 
-  private knowledgeContext(): string {
+  private knowledgeContext(query?: string): string {
     const parts: string[] = [];
     if (this.wiki.size > 0) {
       if (this.request.cwd) {
-        // Core + index + pull (MemGPT/Letta tiers): a tiny always-in-context CORE so a
-        // pure-pull design can't drop critical knowledge, an INDEX of everything for
-        // awareness, and a pointer to read the on-disk wiki (refreshed every checkpoint)
-        // for full detail on demand — instead of pushing every body into every call.
+        // CORE + RELEVANT + INDEX + pull (MemGPT/Letta tiers + retrieval): a tiny always-
+        // in-context CORE so pure-pull can't drop critical knowledge; the entries most
+        // RELEVANT to this task (keyword retrieval — targeted, not the whole wiki); an
+        // INDEX of everything for awareness; and a pointer to read the on-disk wiki
+        // (refreshed every checkpoint) for anything else on demand.
         const sections = ['# Project knowledge'];
         const core = this.wiki.toCoreMarkdown();
         if (core) sections.push('', '## Core — key decisions & risks', '', core);
+        const relevant = query ? this.wiki.toRelevantMarkdown(query) : '';
+        if (relevant) sections.push('', '## Most relevant to this task', '', relevant);
         sections.push(
           '',
           'All durable knowledge (titles below). Read `.omks/memory/wiki.md` with your file',
@@ -1809,7 +1812,7 @@ class RunController implements RunHandle {
   }
 
   private buildPrompt(role: AgentRole, task: TaskNode): string {
-    const knowledge = this.knowledgeContext();
+    const knowledge = this.knowledgeContext(`${task.title} ${task.description}`);
     const skills = this.skillContext(role, `${task.title} ${task.description}`);
     if (role === 'reviewer') {
       const completed = task.dependsOn
@@ -1932,7 +1935,7 @@ class RunController implements RunHandle {
                 request: this.request,
                 idGenerator: this.ids,
                 clock: this.clock,
-                knowledge: this.knowledgeContext(),
+                knowledge: this.knowledgeContext(this.request.prompt),
                 skills:
                   this.skills.length > 0
                     ? selectSkillsForPrompt(this.skills, this.request.prompt, {

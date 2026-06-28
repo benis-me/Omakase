@@ -125,6 +125,7 @@ export { detectRateLimit, parseResetTime, RATE_LIMIT_DEFAULT_BACKOFF_MS } from '
 export type { RateLimitInfo } from './rate-limit.js';
 export { parseCuratedKnowledge } from './knowledge/curation.js';
 export type { CuratedEntry } from './knowledge/curation.js';
+export { retrieveRelevant, scoreEntry, tokenize } from './knowledge/retrieval.js';
 export { answerRiskGate, createRiskGate } from './risk-gates.js';
 export type { RiskGateReason, RiskGateSnapshot, RiskGateStatus } from './risk-gates.js';
 export { cleanAgentArtifactText, createReportArtifact } from './reports.js';
