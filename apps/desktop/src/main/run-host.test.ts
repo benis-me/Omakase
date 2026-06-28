@@ -6,7 +6,13 @@ import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
 import { createModelPolicy, type OrchestratorOptions, type Router } from '@omakase/core';
 import type { CockpitEvent } from '@shared/types';
 import { WorkspaceHost } from './workspace-host.js';
-import { RunHost, type RunHostEvents } from './run-host.js';
+import {
+  RunHost,
+  type RunHostEvents,
+  nextAutomationAction,
+  AUTOMATION_MAX_RETRIES,
+  AUTOMATION_RETRY_BACKOFF_MS,
+} from './run-host.js';
 
 function tmp(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -140,5 +146,27 @@ describe('RunHost end-to-end flow', () => {
       liveChanged: () => {},
     });
     expect(runHost.listRuns()).toEqual([]);
+  });
+});
+
+describe('nextAutomationAction (unattended self-healing)', () => {
+  it('retries a failed run with escalating backoff up to the cap', () => {
+    expect(nextAutomationAction('failed', 0)).toEqual({ kind: 'retry', delayMs: AUTOMATION_RETRY_BACKOFF_MS[0] });
+    expect(nextAutomationAction('failed', 1)).toEqual({ kind: 'retry', delayMs: AUTOMATION_RETRY_BACKOFF_MS[1] });
+    expect(nextAutomationAction('failed', 2)).toEqual({ kind: 'retry', delayMs: AUTOMATION_RETRY_BACKOFF_MS[2] });
+  });
+
+  it('escalates once retries are exhausted', () => {
+    expect(nextAutomationAction('failed', AUTOMATION_MAX_RETRIES)).toEqual({ kind: 'attention' });
+  });
+
+  it('escalates an incomplete run rather than blindly looping on it', () => {
+    expect(nextAutomationAction('incomplete', 0)).toEqual({ kind: 'attention' });
+  });
+
+  it('does nothing for a clean finish', () => {
+    expect(nextAutomationAction('succeeded', 0)).toEqual({ kind: 'none' });
+    expect(nextAutomationAction('cancelled', 1)).toEqual({ kind: 'none' });
+    expect(nextAutomationAction(undefined, 0)).toEqual({ kind: 'none' });
   });
 });

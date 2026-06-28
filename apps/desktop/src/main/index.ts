@@ -4,7 +4,7 @@ import { IPC } from '@shared/ipc';
 import { WorkspaceHost } from './workspace-host.js';
 import { DevController } from './dev-controller.js';
 import { ContentController } from './content-controller.js';
-import { RunHost } from './run-host.js';
+import { RunHost, AUTOMATION_MAX_RETRIES } from './run-host.js';
 import { RunScheduler } from './run-scheduler.js';
 import { ContentWatcher } from './content-watcher.js';
 import { TrayController } from './tray.js';
@@ -74,12 +74,24 @@ app.whenReady().then(() => {
     cockpitEvent: (runId, event) => send(IPC.EvtRunEvent, { runId, event }),
     runStatus: (runId) => send(IPC.EvtRunStatus, runId),
     liveChanged: (count) => tray?.update(count),
-    runFinished: (_runId, status, triggeredBy) => {
-      // Escalate unattended (automation-started) runs that couldn't finish cleanly.
-      if (triggeredBy && (status === 'incomplete' || status === 'failed') && Notification.isSupported()) {
+    automationRetrying: (_runId, triggeredBy, attempt, max, delayMs) => {
+      // An unattended run failed but is self-healing — auto-retrying with backoff.
+      if (Notification.isSupported()) {
+        new Notification({
+          title: `Automation "${triggeredBy}" failed — retrying`,
+          body: `Attempt ${attempt}/${max} in ~${Math.max(1, Math.round(delayMs / 60_000))} min.`,
+        }).show();
+      }
+    },
+    automationNeedsAttention: (_runId, triggeredBy, status) => {
+      // Out of automatic options — escalate to the human.
+      if (Notification.isSupported()) {
         new Notification({
           title: `Automation "${triggeredBy}" needs attention`,
-          body: `Its run finished ${status}.`,
+          body:
+            status === 'failed'
+              ? `It still failed after ${AUTOMATION_MAX_RETRIES} automatic retries.`
+              : `Its run stopped ${status}.`,
         }).show();
       }
     },

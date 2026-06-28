@@ -82,6 +82,41 @@ export interface RunHostEvents {
   instructionDrift?(runId: string, summary: string): void;
   /** A run hit a usage limit and was parked; it auto-resumes at `resetAt` (ms). */
   rateLimited?(runId: string, resetAt: number): void;
+  /** A failed unattended (triggered) run is being auto-retried — `attempt` of `max`,
+   * after `delayMs`. The self-healing half of unattended operation. */
+  automationRetrying?(runId: string, triggeredBy: string, attempt: number, max: number, delayMs: number): void;
+  /** An unattended run needs a human — it exhausted retries or stopped incomplete. */
+  automationNeedsAttention?(runId: string, triggeredBy: string, status: string): void;
+}
+
+/** Up to this many automatic retries of a failed unattended run before giving up. */
+export const AUTOMATION_MAX_RETRIES = 3;
+/** Backoff before each auto-retry (indexed by prior attempt count). */
+export const AUTOMATION_RETRY_BACKOFF_MS: readonly number[] = [60_000, 5 * 60_000, 15 * 60_000];
+
+export type AutomationAction =
+  | { kind: 'retry'; delayMs: number }
+  | { kind: 'attention' }
+  | { kind: 'none' };
+
+/**
+ * Decide what to do when an unattended run finishes (pure, exported for testing).
+ * A failed run is retried with backoff up to the cap, then escalated; an incomplete
+ * run is escalated (a deliberate stop — budget/gate — that a blind retry would loop on);
+ * anything else (succeeded/cancelled) needs nothing.
+ */
+export function nextAutomationAction(
+  status: string | undefined,
+  retryCount: number,
+  max: number = AUTOMATION_MAX_RETRIES,
+  backoff: readonly number[] = AUTOMATION_RETRY_BACKOFF_MS,
+): AutomationAction {
+  if (status === 'failed') {
+    if (retryCount >= max) return { kind: 'attention' };
+    return { kind: 'retry', delayMs: backoff[Math.min(retryCount, backoff.length - 1)] ?? backoff[backoff.length - 1] };
+  }
+  if (status === 'incomplete') return { kind: 'attention' };
+  return { kind: 'none' };
 }
 
 const AUTONOMY_RANK: Record<AutonomyLevel, number> = { off: 0, low: 1, medium: 2, high: 3 };
@@ -239,11 +274,14 @@ export class RunHost {
     }
     this.triggeredBy.delete(id);
     this.memBaseline.delete(id);
-    const tm = this.rateLimitTimers.get(id);
-    if (tm) {
-      clearTimeout(tm);
-      this.rateLimitTimers.delete(id);
+    for (const map of [this.rateLimitTimers, this.autoRetryTimers]) {
+      const tm = map.get(id);
+      if (tm) {
+        clearTimeout(tm);
+        map.delete(id);
+      }
     }
+    this.autoRetryCounts.delete(id);
     await this.host.activeWorkspace?.runStore.delete(id);
   }
 
@@ -256,7 +294,9 @@ export class RunHost {
     // would defeat resume. The process is exiting; their last checkpoint stays
     // non-terminal in omks.db, so they show up as resumable on the next launch.
     for (const tm of this.rateLimitTimers.values()) clearTimeout(tm);
+    for (const tm of this.autoRetryTimers.values()) clearTimeout(tm);
     this.rateLimitTimers.clear();
+    this.autoRetryTimers.clear();
     this.live.clear();
   }
 
@@ -281,10 +321,50 @@ export class RunHost {
     this.live.delete(runId);
     this.events.liveChanged(this.live.size);
     this.events.runStatus(runId);
-    if (result?.status) this.events.runFinished?.(runId, result.status, this.triggeredBy.get(runId));
+    const triggeredBy = this.triggeredBy.get(runId);
+    if (result?.status) this.events.runFinished?.(runId, result.status, triggeredBy);
     this.auditInstructionMemory(runId);
-    // Hit a usage limit — don't retry now; schedule a resume once it resets.
-    if (result?.rateLimitedUntil) this.scheduleRateLimitResume(runId, result.rateLimitedUntil, run.autonomy);
+    if (result?.rateLimitedUntil) {
+      // Hit a usage limit — don't retry now; schedule a resume once it resets.
+      this.scheduleRateLimitResume(runId, result.rateLimitedUntil, run.autonomy);
+    } else if (triggeredBy) {
+      // Unattended run: auto-retry a failure (with backoff) so it self-heals, or
+      // escalate once retries are exhausted / it stopped incomplete.
+      this.handleAutomationOutcome(runId, triggeredBy, result?.status, run.autonomy);
+    } else {
+      this.autoRetryCounts.delete(runId);
+    }
+  }
+
+  /** runId → how many times this unattended run has been auto-retried so far. */
+  private readonly autoRetryCounts = new Map<string, number>();
+  private readonly autoRetryTimers = new Map<string, NodeJS.Timeout>();
+
+  private handleAutomationOutcome(
+    runId: string,
+    triggeredBy: string,
+    status: string | undefined,
+    autonomy: AutonomyLevel,
+  ): void {
+    const count = this.autoRetryCounts.get(runId) ?? 0;
+    const action = nextAutomationAction(status, count);
+    if (action.kind === 'none') {
+      this.autoRetryCounts.delete(runId); // succeeded — clear the counter
+      return;
+    }
+    if (action.kind === 'attention') {
+      this.autoRetryCounts.delete(runId);
+      this.events.automationNeedsAttention?.(runId, triggeredBy, status ?? 'failed');
+      return;
+    }
+    this.autoRetryCounts.set(runId, count + 1);
+    this.events.automationRetrying?.(runId, triggeredBy, count + 1, AUTOMATION_MAX_RETRIES, action.delayMs);
+    const timer = setTimeout(() => {
+      this.autoRetryTimers.delete(runId);
+      void this.retryRun(runId, autonomy);
+    }, action.delayMs);
+    timer.unref?.();
+    this.autoRetryTimers.set(runId, timer);
   }
 
   /** runId → the pending auto-resume timer for a rate-limited run. */
