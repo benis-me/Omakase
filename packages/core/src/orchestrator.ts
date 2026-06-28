@@ -44,6 +44,7 @@ import {
   knowledgeEventToWikiEntry,
   type KnowledgeEvent,
 } from './knowledge/events.js';
+import { parseCuratedKnowledge } from './knowledge/curation.js';
 import { BUILTIN_AGENT_ID, createModelPolicy, type ModelPolicy } from './modes/policy.js';
 import { Inbox, type InboxAppendOptions } from './inbox.js';
 import {
@@ -1012,9 +1013,19 @@ class RunController implements RunHandle {
   private wikiCuratorPrompt(reason: string, report: ReportArtifact | null): string {
     return [
       'You are Omakase Wiki Curator, an out-of-band project knowledge agent.',
-      'Write durable project wiki content, not a chronological run log.',
-      'Capture stable facts, architecture decisions, risks, open questions, and verification handles that will still help a future agent.',
-      'Keep it concise and specific. Avoid generic status phrases.',
+      'Distill DURABLE project knowledge that will still help a future run — stable facts,',
+      'architecture decisions (with rationale), and risks/gotchas (with mitigations).',
+      'This is semantic memory, NOT a run log: never record what you did this turn, your',
+      'process, or transient status. One specific, self-contained item per line.',
+      '',
+      'Output ONLY a fenced block in EXACTLY this shape (prose outside it is ignored and discarded):',
+      '```knowledge',
+      'fact | <short title> | <one durable, self-contained fact>',
+      'decision | <short title> | <the decision and why>',
+      'risk | <short title> | <the risk and how to handle it>',
+      '```',
+      'Use the kinds fact/decision/risk only. Emit an empty block if nothing durable emerged —',
+      'most turns warrant 0–3 lines. Do not pad.',
       `Reason: ${reason}`,
       report ? `Related report: ${report.title} (${report.id})` : 'Related report: none',
       this.commandCurationDirective(),
@@ -1091,28 +1102,33 @@ class RunController implements RunHandle {
 
   private async createWikiSynthesis(reason: string, report: ReportArtifact | null = null): Promise<void> {
     const { result, assignment } = await this.runSupportAgent('wiki-curator', this.wikiCuratorPrompt(reason, report));
-    const body = result.status === 'completed' && result.text.trim().length > 0 ? cleanAgentArtifactText(result.text) : '';
-    if (!body) return;
-    const knowledge = createKnowledgeEvent({
-      runId: this.id,
-      kind: 'synthesis',
-      title: report ? `Wiki synthesis: ${report.title}` : 'Wiki synthesis',
-      body,
-      ...(report?.taskId ? { taskId: report.taskId } : {}),
-      ...(report ? { reportId: report.id } : {}),
-      authorAgentId: assignment.agentId,
-      clock: this.clock,
-      nextId: (prefix) => this.ids.next(prefix),
-    });
-    this.knowledgeEvents = [...this.knowledgeEvents, knowledge];
-    const wikiEntry = knowledgeEventToWikiEntry(knowledge);
-    this.wiki.add(wikiEntry.kind, {
-      title: wikiEntry.title,
-      body: wikiEntry.body,
-      tags: wikiEntry.tags,
-      source: wikiEntry.source,
-    });
-    this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
+    // Distill the curator's output into typed semantic entries — discard the prose
+    // narration that used to be stored wholesale as one giant 'fact'. Each line
+    // becomes its own concise fact/decision/risk.
+    const curated = result.status === 'completed' ? parseCuratedKnowledge(result.text) : [];
+    if (curated.length === 0) return;
+    for (const item of curated) {
+      const knowledge = createKnowledgeEvent({
+        runId: this.id,
+        kind: item.kind,
+        title: item.title,
+        body: item.body,
+        ...(report?.taskId ? { taskId: report.taskId } : {}),
+        ...(report ? { reportId: report.id } : {}),
+        authorAgentId: assignment.agentId,
+        clock: this.clock,
+        nextId: (prefix) => this.ids.next(prefix),
+      });
+      this.knowledgeEvents = [...this.knowledgeEvents, knowledge];
+      const wikiEntry = knowledgeEventToWikiEntry(knowledge);
+      this.wiki.add(wikiEntry.kind, {
+        title: wikiEntry.title,
+        body: wikiEntry.body,
+        tags: wikiEntry.tags,
+        source: wikiEntry.source,
+      });
+      this.emit({ type: 'knowledge-event-created', event: knowledge, events: this.knowledgeEvents });
+    }
     this.emitKnowledge();
     await this.checkpointSupportProgress({ persistKnowledge: true });
   }

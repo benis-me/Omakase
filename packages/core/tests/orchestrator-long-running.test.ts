@@ -908,7 +908,13 @@ describe('orchestrator long-running acceptance loop', () => {
         return [{ type: 'text_delta', delta: '# Agent Report\n\nReporter-authored milestone with risks and next actions.' }];
       }
       if (role === 'wiki-curator') {
-        return [{ type: 'text_delta', delta: 'Agent-authored project wiki: stable facts, decisions, risks, and next useful checks.' }];
+        // Curator distills into a structured block now; surrounding prose is discarded.
+        return [
+          {
+            type: 'text_delta',
+            delta: 'Durable knowledge:\n```knowledge\nfact | Stable public API | the public API is stable across runs\ndecision | ESM only | NodeNext modules everywhere\n```',
+          },
+        ];
       }
       return [{ type: 'text_delta', delta: 'worker done' }];
     });
@@ -938,8 +944,9 @@ describe('orchestrator long-running acceptance loop', () => {
       authorAgentId: 'scripted',
       markdown: expect.stringContaining('Reporter-authored milestone'),
     });
-    expect(result.knowledgeEvents.some((event) => event.kind === 'synthesis')).toBe(true);
-    expect(result.knowledgeEvents.some((event) => event.body.includes('Agent-authored project wiki'))).toBe(true);
+    // Distilled into typed semantic entries (not one raw 'synthesis' blob).
+    expect(result.knowledgeEvents.some((event) => event.kind === 'fact' || event.kind === 'decision')).toBe(true);
+    expect(result.knowledgeEvents.some((event) => event.body.includes('public API is stable'))).toBe(true);
   });
 
   it('does not let planning support agents block the first worker dispatch', async () => {

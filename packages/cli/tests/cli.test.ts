@@ -140,7 +140,8 @@ describe('omakase run', () => {
             codex: createScriptedAgent((input) => {
               const role = String(input.metadata?.role ?? 'worker');
               if (role === 'reporter') return [{ type: 'text_delta', delta: 'Project summary report' }];
-              if (role === 'wiki-curator') return [{ type: 'text_delta', delta: 'Project summary: durable agent-authored page.' }];
+              if (role === 'wiki-curator')
+                return [{ type: 'text_delta', delta: '```knowledge\nfact | Project summary | durable agent-authored project knowledge\n```' }];
               return [{ type: 'text_delta', delta: 'worker done' }];
             }),
           },
