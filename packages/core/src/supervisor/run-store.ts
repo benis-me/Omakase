@@ -39,6 +39,12 @@ export interface RunRecord {
   spentTokens?: number;
   spentCostUsd?: number;
   /**
+   * Wall-clock ms an agent's usage limit resets at — set when the run stopped
+   * because it hit a rate limit. Persisted so a restart re-arms the auto-resume
+   * at the right time instead of resuming immediately and hitting the wall again.
+   */
+  rateLimitedUntil?: number;
+  /**
    * Last cross-process control command seq applied, persisted so a daemon
    * restart neither re-applies an already-honored command nor drops a pending
    * one (see {@link ControlSource}). Optional for backward compatibility.

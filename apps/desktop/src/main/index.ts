@@ -113,6 +113,8 @@ app.whenReady().then(() => {
     void dev.setWorkspace(ws);
     scheduler.reconfigure();
     contentWatcher.reconfigure();
+    // Restore auto-resume timers for any run parked on a usage limit in this workspace.
+    void runs.rearmParkedRuns();
   });
 
   const settings = host.getSettings();

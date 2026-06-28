@@ -2470,6 +2470,7 @@ class RunController implements RunHandle {
       summary,
       spentTokens: this.spentTokens,
       spentCostUsd: this.spentCostUsd,
+      ...(this.rateLimitedUntil !== null ? { rateLimitedUntil: this.rateLimitedUntil } : {}),
       lastControlSeq: this.lastControlSeq,
       createdAt: this.createdAt,
       updatedAt: now,

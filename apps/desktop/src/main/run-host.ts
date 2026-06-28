@@ -291,16 +291,39 @@ export class RunHost {
   private readonly rateLimitTimers = new Map<string, NodeJS.Timeout>();
 
   /**
-   * Schedule an automatic resume once a run's usage limit resets. In-memory only:
-   * if the app restarts before then, the run stays 'incomplete' (resumable) and a
-   * manual/supervisor resume re-detects the limit and reschedules.
+   * Re-arm auto-resume for runs parked on a usage limit, reading the reset time
+   * persisted on the record. Called on launch / workspace switch so a restart
+   * honours the reset instead of resuming immediately and hitting the wall again.
+   * (A reset already in the past schedules at the 1s floor, i.e. resumes now.)
    */
-  private scheduleRateLimitResume(runId: string, resetAt: number, autonomy: AutonomyLevel): void {
+  async rearmParkedRuns(): Promise<void> {
+    const ws = this.host.activeWorkspace;
+    if (!ws) return;
+    const autonomy = this.host.getSettings().defaultAutonomy;
+    for (const id of await ws.runStore.list()) {
+      if (this.live.has(id) || this.rateLimitTimers.has(id)) continue;
+      const record = await ws.runStore.load(id);
+      if (!record?.rateLimitedUntil || !RESUMABLE_STATUSES.includes(record.status)) continue;
+      this.scheduleRateLimitResume(id, record.rateLimitedUntil, autonomy, false);
+    }
+  }
+
+  /**
+   * Schedule an automatic resume once a run's usage limit resets. The reset time is
+   * persisted on the run record, so {@link rearmParkedRuns} restores the timer after
+   * a restart. `notify` is false when re-arming so launch doesn't replay old alerts.
+   */
+  private scheduleRateLimitResume(
+    runId: string,
+    resetAt: number,
+    autonomy: AutonomyLevel,
+    notify = true,
+  ): void {
     const existing = this.rateLimitTimers.get(runId);
     if (existing) clearTimeout(existing);
     // A few seconds of slack past the reset; clamp so a bad parse can't sleep forever.
     const delay = Math.min(Math.max(resetAt - Date.now() + 5_000, 1_000), 24 * 60 * 60 * 1000);
-    this.events.rateLimited?.(runId, resetAt);
+    if (notify) this.events.rateLimited?.(runId, resetAt);
     const timer = setTimeout(() => {
       this.rateLimitTimers.delete(runId);
       void this.resumeRun(runId, autonomy);
