@@ -1105,8 +1105,17 @@ class RunController implements RunHandle {
     // Distill the curator's output into typed semantic entries — discard the prose
     // narration that used to be stored wholesale as one giant 'fact'. Each line
     // becomes its own concise fact/decision/risk.
-    const curated = result.status === 'completed' ? parseCuratedKnowledge(result.text) : [];
-    if (curated.length === 0) return;
+    const text = result.status === 'completed' ? result.text : '';
+    const curated: Array<{ kind: KnowledgeEvent['kind']; title: string; body: string }> = parseCuratedKnowledge(text);
+    if (curated.length === 0) {
+      // The curator ignored the structured format (agents don't always comply).
+      // Degrade gracefully: a single BOUNDED note (kind 'progress' → wiki 'note', so
+      // it stays OUT of the always-injected core) — never the old unbounded narration.
+      const clean = cleanAgentArtifactText(text).trim();
+      if (!clean) return;
+      const clipped = clean.length > 500 ? `${clean.slice(0, 500).replace(/\s+\S*$/, '')} …` : clean;
+      curated.push({ kind: 'progress', title: report ? `Curator note: ${report.title}` : 'Curator note', body: clipped });
+    }
     for (const item of curated) {
       const knowledge = createKnowledgeEvent({
         runId: this.id,
