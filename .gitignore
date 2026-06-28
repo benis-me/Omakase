@@ -6,6 +6,15 @@ release/
 coverage/
 .DS_Store
 *.log
+
+# Omakase workspace runtime data — machine-written run/event/knowledge stores.
+# (Authored .omks markdown lives in a USER's project repo; this repo isn't a workspace.)
 .omakase/
+.omks/
+*.db
+*.db-shm
+*.db-wal
+
 .idea/
 .vscode/
+scratchpad/

@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Omakase — agent runtime, multi-agent orchestration core, and CLI/TUI for autonomous software work.",
+  "description": "A desktop cockpit for spec-driven, long-running, autonomous multi-agent coding — orchestrating the agent CLIs you already have.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/omakase.git"
+    "url": "git+https://github.com/benis-me/Omakase.git"
   },
-  "homepage": "https://github.com/your-org/omakase#readme",
-  "bugs": "https://github.com/your-org/omakase/issues",
+  "homepage": "https://github.com/benis-me/Omakase#readme",
+  "bugs": "https://github.com/benis-me/Omakase/issues",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "packageManager": "pnpm@9.15.0",
   "scripts": {

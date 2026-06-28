@@ -30,6 +30,32 @@ apps/desktop ─┐
 - **`apps/desktop`** — the Electron cockpit (electron-vite + React 19 + Zustand +
   Tailwind v4 + shadcn + radix).
 
+## Highlights
+
+- **Use the agents you already have.** Detects and drives the coding-CLI agents
+  on your `PATH` (Claude Code, Codex, Gemini, Cursor Agent, …) through one
+  `AgentEvent` stream, and assigns them across **planner / worker / reviewer /
+  validator** roles. No installed CLI? A dependency-free built-in agent keeps the
+  loop runnable with no model calls.
+- **Spec-first, verified loops.** A run can adopt a spec's acceptance criteria and
+  is held to them: the workspace's `test` script runs as a **hard finish-line
+  gate** ahead of an independent LLM validator — a run whose tests never go green
+  finishes `incomplete`, not `succeeded`.
+- **A memory system, not a transcript.** Knowledge accumulates across runs as
+  typed facts/decisions/risks (the curator **distills** them — it doesn't log
+  narration). Each agent call gets a small always-in-context **core**, the entries
+  **retrieved** as most relevant to its task, and an **index** of the rest to pull
+  from `.omks/memory/wiki.md` on demand — bounded, not the whole wiki shoved into
+  every prompt (MemGPT/Letta-style tiering + keyword/entity retrieval).
+- **Built to run unattended.** Hits a usage limit → it **parks and auto-resumes**
+  at the reset. A task fails → it **retries**, and reassigns away from a broken
+  agent. An automation's run fails → it **self-heals** with backoff. Runs
+  checkpoint and **resume** after an app restart.
+- **Self-authoring.** Agents can write their own durable `.omks/` artifacts —
+  specs, reusable commands ("skills"), and workflows — so the loop doesn't depend
+  on a human writing them first.
+- **No native-module ABI dance.** Storage is built on Node's `node:sqlite`.
+
 ## The cockpit
 
 A workspace is any folder; opening it scaffolds a `.omks/` directory. The left
@@ -65,7 +91,7 @@ LLM validator; a run whose tests never go green finishes `incomplete`, not
 
 ## Requirements
 
-- Node ≥ 20 (developed on 22), pnpm 9
+- Node ≥ 22 (storage uses the built-in `node:sqlite`), pnpm 9
 - macOS for the Dev workbench's "open with" + port tools (the rest is
   cross-platform)
 - Optional: any coding-agent CLI on your `PATH`. With none installed, runs fall
@@ -79,13 +105,13 @@ pnpm -r build                          # build daemon / core / storage / cli
 pnpm --filter @omakase/desktop dev     # launch the Electron app
 ```
 
-> **Native modules:** `better-sqlite3` and `node-pty` stay compiled for Node so
-> the test suite runs under Node. `pnpm --filter @omakase/desktop dev` rebuilds
-> them for Electron's ABI (`electron-builder install-app-deps`). The test suite
-> **self-heals** this: a vitest `globalSetup` detects an Electron-ABI
-> `better-sqlite3` and rebuilds it for Node before the run, so `pnpm -r test`
-> works right after running the app. Package a distributable with
-> `pnpm --filter @omakase/desktop dist:mac`.
+> **Storage uses Node's built-in `node:sqlite`** — no native module, no ABI to
+> rebuild. It's unflagged in Electron's Node 24; the CLI and test suite (on the
+> repo's Node 22) get `--experimental-sqlite` automatically. The one remaining
+> native module is `node-pty` (the Dev workbench's terminals); `pnpm --filter
+> @omakase/desktop dev` rebuilds it for Electron via `electron-builder
+> install-app-deps`. Package a distributable with `pnpm --filter @omakase/desktop
+> dist:mac`.
 
 ## Headless CLI
 
@@ -153,19 +179,24 @@ Real CLIs are a runtime concern, verified by hand.
 
 ## Docs
 
-- [Design spec](./docs/superpowers/specs/2026-06-25-omakase-desktop-design.md) —
-  architecture, storage model, loop modes, phasing
-- [Research](./docs/research/spec-driven-autonomous-agents-2026.md) — Ralph loop,
-  Factory Droid, Anthropic dynamic workflows, loop engineering
+- [Architecture](./docs/architecture.md) — the monorepo layering, storage model,
+  and how the packages fit together
+- [Runtime contract](./docs/runtime-contract.md) — the agent runtime + the
+  `AgentEvent` protocol every CLI is normalized to
+- [Roadmap & known limitations](./docs/roadmap.md)
+- [Contributing](./CONTRIBUTING.md)
 
 ## Status
 
-Built and green: the storage layer, the Electron shell + workspace management,
-the Dev workbench, the authored-content surfaces, and the live Runs cockpit.
-Roadmap: Mission mode (orchestrator / worker / validator with fresh-context
-workers), detached-daemon handoff so runs survive app close, run resume on
-reopen, and packaging polish.
+**Early but substantial — pre-1.0.** The full loop runs end-to-end on real agent
+CLIs: routing → planning → a parallel multi-agent fleet → review → acceptance +
+objective verification, plus the cross-run memory system, resilience (usage-limit
+parking + auto-resume, retry, agent reassignment), automations, and the desktop
+cockpit + Dev workbench. Data is still treated as **disposable** — no schema or
+`.omks` migration guarantees yet, so don't point it at anything precious. See the
+[roadmap](./docs/roadmap.md) for what's next, and [contributing](./CONTRIBUTING.md)
+if you'd like to help.
 
 ## License
 
-MIT
+[MIT](./LICENSE) © Omakase contributors
