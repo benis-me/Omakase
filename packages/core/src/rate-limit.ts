@@ -20,7 +20,7 @@ export interface RateLimitInfo {
 }
 
 const LIMIT_RE =
-  /(usage limit reached|rate[ -]?limit(?:ed|s)?|5-?hour limit|weekly limit|limit reached|too many requests|\b429\b|exceeded your (?:current )?quota|usage cap|out of (?:usage|credits)|insufficient_quota|overloaded_error|model is overloaded)/i;
+  /(usage limit|rate[ -]?limit(?:ed|s)?|5-?hour limit|weekly limit|limit reached|too many requests|\b429\b|exceeded your (?:current )?quota|usage cap|out of (?:usage|credits)|insufficient_quota|overloaded_error|model is overloaded|purchase more credits|quota exceeded)/i;
 
 /** A usage/rate-limit message in agent output, with the reset time if present. */
 export function detectRateLimit(text: string, now: number): RateLimitInfo | null {

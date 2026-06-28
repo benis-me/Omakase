@@ -22,6 +22,15 @@ describe('detectRateLimit', () => {
     const info = detectRateLimit('Rate limit hit. Please try again in 30 seconds.', NOW);
     expect(info?.resetAt).toBe(NOW + 30_000);
   });
+
+  it("detects codex's actual usage-limit message + its 'try again at' clock time (live finding)", () => {
+    const msg =
+      "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:04 PM.";
+    const info = detectRateLimit(msg, NOW);
+    expect(info).not.toBeNull(); // "hit your usage limit" must match (not only "usage limit reached")
+    expect(typeof info?.resetAt).toBe('number'); // parsed "try again at 4:04 PM"
+    expect(info?.resetAt).toBeGreaterThan(NOW);
+  });
 });
 
 describe('parseResetTime', () => {
