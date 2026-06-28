@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pause, Play, RotateCw, Send, Square, Trash2, X } from 'lucide-react';
+import { Clock, Pause, Play, RotateCw, Send, Square, Trash2, X } from 'lucide-react';
 import type { AutonomyLevel, CockpitEvent, RunMode, SpecDoc } from '@shared/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useT } from '@/i18n';
@@ -207,6 +207,8 @@ function LiveCockpit({ runId }: { runId: string }) {
   const live = summary?.live ?? false;
   const resumable = summary?.resumable ?? false;
   const displayStatus = effectiveStatus(status, live);
+  // Parked on a usage limit — show when it will auto-resume (set on the persisted run).
+  const parkedUntil = !live && summary?.rateLimitedUntil ? summary.rateLimitedUntil : null;
 
   const openGate = useMemo(() => {
     const answered = new Set(
@@ -251,6 +253,16 @@ function LiveCockpit({ runId }: { runId: string }) {
           </Button>
         </Tooltip>
       </header>
+
+      {parkedUntil && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-warn/30 bg-warn/10 px-4 py-2 text-[12px] text-warn">
+          <Clock className="size-3.5 shrink-0" />
+          <span>
+            {t('Usage limit reached — auto-resumes around')}{' '}
+            <span className="font-medium tabular-nums">{new Date(parkedUntil).toLocaleTimeString()}</span>
+          </span>
+        </div>
+      )}
 
       <CockpitTabs feed={feed} acceptance={acceptance} />
 

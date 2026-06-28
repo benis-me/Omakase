@@ -129,6 +129,9 @@ export const WORKSPACE_MIGRATIONS: readonly string[] = [
       value_json TEXT NOT NULL
     );
   `,
+  // v2 — a run parked on a usage limit records when its limit resets, surfaced in
+  // the list/cockpit and used to re-arm the auto-resume timer after a restart.
+  /* sql */ `ALTER TABLE runs ADD COLUMN rate_limited_until INTEGER;`,
 ];
 
 /** Global registry DB schema (lives in the app's userData dir). */

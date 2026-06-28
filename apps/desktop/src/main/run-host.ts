@@ -498,6 +498,7 @@ function toSummaryDto(s: RunSummary, live: boolean): RunSummaryDto {
     updatedAt: s.updatedAt,
     live,
     resumable: isResumable(s.status, live),
+    rateLimitedUntil: s.rateLimitedUntil ?? null,
   };
 }
 
@@ -513,6 +514,7 @@ function recordSummary(r: RunRecord, live: boolean): RunSummaryDto {
     updatedAt: r.updatedAt,
     live,
     resumable: isResumable(r.status, live),
+    rateLimitedUntil: r.rateLimitedUntil ?? null,
   };
 }
 

@@ -34,6 +34,8 @@ export interface RunSummary {
   owner: string | null;
   spentTokens: number | null;
   spentCostUsd: number | null;
+  /** Wall-clock ms a usage limit resets at, when the run is parked on one. */
+  rateLimitedUntil: number | null;
   checkpointSeq: number;
   eventsCount: number;
   createdAt: number;
@@ -66,18 +68,19 @@ export class SqliteRunStore implements RunStore {
         .prepare(
           `INSERT INTO runs
              (id, mode, status, summary, spent_tokens, spent_cost_usd,
-              checkpoint_seq, last_control_seq, events_count, record_json,
-              created_at, updated_at, heartbeat_at)
+              rate_limited_until, checkpoint_seq, last_control_seq, events_count,
+              record_json, created_at, updated_at, heartbeat_at)
            VALUES
              (@id, @mode, @status, @summary, @spent_tokens, @spent_cost_usd,
-              @checkpoint_seq, @last_control_seq, @events_count, @record_json,
-              @created_at, @updated_at, @heartbeat_at)
+              @rate_limited_until, @checkpoint_seq, @last_control_seq, @events_count,
+              @record_json, @created_at, @updated_at, @heartbeat_at)
            ON CONFLICT(id) DO UPDATE SET
              mode = excluded.mode,
              status = excluded.status,
              summary = excluded.summary,
              spent_tokens = excluded.spent_tokens,
              spent_cost_usd = excluded.spent_cost_usd,
+             rate_limited_until = excluded.rate_limited_until,
              checkpoint_seq = excluded.checkpoint_seq,
              last_control_seq = excluded.last_control_seq,
              events_count = excluded.events_count,
@@ -92,6 +95,7 @@ export class SqliteRunStore implements RunStore {
           summary: rec.summary ?? '',
           spent_tokens: rec.spentTokens ?? null,
           spent_cost_usd: rec.spentCostUsd ?? null,
+          rate_limited_until: rec.rateLimitedUntil ?? null,
           checkpoint_seq: rec.checkpointSeq ?? 0,
           last_control_seq: rec.lastControlSeq ?? null,
           events_count: events.length,
@@ -235,7 +239,7 @@ export class SqliteRunStore implements RunStore {
     const rows = this.db
       .prepare(
         `SELECT id, mode, status, summary, owner, spent_tokens, spent_cost_usd,
-                checkpoint_seq, events_count, created_at, updated_at, heartbeat_at
+                rate_limited_until, checkpoint_seq, events_count, created_at, updated_at, heartbeat_at
          FROM runs ORDER BY updated_at DESC`,
       )
       .all() as Array<{
@@ -246,6 +250,7 @@ export class SqliteRunStore implements RunStore {
       owner: string | null;
       spent_tokens: number | null;
       spent_cost_usd: number | null;
+      rate_limited_until: number | null;
       checkpoint_seq: number;
       events_count: number;
       created_at: number;
@@ -260,6 +265,7 @@ export class SqliteRunStore implements RunStore {
       owner: r.owner,
       spentTokens: r.spent_tokens,
       spentCostUsd: r.spent_cost_usd,
+      rateLimitedUntil: r.rate_limited_until,
       checkpointSeq: r.checkpoint_seq,
       eventsCount: r.events_count,
       createdAt: r.created_at,

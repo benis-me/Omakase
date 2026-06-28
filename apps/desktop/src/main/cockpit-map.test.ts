@@ -92,10 +92,19 @@ describe('toCockpitEvent', () => {
     ).toMatchObject({ kind: 'agent', status: 'failed', agentRunId: 'a3' });
   });
 
-  it('maps a tool_use agent event to a tool line', () => {
+  it('maps a tool_use agent event to a tool line — tool name as title, role separate', () => {
     expect(
       toCockpitEvent(ev({ type: 'agent-event', role: 'worker', taskId: 't1', assignment: {}, event: { type: 'tool_use', name: 'edit' } }), 1),
-    ).toMatchObject({ kind: 'tool', title: 'worker: edit', role: 'worker' });
+    ).toMatchObject({ kind: 'tool', title: 'edit', role: 'worker', taskId: 't1' });
+  });
+
+  it('surfaces the tool target inline as detail', () => {
+    expect(
+      toCockpitEvent(
+        ev({ type: 'agent-event', role: 'worker', taskId: 't1', assignment: {}, event: { type: 'tool_use', name: 'Read', input: { file_path: 'src/foo.ts' } } }),
+        1,
+      ),
+    ).toMatchObject({ kind: 'tool', title: 'Read', detail: 'src/foo.ts' });
   });
 
   it('drops token deltas and heartbeats', () => {

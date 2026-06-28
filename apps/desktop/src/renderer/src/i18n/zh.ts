@@ -109,6 +109,7 @@ export const zh: Record<string, string> = {
   'This run was interrupted — resume to continue.': '此运行已中断——恢复以继续。',
   Retry: '重试',
   'Reset the failed tasks and run again': '重置失败的任务并重新运行',
+  'Usage limit reached — auto-resumes around': '已达额度上限——将在以下时间自动续跑',
   'No uncommitted changes in the workspace.': '工作区没有未提交的改动。',
   'Loading diff…': '加载改动…',
   idle: '空闲',

@@ -280,6 +280,9 @@ export interface RunSummaryDto {
   live: boolean;
   /** True if a non-live, non-terminal run can be resumed. */
   resumable: boolean;
+  /** Wall-clock ms a usage limit resets at — set while the run is parked on one,
+   * so the cockpit can show "auto-resumes at …". */
+  rateLimitedUntil: number | null;
   /** Name of the automation that started this run, if any (this session). */
   triggeredBy?: string;
 }
