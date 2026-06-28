@@ -1721,18 +1721,21 @@ class RunController implements RunHandle {
     const parts: string[] = [];
     if (this.wiki.size > 0) {
       if (this.request.cwd) {
-        // PULL model: inject only an index of titles and point the agent at the
-        // on-disk wiki (refreshed every checkpoint) to read on demand — instead of
-        // pushing every body into every call, which bloats as knowledge accumulates.
-        parts.push(
-          [
-            '# Project knowledge',
-            'Durable knowledge accumulated across runs. These are the entry titles; read',
-            '`.omks/memory/wiki.md` with your file tools for the full content of any you need.',
-            '',
-            this.wiki.toIndexMarkdown(),
-          ].join('\n'),
+        // Core + index + pull (MemGPT/Letta tiers): a tiny always-in-context CORE so a
+        // pure-pull design can't drop critical knowledge, an INDEX of everything for
+        // awareness, and a pointer to read the on-disk wiki (refreshed every checkpoint)
+        // for full detail on demand — instead of pushing every body into every call.
+        const sections = ['# Project knowledge'];
+        const core = this.wiki.toCoreMarkdown();
+        if (core) sections.push('', '## Core — key decisions & risks', '', core);
+        sections.push(
+          '',
+          'All durable knowledge (titles below). Read `.omks/memory/wiki.md` with your file',
+          'tools for the full content of any entry you need.',
+          '',
+          this.wiki.toIndexMarkdown(),
         );
+        parts.push(sections.join('\n'));
       } else {
         // No workspace to read from → fall back to a bounded inline view.
         parts.push(this.wiki.toPromptMarkdown());

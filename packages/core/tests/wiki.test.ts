@@ -117,3 +117,26 @@ describe('ProjectWiki.toIndexMarkdown (pull index)', () => {
     expect(md).toContain('+40 older');
   });
 });
+
+describe('ProjectWiki.toCoreMarkdown (always-in-context core)', () => {
+  it('keeps decisions + risks with bodies; excludes facts/tasks/notes', () => {
+    let t = 0;
+    const w = new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => t++ });
+    w.addFact({ title: 'a fact', body: 'FACT_BODY_EXCLUDED' });
+    w.addDecision({ title: 'use ESM', body: 'NodeNext modules everywhere' });
+    w.addRisk({ title: 'flaky network', body: 'retry external calls' });
+    w.recordTask('t1', 'TASK_EXCLUDED', 'done');
+    const md = w.toCoreMarkdown();
+    expect(md).toContain('use ESM');
+    expect(md).toContain('NodeNext modules');
+    expect(md).toContain('flaky network');
+    expect(md).not.toContain('FACT_BODY_EXCLUDED');
+    expect(md).not.toContain('TASK_EXCLUDED');
+  });
+
+  it('is empty when there are no decisions or risks', () => {
+    const w = new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => 0 });
+    w.addFact({ title: 'x', body: 'y' });
+    expect(w.toCoreMarkdown()).toBe('');
+  });
+});

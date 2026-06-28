@@ -253,6 +253,28 @@ export class ProjectWiki {
   }
 
   /**
+   * "Core memory" for prompts (MemGPT/Letta pattern): the few highest-signal durable
+   * entries — decisions and risks — kept always-in-context with their bodies, so a
+   * pure-pull design can't drop critical knowledge if an agent never opens the file.
+   * Recent-first, bodies clipped, under a small char budget. The bulk stays pull.
+   */
+  toCoreMarkdown(maxChars = 1200, perEntryChars = 320): string {
+    const core = [...this.list('decision'), ...this.list('risk')].sort((a, b) => b.createdAt - a.createdAt);
+    if (core.length === 0) return '';
+    const out: string[] = [];
+    let used = 0;
+    for (const e of core) {
+      const block = [`### ${sanitizeTitle(e.title)}`, e.body ? clipBody(sanitizeBody(e.body), perEntryChars) : '']
+        .filter(Boolean)
+        .join('\n');
+      if (used + block.length > maxChars && out.length > 0) break;
+      out.push(block);
+      used += block.length;
+    }
+    return out.join('\n\n').trim();
+  }
+
+  /**
    * A compact INDEX for prompts — entry titles only (recent-first, capped), grouped
    * by kind. Paired with a pointer to the on-disk wiki, this lets an agent see WHAT
    * durable knowledge exists and pull the full content on demand with its file tools,
