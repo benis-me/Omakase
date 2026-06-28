@@ -22,6 +22,8 @@ export default defineConfig({
     },
   },
   test: {
+    pool: 'forks',
+    poolOptions: { forks: { execArgv: ['--experimental-sqlite'] } },
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
     passWithNoTests: true,
     environment: 'node',

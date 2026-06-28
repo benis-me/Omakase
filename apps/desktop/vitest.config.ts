@@ -14,9 +14,10 @@ export default defineConfig({
     },
   },
   test: {
+    pool: 'forks',
+    poolOptions: { forks: { execArgv: ['--experimental-sqlite'] } },
     include: ['src/main/**/*.test.ts', 'src/renderer/**/*.test.ts'],
     environment: 'node',
     passWithNoTests: true,
-    globalSetup: ['../../scripts/ensure-node-sqlite.mjs'],
   },
 });

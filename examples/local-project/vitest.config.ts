@@ -15,5 +15,11 @@ export default defineConfig({
       ),
     },
   },
-  test: { include: ['*.test.ts'], passWithNoTests: true, environment: 'node' },
+  test: {
+    include: ['*.test.ts'],
+    passWithNoTests: true,
+    environment: 'node',
+    pool: 'forks',
+    poolOptions: { forks: { execArgv: ['--experimental-sqlite'] } },
+  },
 });

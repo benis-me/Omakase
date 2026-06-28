@@ -38,13 +38,9 @@
   },
   "dependencies": {
     "@omakase/core": "workspace:*",
-    "better-sqlite3": "^12.11.1",
     "yaml": "^2.9.0"
   },
   "engines": {
-    "node": ">=20"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "node": ">=22"
   }
 }

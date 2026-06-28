@@ -4,6 +4,21 @@
 // compiled into dist/. Run `pnpm --filter @omakase/cli build` to populate dist.
 import process from 'node:process';
 
+// Storage uses the built-in `node:sqlite`, which is unflagged on Node 24 (the Electron
+// app) but needs `--experimental-sqlite` on Node 22. If it isn't loadable, re-exec this
+// process with the flag so the CLI works on either without a native rebuild.
+try {
+  await import('node:sqlite');
+} catch {
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync(
+    process.execPath,
+    ['--experimental-sqlite', '--no-warnings', process.argv[1], ...process.argv.slice(2)],
+    { stdio: 'inherit' },
+  );
+  process.exit(result.status ?? 1);
+}
+
 try {
   const mod = await import('../dist/index.js');
   await mod.main(process.argv.slice(2));
