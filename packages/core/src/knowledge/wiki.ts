@@ -50,6 +50,11 @@ function sanitizeTitle(s: string): string {
   return s.replace(/[\r\n]+/g, ' ').trim();
 }
 
+/** Normalize a title for dedup: lowercase, punctuation→space, collapsed. */
+function dedupKey(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 /** Clip an entry body to a budget on a word boundary, so one verbose entry (e.g. a
  *  curator that narrates its process) can't dominate an injected prompt. */
 function clipBody(s: string, max: number): string {
@@ -74,6 +79,8 @@ export class ProjectWiki {
   private readonly entries = new Map<string, WikiEntry>();
   private readonly order: string[] = [];
   private readonly taskIndex = new Map<string, string>();
+  /** `${kind}\0${normalized title}` → id, for consolidating duplicate durable entries. */
+  private readonly dedupIndex = new Map<string, string>();
   private readonly ids: IdGenerator;
   private readonly clock: () => number;
 
@@ -83,6 +90,29 @@ export class ProjectWiki {
   }
 
   add(kind: WikiEntryKind, input: WikiInput): WikiEntry {
+    // Consolidation: dedup the durable kinds by (kind, normalized title), so the same
+    // fact/decision/risk re-curated across runs UPDATES one entry instead of piling up
+    // near-duplicates that bloat the index and dilute retrieval. Tasks/notes don't dedup
+    // here (tasks upsert by id; notes are intentionally append-only).
+    if (kind === 'fact' || kind === 'decision' || kind === 'risk') {
+      const key = `${kind} ${dedupKey(input.title)}`;
+      const existingId = this.dedupIndex.get(key);
+      if (existingId && this.entries.has(existingId)) {
+        return this.update(existingId, {
+          title: input.title,
+          body: input.body ?? '',
+          tags: [...(input.tags ?? [])],
+          ...(input.source ? { source: input.source } : {}),
+        });
+      }
+      const entry = this.insert(kind, input);
+      this.dedupIndex.set(key, entry.id);
+      return entry;
+    }
+    return this.insert(kind, input);
+  }
+
+  private insert(kind: WikiEntryKind, input: WikiInput): WikiEntry {
     const now = this.clock();
     const entry: WikiEntry = {
       id: this.ids.next('wiki'),
@@ -334,10 +364,17 @@ export class ProjectWiki {
       idGenerator: options.idGenerator ?? createIdGenerator(maxSeq),
     });
     for (const entry of snapshot.entries) {
+      // Clean obsolete pre-distillation pollution: the old curator stored its raw
+      // chain-of-thought as a `synthesis`-tagged 'fact'. New runs emit typed
+      // fact/decision/risk, so drop the legacy blobs on load (they only bloat + dilute).
+      if (entry.tags.includes('synthesis')) continue;
       wiki['entries'].set(entry.id, { ...entry, tags: [...entry.tags] });
       wiki['order'].push(entry.id);
       if (entry.source?.startsWith('task:')) {
         wiki['taskIndex'].set(entry.source.slice(5), entry.id);
+      }
+      if (entry.kind === 'fact' || entry.kind === 'decision' || entry.kind === 'risk') {
+        wiki['dedupIndex'].set(`${entry.kind} ${dedupKey(entry.title)}`, entry.id);
       }
     }
     return wiki;

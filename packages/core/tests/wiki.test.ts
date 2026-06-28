@@ -140,3 +140,36 @@ describe('ProjectWiki.toCoreMarkdown (always-in-context core)', () => {
     expect(w.toCoreMarkdown()).toBe('');
   });
 });
+
+describe('consolidation — dedup durable entries (#5)', () => {
+  it('updates the existing entry when the same fact is re-added (normalized title)', () => {
+    const w = wiki();
+    const first = w.addFact({ title: 'Uses pnpm', body: 'old' });
+    const second = w.addFact({ title: 'uses  PNPM!', body: 'refined detail' });
+    expect(second.id).toBe(first.id); // consolidated, not a duplicate
+    expect(w.list('fact')).toHaveLength(1);
+    expect(w.get(first.id)?.body).toBe('refined detail');
+  });
+
+  it('does not dedup notes (intentionally append-only)', () => {
+    const w = wiki();
+    w.addNote({ title: 'progress', body: 'a' });
+    w.addNote({ title: 'progress', body: 'b' });
+    expect(w.list('note')).toHaveLength(2);
+  });
+});
+
+describe('fromJSON cleanup — drop obsolete synthesis pollution (#7)', () => {
+  it('drops synthesis-tagged entries on load and keeps dedup working after', () => {
+    const w = wiki();
+    w.addFact({ title: 'Keep me', body: 'durable fact' });
+    w.addFact({ title: 'Wiki synthesis', body: "I'll first locate... the patch missed...", tags: ['knowledge', 'synthesis'] });
+
+    const restored = ProjectWiki.fromJSON(w.toJSON());
+    expect(restored.list('fact').map((e) => e.title)).toEqual(['Keep me']); // narration blob gone
+
+    restored.addFact({ title: 'keep  ME!', body: 'updated' }); // same normalized title
+    expect(restored.list('fact')).toHaveLength(1); // deduped onto the survivor
+    expect(restored.get(restored.list('fact')[0]!.id)?.body).toBe('updated');
+  });
+});
