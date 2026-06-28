@@ -337,7 +337,11 @@ function deferred(): Deferred {
 
 function usageTokens(usage: AgentRunResult['usage']): number {
   if (!usage) return 0;
-  return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  const total = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  // Count REAL incremental spend: exclude cached context re-reads, which CLIs like codex
+  // fold into input_tokens/total_tokens. Across a multi-turn run those re-reads dominate
+  // (e.g. ~2.2M reported vs ~200k real) and would trip the budget gate far too early.
+  return Math.max(0, total - (usage.cachedReadTokens ?? 0));
 }
 
 function summarizeMarkdown(markdown: string, fallback: string): string {
@@ -2282,11 +2286,7 @@ class RunController implements RunHandle {
 
   /** Accumulate token/cost spend and trip the budget once a ceiling is hit. */
   private accountUsage(result: AgentRunResult): void {
-    const usage = result.usage;
-    if (usage) {
-      this.spentTokens +=
-        usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-    }
+    if (result.usage) this.spentTokens += usageTokens(result.usage);
     if (typeof result.costUsd === 'number') this.spentCostUsd += result.costUsd;
     if (this.budgetExhausted || !this.budget) return;
     const overTokens =

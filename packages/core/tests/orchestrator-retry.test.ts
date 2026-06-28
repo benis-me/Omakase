@@ -108,3 +108,23 @@ describe('retry a failed run (#6)', () => {
     expect(await makeOrch(createScriptedAgent(() => [{ type: 'text_delta', delta: 'done' }])).retry('nope')).toBeNull();
   });
 });
+
+describe('budget accounting — real incremental tokens', () => {
+  it('excludes cached re-reads so codex-style inflation does not trip the budget early', async () => {
+    const exec = createScriptedAgent((input) => {
+      if (String(input.metadata?.role) === 'worker') {
+        return [
+          // codex folds re-read context into input/total; only ~4k is new this run.
+          { type: 'usage', usage: { inputTokens: 100_000, outputTokens: 2_000, cachedReadTokens: 98_000, totalTokens: 102_000 } },
+          { type: 'text_delta', delta: 'done' },
+        ];
+      }
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+
+    const result = await makeOrch(exec).start({ prompt: 'build a thing' }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.spentTokens).toBe(4000); // 102000 total − 98000 cached, not the inflated 102000
+  });
+});
