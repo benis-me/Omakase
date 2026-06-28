@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ProjectWiki } from '../src/knowledge/wiki.js';
 import { createIdGenerator } from '../src/ids.js';
-import { retrieveRelevant, tokenize } from '../src/knowledge/retrieval.js';
+import { retrieveRelevant, tokenize, extractEntities } from '../src/knowledge/retrieval.js';
 
 function wiki(): ProjectWiki {
   let t = 0;
@@ -36,6 +36,29 @@ describe('retrieveRelevant', () => {
     const w = wiki();
     for (let i = 0; i < 20; i++) w.addFact({ title: `cache variant ${i}`, body: 'cache cache cache' });
     expect(retrieveRelevant(w.list(), 'cache', { limit: 3 })).toHaveLength(3);
+  });
+});
+
+describe('extractEntities', () => {
+  it('picks code-ish identifiers/paths, ignores plain words', () => {
+    const ents = extractEntities('fix deepClone in src/clone.ts for the LRUCache and snake_case');
+    expect(ents.has('deepclone')).toBe(true); // camelCase
+    expect(ents.has('src/clone.ts')).toBe(true); // path
+    expect(ents.has('lrucache')).toBe(true); // PascalCase
+    expect(ents.has('snake_case')).toBe(true); // snake_case
+    expect(ents.has('fix')).toBe(false); // plain word
+    expect(ents.has('the')).toBe(false);
+  });
+});
+
+describe('retrieveRelevant — entity signal outranks plain keyword overlap', () => {
+  it('ranks an exact identifier match above a generic keyword match', () => {
+    let t = 0;
+    const w = new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => t++ });
+    w.addFact({ title: 'Generic caching notes', body: 'cache things to make them fast' });
+    w.addDecision({ title: 'deepClone handles Maps', body: 'deepClone clones Date and Map' });
+    const hits = retrieveRelevant(w.list(), 'fix a bug in deepClone');
+    expect(hits[0]?.title).toBe('deepClone handles Maps'); // entity match wins
   });
 });
 
