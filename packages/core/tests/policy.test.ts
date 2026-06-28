@@ -131,3 +131,21 @@ describe('select with exclude (reassignment / 改派)', () => {
     expect(result.rationale).toContain('built-in');
   });
 });
+
+describe('agent health — prefer live-probed over fallback-models agents', () => {
+  it('routes to the live agent and drops the fallback one when both are present', () => {
+    const policy = createModelPolicy('normal');
+    const live = { ...agent('codex'), modelsSource: 'live' as const };
+    const fallback = { ...agent('gemini'), modelsSource: 'fallback' as const };
+    // Distribute several worker tasks — none should land on the fallback (likely-broken) agent.
+    for (const taskId of ['t1', 't2', 't3', 't4']) {
+      expect(policy.select('worker', { available: [live, fallback], taskId }).agentId).toBe('codex');
+    }
+  });
+
+  it('still uses a fallback agent when no live agent is available', () => {
+    const policy = createModelPolicy('normal');
+    const fallback = { ...agent('gemini'), modelsSource: 'fallback' as const };
+    expect(policy.select('worker', { available: [fallback] }).agentId).toBe('gemini');
+  });
+});

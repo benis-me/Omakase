@@ -73,9 +73,14 @@ function rankAvailable(
   ranking: readonly string[],
 ): DetectedAgent[] {
   const index = new Map(ranking.map((id, i) => [id, i]));
-  return agents
-    .filter((a) => a.available && a.authStatus !== 'missing')
-    .sort((a, b) => (index.get(a.id) ?? 999) - (index.get(b.id) ?? 999));
+  const usable = agents.filter((a) => a.available && a.authStatus !== 'missing');
+  // Health signal: prefer agents whose models were probed LIVE. An agent we could only
+  // GUESS models for (`modelsSource: 'fallback'`) is likelier broken/misconfigured — it
+  // passed version+auth probes but may error at runtime (e.g. the gemini CLI returning
+  // zero output). Use the live agents exclusively when any exist; else best-effort all.
+  const live = usable.filter((a) => a.modelsSource === 'live');
+  const pool = live.length > 0 ? live : usable;
+  return pool.sort((a, b) => (index.get(a.id) ?? 999) - (index.get(b.id) ?? 999));
 }
 
 function pickModelByKeyword(
