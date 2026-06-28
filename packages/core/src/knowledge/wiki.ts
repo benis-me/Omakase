@@ -252,6 +252,33 @@ export class ProjectWiki {
     return out.join('\n').trim();
   }
 
+  /**
+   * A compact INDEX for prompts — entry titles only (recent-first, capped), grouped
+   * by kind. Paired with a pointer to the on-disk wiki, this lets an agent see WHAT
+   * durable knowledge exists and pull the full content on demand with its file tools,
+   * instead of every body being pushed into every call (which bloats as runs pile up).
+   */
+  toIndexMarkdown(maxEntries = 40): string {
+    const recent = [...this.list()].sort((a, b) => b.createdAt - a.createdAt).slice(0, maxEntries);
+    if (recent.length === 0) return '';
+    const order: Array<{ kind: WikiEntryKind; heading: string }> = [
+      { kind: 'fact', heading: 'Facts' },
+      { kind: 'decision', heading: 'Decisions' },
+      { kind: 'risk', heading: 'Risks' },
+      { kind: 'task', heading: 'Tasks' },
+      { kind: 'note', heading: 'Notes' },
+    ];
+    const out: string[] = [];
+    for (const { kind, heading } of order) {
+      const titles = recent.filter((e) => e.kind === kind).map((e) => sanitizeTitle(e.title));
+      if (titles.length === 0) continue;
+      out.push(`## ${heading}`, ...titles.map((t) => `- ${t}`), '');
+    }
+    const omitted = this.size - recent.length;
+    if (omitted > 0) out.push(`_(+${omitted} older ${omitted === 1 ? 'entry' : 'entries'}.)_`);
+    return out.join('\n').trim();
+  }
+
   toJSON(): WikiSnapshot {
     return { entries: this.list().map((e) => ({ ...e, tags: [...e.tags] })) };
   }

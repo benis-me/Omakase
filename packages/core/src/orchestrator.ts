@@ -1719,9 +1719,25 @@ class RunController implements RunHandle {
 
   private knowledgeContext(): string {
     const parts: string[] = [];
-    // Bounded view (recent + clipped), NOT the full wiki — the full wiki backs the
-    // on-disk file; injecting all of it would bloat every call as knowledge grows.
-    if (this.wiki.size > 0) parts.push(this.wiki.toPromptMarkdown());
+    if (this.wiki.size > 0) {
+      if (this.request.cwd) {
+        // PULL model: inject only an index of titles and point the agent at the
+        // on-disk wiki (refreshed every checkpoint) to read on demand — instead of
+        // pushing every body into every call, which bloats as knowledge accumulates.
+        parts.push(
+          [
+            '# Project knowledge',
+            'Durable knowledge accumulated across runs. These are the entry titles; read',
+            '`.omks/memory/wiki.md` with your file tools for the full content of any you need.',
+            '',
+            this.wiki.toIndexMarkdown(),
+          ].join('\n'),
+        );
+      } else {
+        // No workspace to read from → fall back to a bounded inline view.
+        parts.push(this.wiki.toPromptMarkdown());
+      }
+    }
     if (this.codegraph && this.codegraph.size > 0) {
       const stats = this.codegraph.stats();
       parts.push(

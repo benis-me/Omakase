@@ -93,3 +93,27 @@ describe('ProjectWiki.toPromptMarkdown (bounded injection)', () => {
     expect(md).not.toContain('omitted');
   });
 });
+
+describe('ProjectWiki.toIndexMarkdown (pull index)', () => {
+  it('lists titles only — no bodies — grouped by kind', () => {
+    const w = new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => 0 });
+    w.addFact({ title: 'Uses pnpm', body: 'BODY_SHOULD_NOT_APPEAR '.repeat(20) });
+    w.addDecision({ title: 'ESM only', body: 'ALSO_HIDDEN '.repeat(20) });
+    const md = w.toIndexMarkdown();
+    expect(md).toContain('## Facts');
+    expect(md).toContain('- Uses pnpm');
+    expect(md).toContain('- ESM only');
+    expect(md).not.toContain('BODY_SHOULD_NOT_APPEAR');
+    expect(md).not.toContain('ALSO_HIDDEN');
+  });
+
+  it('caps to the most recent entries and notes the remainder', () => {
+    let t = 0;
+    const w = new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => t++ });
+    for (let i = 0; i < 50; i++) w.addFact({ title: `Fact ${i}` });
+    const md = w.toIndexMarkdown(10);
+    expect(md).toContain('- Fact 49'); // newest kept
+    expect(md).not.toContain('- Fact 0'); // oldest dropped
+    expect(md).toContain('+40 older');
+  });
+});
