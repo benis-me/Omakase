@@ -49,6 +49,13 @@ function sanitizeTitle(s: string): string {
   return s.replace(/[\r\n]+/g, ' ').trim();
 }
 
+/** Clip an entry body to a budget on a word boundary, so one verbose entry (e.g. a
+ *  curator that narrates its process) can't dominate an injected prompt. */
+function clipBody(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max).replace(/\s+\S*$/, '')} …`;
+}
+
 /**
  * Neutralize body lines that would otherwise spoof a markdown heading (or our
  * own `## Section` / `### title` structure) when the wiki — which can hold
@@ -196,6 +203,51 @@ export class ProjectWiki {
         if (entry.tags.length > 0) out.push(`_tags: ${entry.tags.join(', ')}_`);
         out.push('');
       }
+    }
+    return out.join('\n').trim();
+  }
+
+  /**
+   * Markdown for PROMPT INJECTION — a bounded view, distinct from {@link toMarkdown}
+   * (which backs the full on-disk wiki and human reading). As knowledge accumulates
+   * across runs the full wiki would otherwise bloat every agent call, so here we take
+   * the most-recent entries up to a char budget and clip each body. Grouped by kind
+   * for readability; a footer notes how many older entries were left on disk.
+   */
+  toPromptMarkdown(maxChars = 3500, perEntryChars = 400): string {
+    const sections: Array<{ kind: WikiEntryKind; heading: string }> = [
+      { kind: 'fact', heading: 'Facts' },
+      { kind: 'decision', heading: 'Decisions' },
+      { kind: 'task', heading: 'Tasks' },
+      { kind: 'risk', heading: 'Risks' },
+      { kind: 'note', heading: 'Notes' },
+    ];
+    // Newest first, accept entries until the budget is spent (always keep ≥1 so a
+    // single oversized entry still contributes, just clipped).
+    const recent = [...this.list()].sort((a, b) => b.createdAt - a.createdAt);
+    const chosen = new Set<string>();
+    let used = 0;
+    for (const e of recent) {
+      const cost = sanitizeTitle(e.title).length + Math.min(e.body.length, perEntryChars) + 16;
+      if (used + cost > maxChars && chosen.size > 0) break;
+      chosen.add(e.id);
+      used += cost;
+    }
+    const omitted = recent.length - chosen.size;
+    const out: string[] = ['# Project Wiki', ''];
+    for (const section of sections) {
+      const entries = this.list(section.kind).filter((e) => chosen.has(e.id));
+      if (entries.length === 0) continue;
+      out.push(`## ${section.heading}`, '');
+      for (const entry of entries) {
+        out.push(`### ${sanitizeTitle(entry.title)}`);
+        if (entry.body) out.push(clipBody(sanitizeBody(entry.body), perEntryChars));
+        if (entry.tags.length > 0) out.push(`_tags: ${entry.tags.join(', ')}_`);
+        out.push('');
+      }
+    }
+    if (omitted > 0) {
+      out.push(`_(${omitted} older wiki ${omitted === 1 ? 'entry' : 'entries'} omitted here; full wiki is on disk.)_`);
     }
     return out.join('\n').trim();
   }

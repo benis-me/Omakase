@@ -64,3 +64,32 @@ describe('ProjectWiki', () => {
     expect(snapshot.entries.some((e) => e.id === fact.id)).toBe(false);
   });
 });
+
+describe('ProjectWiki.toPromptMarkdown (bounded injection)', () => {
+  function growing() {
+    let t = 0;
+    return new ProjectWiki({ idGenerator: createIdGenerator(), clock: () => t++ });
+  }
+
+  it('caps total size, clips oversized entries, keeps recent, notes omissions', () => {
+    const w = growing();
+    w.addFact({ title: 'Ancient narration', body: 'x'.repeat(5000) }); // oldest + huge
+    for (let i = 0; i < 30; i++) w.addFact({ title: `Fact ${i}`, body: `body ${i}` });
+
+    const md = w.toPromptMarkdown(1000, 200);
+    expect(md.length).toBeLessThan(2000); // bounded, far below the full ~6k
+    expect(md).not.toContain('x'.repeat(250)); // the 5000-char body never injected whole
+    expect(md).toContain('Fact 29'); // newest kept
+    expect(md).toContain('omitted'); // older entries dropped, with a note
+  });
+
+  it('returns the full set (no omission note) when under budget', () => {
+    const w = growing();
+    w.addFact({ title: 'Alpha', body: 'short' });
+    w.addDecision({ title: 'Beta', body: 'short' });
+    const md = w.toPromptMarkdown(3500, 400);
+    expect(md).toContain('### Alpha');
+    expect(md).toContain('### Beta');
+    expect(md).not.toContain('omitted');
+  });
+});

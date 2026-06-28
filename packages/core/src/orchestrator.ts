@@ -1714,8 +1714,9 @@ class RunController implements RunHandle {
 
   private knowledgeContext(): string {
     const parts: string[] = [];
-    const wiki = this.wiki.toMarkdown();
-    if (this.wiki.size > 0) parts.push(wiki);
+    // Bounded view (recent + clipped), NOT the full wiki — the full wiki backs the
+    // on-disk file; injecting all of it would bloat every call as knowledge grows.
+    if (this.wiki.size > 0) parts.push(this.wiki.toPromptMarkdown());
     if (this.codegraph && this.codegraph.size > 0) {
       const stats = this.codegraph.stats();
       parts.push(
