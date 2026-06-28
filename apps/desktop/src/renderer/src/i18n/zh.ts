@@ -242,6 +242,8 @@ export const zh: Record<string, string> = {
   'Delete rule': '删除规则',
   'The project wiki is empty. Agents accumulate knowledge here as they run.':
     '项目 wiki 为空。智能体会在运行时在此累积知识。',
+  'Durable knowledge agents accumulate across runs. Decisions & risks are the always-in-context core; the rest is retrieved by relevance or read on demand — agents are never force-fed the whole wiki.':
+    '智能体跨运行累积的持久知识。决策与风险是始终在上下文里的核心;其余按相关性检索或按需读取——智能体不会被硬塞整个 wiki。',
   'No knowledge events yet. Agents record what they learn here as runs progress.':
     '还没有知识事件。随着运行推进，智能体会在此记录所学。',
 

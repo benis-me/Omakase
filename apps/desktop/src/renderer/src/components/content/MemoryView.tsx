@@ -155,7 +155,14 @@ export function MemoryView() {
         ) : sel.kind === 'wiki' ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-5">
             {wiki.trim() ? (
-              <MarkdownPreview source={wiki} />
+              <>
+                <div className="mb-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                  {t(
+                    'Durable knowledge agents accumulate across runs. Decisions & risks are the always-in-context core; the rest is retrieved by relevance or read on demand — agents are never force-fed the whole wiki.',
+                  )}
+                </div>
+                <MarkdownPreview source={wiki} />
+              </>
             ) : (
               <p className="text-[12px] leading-relaxed text-muted-foreground">
                 {t('The project wiki is empty. Agents accumulate knowledge here as they run.')}
