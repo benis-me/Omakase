@@ -39,6 +39,9 @@ export interface SelectionContext {
   taskId?: string;
   /** Optional task title fallback when no id is available. */
   taskTitle?: string;
+  /** Agent ids to skip — a task reassigns away from agents that already failed it
+   * (and from agents degraded mid-run after producing nothing). */
+  exclude?: readonly string[];
 }
 
 export interface ModelPolicy {
@@ -124,7 +127,10 @@ export function createModelPolicy(
   const custom = options.custom;
 
   const selectAuto = (role: AgentRole, ctx: SelectionContext): RoleAssignment => {
-    const ranked = rankAvailable(ctx.available, ranking);
+    const pool = ctx.exclude?.length
+      ? ctx.available.filter((a) => !ctx.exclude!.includes(a.id))
+      : ctx.available;
+    const ranked = rankAvailable(pool, ranking);
     if (ranked.length === 0) {
       return builtinAssignment(role, 'No installed agent available; using built-in', builtinId);
     }

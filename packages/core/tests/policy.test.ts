@@ -113,3 +113,21 @@ describe('createModelPolicy', () => {
     expect(reviewer.agentId).toBe('gemini');
   });
 });
+
+describe('select with exclude (reassignment / 改派)', () => {
+  it('routes a worker away from an excluded agent', () => {
+    const policy = createModelPolicy('normal');
+    const available = [agent('codex'), agent('gemini')];
+    const first = policy.select('worker', { available });
+    const second = policy.select('worker', { available, exclude: [first.agentId] });
+    expect(second.agentId).not.toBe(first.agentId);
+    expect(available.some((a) => a.id === second.agentId)).toBe(true);
+  });
+
+  it('falls back to the built-in agent when every available agent is excluded', () => {
+    const policy = createModelPolicy('normal');
+    const available = [agent('codex'), agent('gemini')];
+    const result = policy.select('worker', { available, exclude: ['codex', 'gemini'] });
+    expect(result.rationale).toContain('built-in');
+  });
+});

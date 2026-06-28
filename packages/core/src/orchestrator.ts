@@ -389,6 +389,11 @@ class RunController implements RunHandle {
   /** taskId → its stable agent-run id, so a retried task reuses ONE roster entry
    * (its attempt counter rises) instead of spawning a fresh "agent" each attempt. */
   private readonly taskAgentRunIds = new Map<string, string>();
+  /** Agents that produced nothing (0-token failure) — degraded run-wide so the
+   * policy routes every remaining task around a broken CLI. */
+  private readonly degradedAgents = new Set<string>();
+  /** taskId → agents that already failed it, so its retry reassigns to another. */
+  private readonly taskFailedAgents = new Map<string, Set<string>>();
   private readonly maxConcurrency: number;
   private readonly budget: RunBudget | undefined;
   private spentTokens = 0;
@@ -2022,6 +2027,7 @@ class RunController implements RunHandle {
       taskId: task.id,
       taskTitle: task.title,
       taskType: task.tags[0] ?? task.role,
+      exclude: [...this.degradedAgents, ...(this.taskFailedAgents.get(task.id) ?? [])],
     });
     const identity = this.createAgentIdentity(assignment, task.role, task.id);
     this.graph.incrementAttempts(task.id);
@@ -2108,6 +2114,20 @@ class RunController implements RunHandle {
         });
         this.emit({ type: 'error', phase: 'rate-limit', message: limit.raw });
         return;
+      }
+      // A genuine failure (not a rate limit): reassign this task away from this agent
+      // on retry; if it produced nothing at all, degrade it run-wide — a CLI that
+      // errors with zero output is broken, and every other task should route around it.
+      const failed = this.taskFailedAgents.get(task.id) ?? new Set<string>();
+      failed.add(assignment.agentId);
+      this.taskFailedAgents.set(task.id, failed);
+      if (usageTokens(result.usage) === 0 && !this.degradedAgents.has(assignment.agentId)) {
+        this.degradedAgents.add(assignment.agentId);
+        this.emit({
+          type: 'error',
+          phase: 'agent-degraded',
+          message: `Agent ${assignment.agentId} produced no output; routing remaining tasks around it.`,
+        });
       }
     }
 
