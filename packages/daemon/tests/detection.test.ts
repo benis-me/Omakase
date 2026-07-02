@@ -28,6 +28,7 @@ beforeAll(() => {
   emptyHome = mkdtempSync(path.join(os.tmpdir(), 'omakase-home-'));
   makeBin('claude');
   makeBin('codex');
+  makeBin('codebuddy');
   makeBin('pi');
   // gemini/opencode/cursor-agent/qwen/copilot intentionally absent.
 });
@@ -57,6 +58,15 @@ function probeTransport(): Transport {
       if (args === 'debug models') {
         return emit({
           stdout: JSON.stringify({ models: [{ slug: 'gpt-5' }, { slug: 'o3' }] }),
+        });
+      }
+    }
+    if (name === 'codebuddy') {
+      if (args === '--version') return emit({ stdout: 'codebuddy 2.109.0\n' });
+      if (ctrl.request.args.includes('--help')) {
+        return emit({
+          stdout:
+            'Currently supported: (claude-opus-4.8, claude-sonnet-4.6, claude-haiku-4.5)\n',
         });
       }
     }
@@ -155,6 +165,7 @@ describe('detectAgents', () => {
     expect(byId.get('claude')?.available).toBe(true);
     expect(byId.get('claude')?.version).toBe('1.2.3 (Claude Code)');
     expect(byId.get('codex')?.available).toBe(true);
+    expect(byId.get('codebuddy')?.available).toBe(true);
     expect(byId.get('pi')?.available).toBe(true);
 
     expect(byId.get('gemini')?.available).toBe(false);
@@ -175,10 +186,47 @@ describe('detectAgents', () => {
     const codex = byId.get('codex');
     expect(codex?.modelsSource).toBe('live');
     expect(codex?.models.map((m) => m.id)).toEqual(['default', 'gpt-5', 'o3']);
+    // CodeBuddy exposes real account models in the Dezin-observed help text.
+    const codebuddy = byId.get('codebuddy');
+    expect(codebuddy?.modelsSource).toBe('live');
+    expect(codebuddy?.models.map((m) => m.id)).toEqual([
+      'default',
+      'claude-opus-4.8',
+      'claude-sonnet-4.6',
+      'claude-haiku-4.5',
+    ]);
     // Pi parses its stderr provider table → live.
     const pi = byId.get('pi');
     expect(pi?.modelsSource).toBe('live');
     expect(pi?.models.map((m) => m.id)).toContain('anthropic/claude-sonnet-4-5');
+  });
+
+  it('builds CodeBuddy runs through the Claude Code compatible argv contract', () => {
+    const codebuddy = createRegistry().get('codebuddy');
+    if (!codebuddy) throw new Error('CodeBuddy runtime def missing');
+
+    expect(codebuddy.bin).toBe('codebuddy');
+    expect(codebuddy.streamFormat).toBe('claude-stream-json');
+    expect(codebuddy.promptViaStdin).toBe(true);
+    expect(
+      codebuddy.buildArgs('hi', [], ['/tmp/skills'], { model: 'claude-sonnet-4.6' }, {
+        capabilities: { partialMessages: true, addDir: true },
+      }),
+    ).toEqual([
+      '-p',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+      '--model',
+      'claude-sonnet-4.6',
+      '--add-dir',
+      '/tmp/skills',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
   });
 
   it('filters cursor-agent login/banner noise out of live model listings', async () => {

@@ -1,4 +1,5 @@
 import { claudeAgentDef } from './claude.js';
+import { codebuddyAgentDef } from './codebuddy.js';
 import { codexAgentDef } from './codex.js';
 import { copilotAgentDef } from './copilot.js';
 import { cursorAgentDef } from './cursor-agent.js';
@@ -10,6 +11,7 @@ import type { RuntimeAgentDef } from '../types.js';
 
 export {
   claudeAgentDef,
+  codebuddyAgentDef,
   codexAgentDef,
   copilotAgentDef,
   cursorAgentDef,
@@ -22,6 +24,7 @@ export {
 /** The built-in adapter definitions, in display order. */
 export const BUILTIN_AGENT_DEFS: readonly RuntimeAgentDef[] = Object.freeze([
   claudeAgentDef,
+  codebuddyAgentDef,
   codexAgentDef,
   piAgentDef,
   geminiAgentDef,

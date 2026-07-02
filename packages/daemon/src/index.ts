@@ -96,6 +96,7 @@ export type { RegisterOptions, CreateRegistryOptions } from './runtimes/registry
 export { BUILTIN_AGENT_DEFS } from './runtimes/defs/index.js';
 export {
   claudeAgentDef,
+  codebuddyAgentDef,
   codexAgentDef,
   piAgentDef,
   geminiAgentDef,
