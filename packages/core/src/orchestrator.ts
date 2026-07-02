@@ -2562,7 +2562,19 @@ class RunController implements RunHandle {
 
   private computeSummary(status: RunStatus): string {
     const stats = this.graph.stats();
-    return `${status}: ${stats.succeeded}/${this.graph.size} tasks succeeded`;
+    const details: string[] = [];
+    if (status === 'incomplete') {
+      if (this.requiresExplicitAcceptance() && !this.acceptance.progress.complete) {
+        details.push(`acceptance ${this.acceptance.progress.passed}/${this.acceptance.progress.total} criteria passed`);
+      }
+      if (this.verificationFailed) details.push('verification did not pass');
+      if (this.budgetExhausted) details.push('budget exhausted');
+      if (this.rateLimitedUntil !== null) details.push('waiting for agent usage limit reset');
+    }
+    return [
+      `${status}: ${stats.succeeded}/${this.graph.size} tasks succeeded`,
+      ...details,
+    ].join('; ');
   }
 
   private buildRecord(status: RunStatus, summary: string): RunRecord {

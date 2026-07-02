@@ -197,6 +197,55 @@ describe('RunHost end-to-end flow', () => {
     expect(limited).toEqual([{ id, resetAt }]);
   }, 20_000);
 
+  it('does not offer resume for an incomplete run whose tasks all succeeded but acceptance is pending', async () => {
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => (resolveDone = resolve));
+    const liveCounts: number[] = [];
+    const events: RunHostEvents = {
+      cockpitEvent: () => {},
+      runStatus: () => {},
+      liveChanged: (count) => {
+        liveCounts.push(count);
+        if (count === 0) resolveDone();
+      },
+    };
+
+    const runHost = new RunHost(host, events, hermeticOverrides());
+    const id = runHost.startRun({ prompt: 'do a small thing', mode: 'normal', autonomy: 'high', agentId: 'scripted' });
+    await done;
+
+    const record = await host.activeWorkspace?.runStore.load(id);
+    expect(record).toBeTruthy();
+    await host.activeWorkspace?.runStore.save({
+      ...record!,
+      status: 'incomplete',
+      summary: 'incomplete: 1/1 tasks succeeded; acceptance 0/1 criteria passed',
+      acceptance: {
+        criteria: [
+          {
+            id: 'criterion-1',
+            title: 'User acceptance is verified',
+            description: 'User acceptance is verified',
+            status: 'pending',
+            evidence: [],
+            source: 'user',
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+        progress: { passed: 0, total: 1, complete: false },
+      },
+      updatedAt: Date.now(),
+      heartbeatAt: Date.now(),
+    });
+    liveCounts.length = 0;
+
+    expect(runHost.listRuns().find((run) => run.id === id)?.resumable).toBe(false);
+    await expect(runHost.resumeRun(id, 'high')).resolves.toBe(false);
+    expect(runHost.isLive(id)).toBe(false);
+    expect(liveCounts).toEqual([]);
+  }, 20_000);
+
   it('reports no runs for a fresh workspace', () => {
     const runHost = new RunHost(host, {
       cockpitEvent: () => {},

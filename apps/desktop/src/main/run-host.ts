@@ -15,8 +15,8 @@ import {
   createModelPolicy,
   DynamicWorkflowRun,
   FileControlSource,
+  isResumableRunRecord,
   Orchestrator,
-  RESUMABLE_STATUSES,
   writeControl,
   type ControlPoll,
   type ControlSource,
@@ -24,7 +24,6 @@ import {
   type AuthoredSpecCriteria,
   type OrchestratorOptions,
   type RunRecord,
-  type RunStatus,
   type RunVerifier,
 } from '@omakase/core';
 import type { OpenWorkspace } from '@omakase/storage';
@@ -207,7 +206,7 @@ export class RunHost {
     const ws = this.host.activeWorkspace;
     if (!ws) return false;
     const record = await ws.runStore.load(id);
-    if (!record || !RESUMABLE_STATUSES.includes(record.status)) return false;
+    if (!record || !isResumableRunRecord(record)) return false;
     if (record.rateLimitedUntil && record.rateLimitedUntil > Date.now()) {
       this.scheduleRateLimitResume(id, record.rateLimitedUntil, autonomy);
       return true;
@@ -390,7 +389,7 @@ export class RunHost {
     for (const id of await ws.runStore.list()) {
       if (this.live.has(id) || this.rateLimitTimers.has(id)) continue;
       const record = await ws.runStore.load(id);
-      if (!record?.rateLimitedUntil || !RESUMABLE_STATUSES.includes(record.status)) continue;
+      if (!record?.rateLimitedUntil || !isResumableRunRecord(record)) continue;
       this.scheduleRateLimitResume(id, record.rateLimitedUntil, autonomy, false);
     }
   }
@@ -570,9 +569,6 @@ export class RunHost {
   }
 }
 
-const isResumable = (status: string, live: boolean): boolean =>
-  !live && RESUMABLE_STATUSES.includes(status as RunStatus);
-
 function toSummaryDto(s: RunSummary, live: boolean): RunSummaryDto {
   return {
     id: s.id,
@@ -585,7 +581,7 @@ function toSummaryDto(s: RunSummary, live: boolean): RunSummaryDto {
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     live,
-    resumable: isResumable(s.status, live),
+    resumable: !live && s.resumable,
     rateLimitedUntil: s.rateLimitedUntil ?? null,
   };
 }
@@ -602,7 +598,7 @@ function recordSummary(r: RunRecord, live: boolean): RunSummaryDto {
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     live,
-    resumable: isResumable(r.status, live),
+    resumable: !live && isResumableRunRecord(r),
     rateLimitedUntil: r.rateLimitedUntil ?? null,
   };
 }

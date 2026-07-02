@@ -8,7 +8,8 @@
  */
 import { Orchestrator, type RunHandle } from '../orchestrator.js';
 import type { RunStatus } from '../run-events.js';
-import type { RunStore } from './run-store.js';
+import { TERMINAL_STATUSES } from '../plan/plan-graph.js';
+import type { RunRecord, RunStore } from './run-store.js';
 import type { OrchestrationRequest } from '../types.js';
 
 export type SupervisorState = 'idle' | 'running' | 'paused' | 'stopped';
@@ -20,6 +21,17 @@ export const RESUMABLE_STATUSES: readonly RunStatus[] = [
   'paused',
   'incomplete',
 ];
+
+const TERMINAL_TASK_STATUSES = new Set(TERMINAL_STATUSES);
+
+export function isResumableRunRecord(record: RunRecord): boolean {
+  if (!RESUMABLE_STATUSES.includes(record.status)) return false;
+  if (record.status !== 'incomplete') return true;
+  if (record.rateLimitedUntil) return true;
+  if (record.riskGates?.some((gate) => gate.status === 'open')) return true;
+  if (record.plan.tasks.length === 0) return true;
+  return record.plan.tasks.some((task) => !TERMINAL_TASK_STATUSES.has(task.status));
+}
 
 /** How many recently-finished runs to keep in the health snapshot. */
 const MAX_RECENT_COMPLETED = 200;
@@ -81,7 +93,7 @@ export class Supervisor {
     for (const id of ids) {
       if (this.active.has(id) || this.resumeQueue.includes(id)) continue;
       const record = await this.options.store.load(id);
-      if (!record || !RESUMABLE_STATUSES.includes(record.status)) continue;
+      if (!record || !isResumableRunRecord(record)) continue;
       // Re-resume only if the run advanced since we last handled it; otherwise
       // a perpetually-stuck `incomplete` run would be re-queued every cycle.
       const lastSeq = this.handledSeq.get(id);

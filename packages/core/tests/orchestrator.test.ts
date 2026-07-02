@@ -205,6 +205,26 @@ describe('Orchestrator (Ralph loop)', () => {
     await handle.result;
   });
 
+  it('explains incomplete status when all tasks succeeded but explicit acceptance is still pending', async () => {
+    const planner: Planner = {
+      plan: (ctx) => {
+        const g = new PlanGraph({ idGenerator: ctx.idGenerator!, clock: ctx.clock! });
+        g.addTask({ title: 'worker', role: 'worker' });
+        g.refreshReadiness();
+        return g;
+      },
+    };
+
+    const result = await new Orchestrator({
+      ...baseOptions(scriptedRuntime(() => 'done'), planner),
+      router: complexRouter,
+    }).start({ prompt: 'do work', acceptanceCriteria: ['User acceptance is verified'] }).result;
+
+    expect(result.status).toBe('incomplete');
+    expect(result.plan.tasks.every((task) => task.status === 'succeeded')).toBe(true);
+    expect(result.summary).toContain('acceptance 0/1 criteria passed');
+  });
+
   it('runs router → planner → workers → reviewer → replan → finish', async () => {
     let reviewerCalls = 0;
     const runtime = scriptedRuntime((_input, role) => {

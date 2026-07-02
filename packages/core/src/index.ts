@@ -87,7 +87,7 @@ export type { RunStore, RunRecord } from './supervisor/run-store.js';
 // ── Sessions ──────────────────────────────────────────────────────────────
 export { MemorySessionStore, FileSessionStore, isValidSession } from './session/store.js';
 export type { Session, SessionStore } from './session/store.js';
-export { Supervisor, RESUMABLE_STATUSES } from './supervisor/supervisor.js';
+export { Supervisor, RESUMABLE_STATUSES, isResumableRunRecord } from './supervisor/supervisor.js';
 export type { SupervisorOptions, SupervisorHealth, SupervisorState } from './supervisor/supervisor.js';
 export {
   FakeControlSource,

@@ -13,6 +13,7 @@
  * so a corrupt/partial row "fails clean" (returns null) instead of throwing.
  */
 import {
+  isResumableRunRecord,
   isValidRunRecord,
   type KnowledgeEvent,
   type OrchestratorEvent,
@@ -32,6 +33,7 @@ export interface RunSummary {
   status: RunStatus;
   summary: string;
   agentId: string | null;
+  resumable: boolean;
   owner: string | null;
   spentTokens: number | null;
   spentCostUsd: number | null;
@@ -48,11 +50,10 @@ interface RunScalarRow {
   events_count: number;
 }
 
-function agentIdFromRecordJson(recordJson: string): string | null {
+function recordFromJson(recordJson: string): RunRecord | null {
   try {
-    const record = JSON.parse(recordJson) as Partial<RunRecord>;
-    const agentId = record.request?.metadata?.agentOverride;
-    return typeof agentId === 'string' && agentId.length > 0 ? agentId : null;
+    const record = JSON.parse(recordJson) as RunRecord;
+    return isValidRunRecord(record) ? record : null;
   } catch {
     return null;
   }
@@ -291,22 +292,29 @@ export class SqliteRunStore implements RunStore {
       updated_at: number;
       heartbeat_at: number;
     }>;
-    return rows.map((r) => ({
-      id: r.id,
-      mode: r.mode as WorkMode,
-      status: r.status as RunStatus,
-      summary: r.summary,
-      agentId: agentIdFromRecordJson(r.record_json) ?? agentIdFromEventJson(r.agent_event_json),
-      owner: r.owner,
-      spentTokens: r.spent_tokens,
-      spentCostUsd: r.spent_cost_usd,
-      rateLimitedUntil: r.rate_limited_until,
-      checkpointSeq: r.checkpoint_seq,
-      eventsCount: r.events_count,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      heartbeatAt: r.heartbeat_at,
-    }));
+    return rows.map((r) => {
+      const record = recordFromJson(r.record_json);
+      const overrideAgent = record?.request.metadata?.agentOverride;
+      return {
+        id: r.id,
+        mode: r.mode as WorkMode,
+        status: r.status as RunStatus,
+        summary: r.summary,
+        agentId:
+          (typeof overrideAgent === 'string' && overrideAgent.length > 0 ? overrideAgent : null) ??
+          agentIdFromEventJson(r.agent_event_json),
+        resumable: record ? isResumableRunRecord(record) : false,
+        owner: r.owner,
+        spentTokens: r.spent_tokens,
+        spentCostUsd: r.spent_cost_usd,
+        rateLimitedUntil: r.rate_limited_until,
+        checkpointSeq: r.checkpoint_seq,
+        eventsCount: r.events_count,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        heartbeatAt: r.heartbeat_at,
+      };
+    });
   }
 
   /** Events for a run from `sinceSeq` (exclusive of nothing — seq >= sinceSeq). */
