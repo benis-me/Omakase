@@ -175,6 +175,9 @@ export class RunHost {
     // Structured frontmatter criteria (the guided phase machine), or the bullets
     // under the spec body's Acceptance heading.
     const acceptanceCriteria = spec ? extractAcceptanceCriteria(spec) : [];
+    const metadata: Record<string, unknown> = {};
+    if (input.triggeredBy) metadata.triggeredBy = input.triggeredBy;
+    if (input.agentId) metadata.agentOverride = input.agentId;
 
     const controlDir = this.controlDir(ws);
     // Spec-driven runs get an independent validator at the finish line.
@@ -190,7 +193,7 @@ export class RunHost {
       cwd: ws.root,
       mode: input.mode,
       ...(acceptanceCriteria.length ? { acceptanceCriteria } : {}),
-      ...(input.triggeredBy ? { metadata: { triggeredBy: input.triggeredBy } } : {}),
+      ...(Object.keys(metadata).length ? { metadata } : {}),
     });
     if (input.triggeredBy) this.triggeredBy.set(handle.id, input.triggeredBy);
     this.memBaseline.set(handle.id, { root: ws.root, snapshot: snapshotInstructionMemory(ws.root) });
@@ -205,6 +208,10 @@ export class RunHost {
     if (!ws) return false;
     const record = await ws.runStore.load(id);
     if (!record || !RESUMABLE_STATUSES.includes(record.status)) return false;
+    if (record.rateLimitedUntil && record.rateLimitedUntil > Date.now()) {
+      this.scheduleRateLimitResume(id, record.rateLimitedUntil, autonomy);
+      return true;
+    }
     const controlDir = this.controlDir(ws);
     // Drop any leftover control command from the previous session so the resumed
     // run doesn't immediately act on a stale pause/stop/answer.
@@ -572,6 +579,7 @@ function toSummaryDto(s: RunSummary, live: boolean): RunSummaryDto {
     mode: s.mode,
     status: s.status,
     summary: s.summary,
+    agentId: s.agentId ?? null,
     spentTokens: s.spentTokens,
     spentCostUsd: s.spentCostUsd,
     createdAt: s.createdAt,
@@ -588,6 +596,7 @@ function recordSummary(r: RunRecord, live: boolean): RunSummaryDto {
     mode: r.mode,
     status: r.status,
     summary: r.summary,
+    agentId: agentIdFromRunRecord(r),
     spentTokens: r.spentTokens ?? null,
     spentCostUsd: r.spentCostUsd ?? null,
     createdAt: r.createdAt,
@@ -596,6 +605,17 @@ function recordSummary(r: RunRecord, live: boolean): RunSummaryDto {
     resumable: isResumable(r.status, live),
     rateLimitedUntil: r.rateLimitedUntil ?? null,
   };
+}
+
+function agentIdFromRunRecord(record: RunRecord): string | null {
+  const override = record.request.metadata?.agentOverride;
+  if (typeof override === 'string' && override.length > 0) return override;
+  for (const event of record.events) {
+    if (event.type !== 'agent-assigned') continue;
+    const agentId = event.assignment.agentId;
+    if (agentId) return agentId;
+  }
+  return null;
 }
 
 /** Pull acceptance-criteria lines from a spec body (under an "acceptance" heading). */

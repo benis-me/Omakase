@@ -139,6 +139,64 @@ describe('RunHost end-to-end flow', () => {
     expect(drifts).toEqual([]);
   }, 20_000);
 
+  it('persists the selected CLI so resume keeps the same agent override', async () => {
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => (resolveDone = resolve));
+    const events: RunHostEvents = {
+      cockpitEvent: () => {},
+      runStatus: () => {},
+      liveChanged: (count) => {
+        if (count === 0) resolveDone();
+      },
+    };
+
+    const runHost = new RunHost(host, events, hermeticOverrides());
+    const id = runHost.startRun({ prompt: 'do a small thing', mode: 'normal', autonomy: 'high', agentId: 'scripted' });
+    await done;
+
+    const record = await host.activeWorkspace?.runStore.load(id);
+    expect(record?.request.metadata?.agentOverride).toBe('scripted');
+    expect(runHost.listRuns().find((r) => r.id === id)?.agentId).toBe('scripted');
+  }, 20_000);
+
+  it('does not manually resume a rate-limited run before its reset time', async () => {
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => (resolveDone = resolve));
+    const liveCounts: number[] = [];
+    const limited: Array<{ id: string; resetAt: number }> = [];
+    const events: RunHostEvents = {
+      cockpitEvent: () => {},
+      runStatus: () => {},
+      liveChanged: (count) => {
+        liveCounts.push(count);
+        if (count === 0) resolveDone();
+      },
+      rateLimited: (id, resetAt) => limited.push({ id, resetAt }),
+    };
+
+    const runHost = new RunHost(host, events, hermeticOverrides());
+    const id = runHost.startRun({ prompt: 'do a small thing', mode: 'normal', autonomy: 'high', agentId: 'scripted' });
+    await done;
+
+    const record = await host.activeWorkspace?.runStore.load(id);
+    expect(record).toBeTruthy();
+    const resetAt = Date.now() + 60_000;
+    await host.activeWorkspace?.runStore.save({
+      ...record!,
+      status: 'incomplete',
+      rateLimitedUntil: resetAt,
+      updatedAt: Date.now(),
+      heartbeatAt: Date.now(),
+    });
+    liveCounts.length = 0;
+
+    await expect(runHost.resumeRun(id, 'high')).resolves.toBe(true);
+
+    expect(runHost.isLive(id)).toBe(false);
+    expect(liveCounts).toEqual([]);
+    expect(limited).toEqual([{ id, resetAt }]);
+  }, 20_000);
+
   it('reports no runs for a fresh workspace', () => {
     const runHost = new RunHost(host, {
       cockpitEvent: () => {},

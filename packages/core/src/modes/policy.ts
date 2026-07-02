@@ -201,7 +201,7 @@ export function createModelPolicy(
     select(role: AgentRole, ctx: SelectionContext): RoleAssignment {
       if (mode === 'custom') {
         const cfg = custom?.roles?.[role] ?? custom?.default;
-        if (cfg) {
+        if (cfg && !(ctx.exclude ?? []).includes(cfg.agentId)) {
           return {
             role,
             agentId: cfg.agentId,
@@ -210,7 +210,18 @@ export function createModelPolicy(
             rationale: `custom: configured ${cfg.agentId}`,
           };
         }
-        // No custom entry for this role → fall back to the balanced strategy.
+        if (cfg) {
+          const fallback = selectAuto(role, ctx);
+          if (fallback.agentId !== builtinId) return fallback;
+          return {
+            role,
+            agentId: cfg.agentId,
+            model: cfg.model ?? null,
+            reasoning: cfg.reasoning ?? null,
+            rationale: `custom: configured ${cfg.agentId}; no alternate agent available`,
+          };
+        }
+        // No usable custom entry for this role → fall back to the balanced strategy.
       }
       return selectAuto(role, ctx);
     },

@@ -31,6 +31,7 @@ export interface RunSummary {
   mode: WorkMode;
   status: RunStatus;
   summary: string;
+  agentId: string | null;
   owner: string | null;
   spentTokens: number | null;
   spentCostUsd: number | null;
@@ -45,6 +46,29 @@ export interface RunSummary {
 
 interface RunScalarRow {
   events_count: number;
+}
+
+function agentIdFromRecordJson(recordJson: string): string | null {
+  try {
+    const record = JSON.parse(recordJson) as Partial<RunRecord>;
+    const agentId = record.request?.metadata?.agentOverride;
+    return typeof agentId === 'string' && agentId.length > 0 ? agentId : null;
+  } catch {
+    return null;
+  }
+}
+
+function agentIdFromEventJson(eventJson: string | null): string | null {
+  if (!eventJson) return null;
+  try {
+    const event = JSON.parse(eventJson) as Partial<OrchestratorEvent> & {
+      assignment?: { agentId?: unknown };
+    };
+    const agentId = event.assignment?.agentId;
+    return typeof agentId === 'string' && agentId.length > 0 ? agentId : null;
+  } catch {
+    return null;
+  }
 }
 
 export class SqliteRunStore implements RunStore {
@@ -238,15 +262,25 @@ export class SqliteRunStore implements RunStore {
   summaries(): RunSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT id, mode, status, summary, owner, spent_tokens, spent_cost_usd,
-                rate_limited_until, checkpoint_seq, events_count, created_at, updated_at, heartbeat_at
-         FROM runs ORDER BY updated_at DESC`,
+        `SELECT r.id, r.mode, r.status, r.summary, r.owner, r.spent_tokens, r.spent_cost_usd,
+                r.rate_limited_until, r.checkpoint_seq, r.events_count,
+                r.record_json, r.created_at, r.updated_at, r.heartbeat_at,
+                (
+                  SELECT e.payload_json
+                  FROM run_events e
+                  WHERE e.run_id = r.id AND e.type = 'agent-assigned'
+                  ORDER BY e.seq ASC
+                  LIMIT 1
+                ) AS agent_event_json
+         FROM runs r ORDER BY r.updated_at DESC`,
       )
       .all() as Array<{
       id: string;
       mode: string;
       status: string;
       summary: string;
+      record_json: string;
+      agent_event_json: string | null;
       owner: string | null;
       spent_tokens: number | null;
       spent_cost_usd: number | null;
@@ -262,6 +296,7 @@ export class SqliteRunStore implements RunStore {
       mode: r.mode as WorkMode,
       status: r.status as RunStatus,
       summary: r.summary,
+      agentId: agentIdFromRecordJson(r.record_json) ?? agentIdFromEventJson(r.agent_event_json),
       owner: r.owner,
       spentTokens: r.spent_tokens,
       spentCostUsd: r.spent_cost_usd,

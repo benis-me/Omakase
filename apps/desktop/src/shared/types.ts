@@ -272,6 +272,8 @@ export interface RunSummaryDto {
   mode: string;
   status: string;
   summary: string;
+  /** Primary/resolved CLI used by this run, when known. */
+  agentId: string | null;
   spentTokens: number | null;
   spentCostUsd: number | null;
   createdAt: number;

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createAgentRuntime, createScriptedAgent } from '@omakase/daemon';
+import {
+  collectAgentResult,
+  createAgentRuntime,
+  createNodeTransport,
+  createScriptedAgent,
+  type AgentEvent,
+  type AgentRuntime,
+  type AgentRunInput,
+  type DetectedAgent,
+} from '@omakase/daemon';
 import { Orchestrator } from '../src/orchestrator.js';
 import { MemoryRunStore } from '../src/supervisor/run-store.js';
 import { createModelPolicy } from '../src/modes/policy.js';
@@ -21,6 +30,54 @@ function makeOrch(
     clock: () => 0,
     detectionOptions: { env: { PATH: '' }, includeWellKnownPathDirs: false },
   });
+}
+
+function detected(id: string): DetectedAgent {
+  return {
+    id,
+    name: id,
+    bin: id,
+    streamFormat: 'plain-text',
+    promptViaStdin: true,
+    supportsImagePaths: false,
+    supportsCustomModel: true,
+    reasoningOptions: [],
+    externalMcpInjection: undefined,
+    installUrl: undefined,
+    docsUrl: undefined,
+    available: true,
+    path: `/tmp/${id}`,
+    version: 'test',
+    models: [{ id: 'default', label: 'Default' }],
+    modelsSource: 'live',
+    capabilities: {},
+    authStatus: 'ok',
+    authMessage: undefined,
+  };
+}
+
+function runtimeWithAgents(
+  available: DetectedAgent[],
+  handler: (input: AgentRunInput) => AgentEvent[],
+): AgentRuntime {
+  const runtime = {
+    registry: createAgentRuntime().registry,
+    transport: createNodeTransport(),
+    detect: async () => available,
+    detectOne: async (id: string) => available.find((a) => a.id === id),
+    streamAgentEvents(input: AgentRunInput): AsyncIterable<AgentEvent> {
+      async function* stream(): AsyncIterable<AgentEvent> {
+        yield* handler(input);
+      }
+      return stream();
+    },
+    runAgent(input: AgentRunInput) {
+      return collectAgentResult(this.streamAgentEvents(input));
+    },
+    registerExecutor() {},
+    refreshDetection() {},
+  } satisfies AgentRuntime;
+  return runtime;
 }
 
 /** The worker agent-assigned events, in order, with the fields we assert on. */
@@ -72,6 +129,38 @@ describe('rate-limit parking (#4)', () => {
     expect(result.status).toBe('incomplete'); // resumable, not failed
     expect(result.rateLimitedUntil).toBe(1_800_000_000 * 1000); // parsed from the message
     expect(workerCalls).toBe(1); // attempt refunded — did NOT retry into the wall
+  });
+
+  it('routes around a rate-limited pinned agent before parking the run', async () => {
+    const calls: string[] = [];
+    const runtime = runtimeWithAgents([detected('codex'), detected('claude')], (input) => {
+      const role = String(input.metadata?.role);
+      if (role === 'worker') calls.push(input.agentId);
+      if (role === 'worker' && input.agentId === 'codex') {
+        return [
+          {
+            type: 'error',
+            message:
+              "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:42 PM.",
+          },
+        ];
+      }
+      return [{ type: 'text_delta', delta: 'done' }];
+    });
+    const orch = new Orchestrator({
+      runtime,
+      router: simpleRouter,
+      policy: createModelPolicy('custom', { custom: { default: { agentId: 'codex' } } }),
+      store: new MemoryRunStore(),
+      clock: () => 1_700_000_000_000,
+      maxAttemptsPerTask: 3,
+    });
+
+    const result = await orch.start({ prompt: 'build a thing' }).result;
+
+    expect(result.status).toBe('succeeded');
+    expect(result.rateLimitedUntil).toBeUndefined();
+    expect(calls).toEqual(['codex', 'claude']);
   });
 });
 

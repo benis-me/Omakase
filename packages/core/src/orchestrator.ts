@@ -397,6 +397,9 @@ class RunController implements RunHandle {
   /** Agents that produced nothing (0-token failure) — degraded run-wide so the
    * policy routes every remaining task around a broken CLI. */
   private readonly degradedAgents = new Set<string>();
+  /** agentId → wall-clock ms when a usage/rate limit resets. Until then, route
+   * every role around that CLI; if no real CLI remains, park the run. */
+  private readonly rateLimitedAgents = new Map<string, number>();
   /** taskId → agents that already failed it, so its retry reassigns to another. */
   private readonly taskFailedAgents = new Map<string, Set<string>>();
   private readonly maxConcurrency: number;
@@ -759,6 +762,7 @@ class RunController implements RunHandle {
       available: this.available,
       taskType: role,
       taskTitle: role,
+      exclude: this.excludedAgents(),
     });
     const forced = this.request.metadata?.supportAgents === true;
     const disabled = this.request.metadata?.supportAgents === false;
@@ -1514,6 +1518,36 @@ class RunController implements RunHandle {
     }
   }
 
+  private pruneRateLimitedAgents(): void {
+    const now = this.clock();
+    for (const [agentId, resetAt] of this.rateLimitedAgents) {
+      if (resetAt <= now) this.rateLimitedAgents.delete(agentId);
+    }
+  }
+
+  private excludedAgents(task?: TaskNode): string[] {
+    this.pruneRateLimitedAgents();
+    return [
+      ...this.degradedAgents,
+      ...this.rateLimitedAgents.keys(),
+      ...(task ? this.taskFailedAgents.get(task.id) ?? [] : []),
+    ];
+  }
+
+  private earliestRateLimitReset(): number | null {
+    this.pruneRateLimitedAgents();
+    let earliest: number | null = null;
+    for (const resetAt of this.rateLimitedAgents.values()) {
+      earliest = earliest === null ? resetAt : Math.min(earliest, resetAt);
+    }
+    return earliest;
+  }
+
+  private hasRealAgentAlternative(exclude: readonly string[]): boolean {
+    const blocked = new Set([...exclude, BUILTIN_AGENT_ID]);
+    return this.available.some((agent) => agent.available && agent.authStatus !== 'missing' && !blocked.has(agent.id));
+  }
+
   /**
    * Spec-driven nudge for spec-less runs: when no spec seeded the run (the user
    * didn't pick one, so {@link hasUserAcceptanceCriteria} is false) and the
@@ -2078,7 +2112,7 @@ class RunController implements RunHandle {
       taskId: task.id,
       taskTitle: task.title,
       taskType: task.tags[0] ?? task.role,
-      exclude: [...this.degradedAgents, ...(this.taskFailedAgents.get(task.id) ?? [])],
+      exclude: this.excludedAgents(task),
     });
     const identity = this.createAgentIdentity(assignment, task.role, task.id);
     this.graph.incrementAttempts(task.id);
@@ -2154,15 +2188,28 @@ class RunController implements RunHandle {
     if (!ranCleanly) {
       const limit = detectRateLimit(`${result.error ?? ''}\n${result.text}`, this.clock());
       if (limit) {
+        const now = this.clock();
+        const resetAt = limit.resetAt && limit.resetAt > now ? limit.resetAt : now + RATE_LIMIT_DEFAULT_BACKOFF_MS;
         this.graph.decrementAttempts(task.id);
         this.graph.setStatus(task.id, 'pending');
-        this.rateLimitedUntil = limit.resetAt ?? this.clock() + RATE_LIMIT_DEFAULT_BACKOFF_MS;
-        this.wiki.addNote({
-          title: 'Usage limit reached',
-          body: `${limit.raw}\nPausing; the run will resume after the limit resets.`,
-          tags: ['rate-limit'],
-          source: `run:${this.id}`,
-        });
+        this.rateLimitedAgents.set(assignment.agentId, resetAt);
+        const exclude = this.excludedAgents(task);
+        if (!this.hasRealAgentAlternative(exclude)) {
+          this.rateLimitedUntil = this.earliestRateLimitReset() ?? resetAt;
+          this.wiki.addNote({
+            title: 'Usage limit reached',
+            body: `${limit.raw}\nNo other agent CLI is available; pausing until the limit resets.`,
+            tags: ['rate-limit'],
+            source: `run:${this.id}`,
+          });
+        } else {
+          this.wiki.addNote({
+            title: 'Usage limit reached',
+            body: `${assignment.agentId}: ${limit.raw}\nRouting around this agent until ${new Date(resetAt).toISOString()}.`,
+            tags: ['rate-limit'],
+            source: `run:${this.id}`,
+          });
+        }
         this.emit({ type: 'error', phase: 'rate-limit', message: limit.raw });
         return;
       }

@@ -91,6 +91,14 @@ export function RunsView() {
                     {r.live && <span className="text-run">live</span>}
                     <span>·</span>
                     <span>{r.mode}</span>
+                    {r.agentId && (
+                      <>
+                        <span>·</span>
+                        <span className="min-w-0 truncate normal-case tracking-normal" title={`Agent CLI: ${r.agentId}`}>
+                          {r.agentId}
+                        </span>
+                      </>
+                    )}
                     {r.triggeredBy && (
                       <>
                         <span>·</span>
