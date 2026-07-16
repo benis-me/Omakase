@@ -166,6 +166,27 @@ test('verify: command criterion passes on exit 0, fails otherwise', async () => 
   }
 });
 
+test('verify: a passing check runs once per round, not once per caller', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // The goal workflow closes its Validate phase with w.goalMet(), and the
+    // orchestrator verifies straight after. No agent runs in between, so the
+    // user's suite must not be executed twice.
+    const log = join(ws.root, 'checks.log');
+    const harness = new FakeHarness((req) => (req.role === 'planner' ? 'A' : 'ok'));
+    const outcome = await runGoal({
+      goal: { text: 'g', workflow: 'goal', cwd: ws.root, checks: [{ kind: 'command', run: `echo ran >> ${log}` }] },
+      workspace: ws,
+      store,
+      harness,
+    });
+    expect(outcome.status).toBe('succeeded');
+    expect(readFileSync(log, 'utf8').trim().split('\n').length).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
 test('sessions: runs attach to a session; --session continues it', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {

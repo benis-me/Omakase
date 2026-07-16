@@ -22,7 +22,7 @@ import { RunBus, subscribeRun } from './bus.ts';
 import { SubprocessHarness, type Harness } from './harness.ts';
 import { WorkflowRuntime } from './runtime.ts';
 import { findWorkflow, loadWorkflow, type WorkflowMeta } from './workflows.ts';
-import { verifyGoal } from './verify.ts';
+import { verifyGoal, type VerifyResult } from './verify.ts';
 import { makeSystemPromptFactory } from './prompt.ts';
 import { buildResumeState } from './resume.ts';
 import { Journal } from './journal.ts';
@@ -212,8 +212,20 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   const loaded = await loadWorkflow(ctx.meta);
   const judgeProvider = ctx.defaultProvider ?? ctx.availableProviders[0] ?? null;
 
-  const verify = () =>
-    verifyGoal({
+  // Verifying costs real time and money — a `command` criterion shells out to
+  // the user's test suite, a `judge` one spends a model call. Only an agent can
+  // change the workspace, so a verdict can only go stale once one finishes:
+  // memoise it per agent-epoch. This is what collapses a workflow's closing
+  // `w.goalMet()` and the orchestrator's verify() below into a single check
+  // instead of running the suite twice back to back.
+  let epoch = 0;
+  const unsubEpoch = ctx.bus.on(run.id, (e) => {
+    if (e.type === 'agent:completed' || e.type === 'agent:failed') epoch++;
+  });
+  let memo: { epoch: number; result: Promise<VerifyResult> } | null = null;
+  const verify = (): Promise<VerifyResult> => {
+    if (memo && memo.epoch === epoch) return memo.result;
+    const result = verifyGoal({
       goal,
       cwd: ctx.cwd,
       harness: ctx.harness,
@@ -221,6 +233,14 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
       signal: ctx.signal,
       log: (m) => emit('log', { level: 'info', message: m }),
     });
+    memo = { epoch, result };
+    // Never cache a failure: a criterion that threw (an aborted command, a judge
+    // that timed out) must be retried, not replayed for the rest of the run.
+    result.catch(() => {
+      if (memo?.result === result) memo = null;
+    });
+    return result;
+  };
 
   const runtime = new WorkflowRuntime({
     runId: run.id,
@@ -343,6 +363,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   }
 
   emit('run:ended', { status, summary });
+  unsubEpoch();
   unsubJournal();
   ctx.unsub?.();
   return { runId: run.id, status, summary, gaps };
