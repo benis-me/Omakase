@@ -317,16 +317,18 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
     if (err instanceof FatalError) emit('log', { level: 'error', message: 'Fatal — not retrying.' });
   }
 
+  // A workflow may have filed a rosy final report before it was cut short, so a
+  // cancelled run always reports the cancel rather than the workflow's summary.
   const finalReport = store.listReports(run.id).filter((r) => r.kind === 'final').at(-1);
   const summary =
-    finalReport?.summary ??
-    (status === 'succeeded'
-      ? 'Goal achieved.'
-      : status === 'cancelled'
-        ? 'Run cancelled.'
-        : gaps.length
-          ? `Incomplete. Remaining: ${gaps.slice(0, 3).join('; ')}`
-          : 'Run ended without meeting the goal.');
+    status === 'cancelled'
+      ? 'Run cancelled.'
+      : (finalReport?.summary ??
+        (status === 'succeeded'
+          ? 'Goal achieved.'
+          : gaps.length
+            ? `Incomplete. Remaining: ${gaps.slice(0, 3).join('; ')}`
+            : 'Run ended without meeting the goal.'));
 
   store.updateRun(run.id, { status, summary });
 
