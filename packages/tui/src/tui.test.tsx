@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { Workspace, Store } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { App } from './app.tsx';
+import { SettingsView } from './settings-view.tsx';
+import { filterCommands, isCommandInput, parseCommand } from './commands.ts';
 import { eventLines, theme } from './render.ts';
 
 const providers: ProviderInfo[] = [
@@ -22,16 +24,23 @@ function isColor(c: RGBA, want: string): boolean {
   return hex(c) === hex(RGBA.fromHex(want));
 }
 
-async function render(width = 100, height = 30) {
+async function render(width = 100, height = 30, initialGoal?: string) {
   const dir = mkdtempSync(join(tmpdir(), 'omks-tui-'));
   const ws = Workspace.init(dir);
   const store = new Store(':memory:');
   const setup = await testRender(
-    createElement(App, { workspace: ws, store, providers, workflows: ['goal', 'auto', 'tdd'], onExit: () => {} }),
+    createElement(App, {
+      workspace: ws,
+      store,
+      providers,
+      workflows: ['goal', 'auto', 'tdd'],
+      onExit: () => {},
+      ...(initialGoal ? { initialGoal } : {}),
+    }),
     { width, height },
   );
   await setup.renderOnce();
-  return { setup, cleanup: () => { store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { setup, ws, cleanup: () => { store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test('TUI renders the redesigned shell', async () => {
@@ -43,7 +52,7 @@ test('TUI renders the redesigned shell', async () => {
     expect(frame).toContain('current'); // live row
     expect(frame).toContain('claude'); // provider chip
     expect(frame).toContain('goal'); // workflow pill
-    expect(frame).toContain('browse'); // footer hints
+    expect(frame).toContain('commands'); // footer hints ("/ commands")
     expect(frame).toContain('❯'); // prompt caret
     expect(frame).toContain('╭'); // rounded panels are drawn
     setup.renderer.destroy();
@@ -101,6 +110,70 @@ test('legibility: panel borders and the focused input border are explicit', asyn
     cleanup();
   }
 }, 20000);
+
+test('input: typing "/" opens the command palette with matches', async () => {
+  const { setup, cleanup } = await render(100, 30, '/');
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain('commands'); // palette panel title
+    expect(frame).toContain('/workflow');
+    expect(frame).toContain('/settings');
+    expect(frame).toContain('/quit');
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+}, 20000);
+
+test('input: palette filters by prefix and shows argument suggestions', async () => {
+  const { setup, cleanup } = await render(100, 30, '/workflow ');
+  try {
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain('/workflow <name>');
+    // the selected command offers the real workflow names as suggestions
+    expect(frame).toContain('auto');
+    expect(frame).toContain('tdd');
+    expect(frame).not.toContain('/quit'); // narrowed to the exact command
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+}, 20000);
+
+test('settings view renders the editable workspace settings', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-set-'));
+  const ws = Workspace.init(dir);
+  try {
+    const setup = await testRender(
+      createElement(SettingsView, { workspace: ws, providers, onClose: () => {}, width: 100 }),
+      { width: 100, height: 24 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain('settings');
+    expect(frame).toContain('Default provider');
+    expect(frame).toContain('Max agents');
+    expect(frame).toContain('Auto-approve');
+    expect(frame).toContain('Provider order');
+    expect(frame).toContain('change'); // footer hint
+    setup.renderer.destroy();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 20000);
+
+test('commands: parse + filter', () => {
+  expect(parseCommand('/workflow tdd')).toEqual({ name: 'workflow', arg: 'tdd' });
+  expect(parseCommand('/settings')).toEqual({ name: 'settings', arg: '' });
+  expect(parseCommand('build a thing')).toBeNull();
+  expect(isCommandInput('/x')).toBe(true);
+  expect(isCommandInput('x')).toBe(false);
+  // prefix filtering, then narrowing to the exact command once an arg is typed
+  expect(filterCommands('/w').map((c) => c.name)).toEqual(['workflow']);
+  expect(filterCommands('/workflow tdd').map((c) => c.name)).toEqual(['workflow']);
+  expect(filterCommands('/').length).toBeGreaterThan(5);
+  expect(filterCommands('/zzz')).toEqual([]);
+});
 
 test('eventLines maps events to styled lines', () => {
   const lines = eventLines([
