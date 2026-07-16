@@ -3,7 +3,7 @@ import { Workspace, Store, type Goal, type SuccessCriterion } from '@omakase/cor
 import { runGoal } from '@omakase/engine';
 import { parseArgs, type ParsedArgs, flagStr, flagNum, flagBool } from '../args.ts';
 import { openOrInit } from './shared.ts';
-import { print, printErr, renderEvent, c, banner } from '../ui.ts';
+import { print, printErr, createEventRenderer, c, banner } from '../ui.ts';
 
 const SPEC = {
   value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time'],
@@ -76,6 +76,7 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
   process.on('SIGINT', onSigint);
 
   try {
+    const render = createEventRenderer();
     const outcome = await runGoal({
       goal,
       workspace,
@@ -91,7 +92,7 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       onEvent: (e) => {
         if (json) print(JSON.stringify(e));
         else {
-          const line = renderEvent(e);
+          const line = render(e);
           if (line !== null) print(line);
         }
       },

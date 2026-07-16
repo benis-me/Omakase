@@ -42,10 +42,40 @@ function short(s: string, n = 200): string {
   return one.length > n ? one.slice(0, n - 1) + '…' : one;
 }
 
-/** Flatten the event log into styled lines (2-space indent per level), newest last. */
+const SLOT_GLYPHS = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾', '❿'];
+
+/**
+ * Flatten the event log into styled lines (2-space indent per level), newest
+ * last. Agents run concurrently, so their lines interleave — once a run has
+ * gone parallel each agent line carries a slot marker (❶❷❸…) so you can tell
+ * which agent is doing what.
+ */
 export function eventLines(events: AnyRunEvent[]): Line[] {
   const out: Line[] = [];
+  const slot = new Map<string, number>();
+  const active = new Set<string>();
+  let everConcurrent = false;
+
+  const assign = (callId: string): void => {
+    const used = new Set(slot.values());
+    let n = 1;
+    while (used.has(n)) n++;
+    slot.set(callId, n);
+    active.add(callId);
+    if (active.size > 1) everConcurrent = true;
+  };
+  const release = (callId: string): void => {
+    active.delete(callId);
+    slot.delete(callId);
+  };
+  const tag = (callId: string): string => {
+    if (!everConcurrent) return '';
+    const n = slot.get(callId);
+    return n ? `${SLOT_GLYPHS[n - 1] ?? `#${n}`} ` : '';
+  };
+
   for (const e of events) {
+    if (e.type === 'agent:started') assign(e.payload.callId);
     switch (e.type) {
       case 'run:started':
         out.push({ text: `❯ ${short(e.payload.goal.text, 160)}`, color: theme.fg });
@@ -57,31 +87,31 @@ export function eventLines(events: AnyRunEvent[]): Line[] {
         out.push({ text: `▸ ${e.payload.name}`, color: theme.accent2 });
         break;
       case 'agent:started':
-        out.push({ text: `${e.payload.provider} › ${e.payload.title}`, color: theme.info, indent: 1 });
+        out.push({ text: `${tag(e.payload.callId)}${e.payload.provider} › ${e.payload.title}`, color: theme.info, indent: 1 });
         break;
       case 'agent:activity': {
         const a = e.payload.activity;
         const mark = a.kind === 'tool' ? '⚙' : a.kind === 'reasoning' ? '✱' : '·';
-        out.push({ text: `${mark} ${short(a.summary, 100)}`, color: theme.faint, indent: 3 });
+        out.push({ text: `${tag(e.payload.callId)}${mark} ${short(a.summary, 100)}`, color: theme.faint, indent: 3 });
         break;
       }
       case 'agent:completed': {
         const cost = e.payload.costUsd > 0 ? `  $${e.payload.costUsd.toFixed(4)}` : '';
         out.push({
-          text: `${e.payload.status === 'ok' ? '✓' : '✗'} ${short(e.payload.text, 120)}${cost}`,
+          text: `${tag(e.payload.callId)}${e.payload.status === 'ok' ? '✓' : '✗'} ${short(e.payload.text, 120)}${cost}`,
           color: e.payload.status === 'ok' ? theme.ok : theme.err,
           indent: 2,
         });
         break;
       }
       case 'agent:retry':
-        out.push({ text: `↻ retry ${e.payload.attempt}`, color: theme.warn, indent: 3 });
+        out.push({ text: `${tag(e.payload.callId)}↻ retry ${e.payload.attempt}`, color: theme.warn, indent: 3 });
         break;
       case 'harness:switched':
         out.push({ text: `↪ ${e.payload.from} → ${e.payload.to}`, color: theme.warn, indent: 2 });
         break;
       case 'agent:failed':
-        out.push({ text: `✗ ${short(e.payload.error, 100)}`, color: theme.err, indent: 2 });
+        out.push({ text: `${tag(e.payload.callId)}✗ ${short(e.payload.error, 100)}`, color: theme.err, indent: 2 });
         break;
       case 'user:asked':
         out.push({
@@ -118,6 +148,7 @@ export function eventLines(events: AnyRunEvent[]): Line[] {
         break;
       }
     }
+    if (e.type === 'agent:completed' || e.type === 'agent:failed') release(e.payload.callId);
   }
   return out;
 }

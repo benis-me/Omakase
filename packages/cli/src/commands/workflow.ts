@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readd
 import { join } from 'node:path';
 import { discoverWorkflows, findWorkflow, loadWorkflow, runGoal, MockHarness, type WorkflowMeta } from '@omakase/engine';
 import { Store, slugify } from '@omakase/core';
-import { renderEvent } from '../ui.ts';
+import { createEventRenderer } from '../ui.ts';
 import { parseArgs, flagBool, flagStr, type ParsedArgs } from '../args.ts';
 import { openOrInit } from './shared.ts';
 import { openContext, tryOpenContext } from '../context.ts';
@@ -130,13 +130,14 @@ async function testWorkflow(rest: string[]): Promise<number> {
   const store = new Store(':memory:'); // never persisted
   const harness = new MockHarness();
   print(`${sym.arrow} ${c.bold('test')} ${c.cyan(name)} ${c.dim('· mock harness, no cost')}\n`);
+  const render = createEventRenderer();
   const outcome = await runGoal({
     goal: { text: goalText, workflow: name, cwd: workspace.root },
     workspace,
     store,
     harness,
     onEvent: (e) => {
-      const line = renderEvent(e);
+      const line = render(e);
       if (line !== null) print(line);
     },
   });
