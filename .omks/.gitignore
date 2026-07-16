@@ -1,0 +1,7 @@
+# Omakase machine state — regenerated, not version-controlled.
+omks.db
+omks.db-wal
+omks.db-shm
+agents.json
+runs/
+*.tmp

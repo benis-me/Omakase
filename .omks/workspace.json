@@ -1,0 +1,11 @@
+{
+  "id": "dd322d22-fd29-4924-a4e5-448a2779e669",
+  "name": "Omakase3",
+  "createdAt": 1784169843301,
+  "updatedAt": 1784169843301,
+  "projectRoots": [],
+  "settings": {
+    "autoApprove": true,
+    "maxAgentsPerRun": 64
+  }
+}

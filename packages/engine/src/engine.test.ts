@@ -234,7 +234,7 @@ test('isolation: agents run in per-agent subdirs (w.subdir + agent cwd)', async 
   }
 });
 
-const FAKE_CLAUDE = `#!/usr/bin/env bun
+const FAKE_CLAUDE_BODY = `
 const args = process.argv.slice(2);
 const si = args.indexOf('--session-id');
 const sessionId = si >= 0 && args[si + 1] ? args[si + 1] : 'fake-sess';
@@ -252,7 +252,8 @@ test('FULL STACK: runGoal via real SubprocessHarness + fake binary + command ver
   const bin = mkdtempSync(join(tmpdir(), 'omks-bin-'));
   try {
     const fake = join(bin, 'fake-claude.ts');
-    writeFileSync(fake, FAKE_CLAUDE);
+    // Absolute interpreter path — robust across OSes/CI (no PATH lookup).
+    writeFileSync(fake, `#!${process.execPath}${FAKE_CLAUDE_BODY}`);
     chmodSync(fake, 0o755);
 
     // Real spawn/stream-parse path — only the binary is faked.

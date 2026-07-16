@@ -216,7 +216,7 @@ test('CodexJsonParser: error event marks the result as error', () => {
 
 // A fake `claude` binary: emits claude stream-json, echoes --session-id, and
 // writes built.txt in its cwd. Lets us exercise the REAL spawn + parser path.
-const FAKE_CLAUDE = `#!/usr/bin/env bun
+const FAKE_CLAUDE_BODY = `
 const args = process.argv.slice(2);
 const si = args.indexOf('--session-id');
 const sessionId = si >= 0 && args[si + 1] ? args[si + 1] : 'fake-sess';
@@ -234,7 +234,8 @@ test('runTurn: REAL spawn of a fake claude binary, parsed end-to-end', async () 
   const dir = mkdtempSync(join(tmpdir(), 'omks-fake-'));
   try {
     const fake = join(dir, 'fake-claude.ts');
-    writeFileSync(fake, FAKE_CLAUDE);
+    // Absolute interpreter path — robust across OSes/CI (no PATH lookup).
+    writeFileSync(fake, `#!${process.execPath}${FAKE_CLAUDE_BODY}`);
     chmodSync(fake, 0o755);
     const work = join(dir, 'work');
     mkdirSync(work, { recursive: true });
