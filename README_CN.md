@@ -49,6 +49,40 @@ omks
 
 ---
 
+## 真实运行示例
+
+这是一次**真实、未剪辑**的运行(不是 mock)。在空目录里:
+
+```bash
+omks run "用 Bun 实现一个 TypeScript 令牌桶限流器项目:package.json、
+  src/rate-limiter.ts(RateLimiter 类,含 capacity + refillPerSecond、
+  tryRemove(n=1)、基于时间的补充、可注入时钟)、以及 src/rate-limiter.test.ts
+  (bun:test)覆盖突发、拒绝、补充三种情况。确保 'bun test' 通过。" \
+  --workflow goal --provider claude --check "bun test" --max-agents 12
+```
+
+Omakase 做了什么:
+
+1. **自动规划出 4 步**(package.json → 限流器 → 测试 → 跑测试)。
+2. 用 pipeline 逐步构建 + 同行评审。
+3. **Goal-loop 把真实的 `bun test` 当作成功标准**,循环直到测试全绿——绝不自说自话地宣布完成。
+4. `✓ succeeded` —— **9 次 agent 调用,约 $2.46**。
+
+产物是一个能用的库(`bun test` → **4 pass, 0 fail, 18 assertions**),还带了一个可注入时钟,让基于时间的测试是确定性的:
+
+```ts
+// src/rate-limiter.ts (生成)
+export class RateLimiter {
+  constructor({ capacity, refillPerSecond, now = Date.now }: RateLimiterOptions) { … }
+  tryRemove(n = 1): boolean { this.refill(); if (this.tokens >= n) { this.tokens -= n; return true; } return false; }
+  available(): number { this.refill(); return this.tokens; }
+}
+```
+
+重点不是"agent 写了代码",而是 Omakase **替你规划、并行执行、并且在 `bun test` 真正通过之前拒绝收工**。
+
+---
+
 ## 内置指令
 
 ```

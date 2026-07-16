@@ -65,6 +65,44 @@ omks
 
 ---
 
+## Real run
+
+This is a **real, unedited run** — not a mock. In an empty directory:
+
+```bash
+omks run "Implement a TypeScript token-bucket rate limiter as a Bun project:
+  package.json, src/rate-limiter.ts (a RateLimiter class with capacity +
+  refillPerSecond, tryRemove(n=1), time-based refill, injectable clock), and
+  src/rate-limiter.test.ts (bun:test) covering burst, denial, and refill.
+  Make sure 'bun test' passes." \
+  --workflow goal --provider claude --check "bun test" --max-agents 12
+```
+
+What Omakase did:
+
+1. **Planned 4 steps** (package.json → limiter → tests → run the suite).
+2. Built + peer‑reviewed each step in a pipeline.
+3. **The Goal‑loop ran the real `bun test`** as its success criterion and looped
+   until it went green — no self‑declared victory.
+4. `✓ succeeded` — **9 agent turns, ~$2.46**.
+
+The result is a working library (`bun test` → **4 pass, 0 fail, 18 assertions**),
+including a proper injectable clock so the time‑based tests are deterministic:
+
+```ts
+// src/rate-limiter.ts  (generated)
+export class RateLimiter {
+  constructor({ capacity, refillPerSecond, now = Date.now }: RateLimiterOptions) { … }
+  tryRemove(n = 1): boolean { this.refill(); if (this.tokens >= n) { this.tokens -= n; return true; } return false; }
+  available(): number { this.refill(); return this.tokens; }
+}
+```
+
+The point isn't that an agent wrote code — it's that Omakase **planned it, ran it
+in parallel, and refused to finish until `bun test` actually passed.**
+
+---
+
 ## Command reference
 
 ```
