@@ -7,6 +7,7 @@ import { Workspace, Store } from '@omakase/core';
 import { detectCached } from '@omakase/providers';
 import { discoverWorkflows } from '@omakase/engine';
 import { App } from './app.tsx';
+import { theme } from './render.ts';
 
 export interface LaunchOptions {
   initialGoal?: string;
@@ -20,7 +21,13 @@ export async function launchTUI(opts: LaunchOptions = {}): Promise<number> {
   const providers = await detectCached(workspace.paths.agentsCache, { discoverModels: false });
   const workflows = discoverWorkflows({ workspace: workspace.paths.workflows }).map((m) => m.name);
 
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  // Paint our own canvas: the TUI must not inherit the terminal's colours, or
+  // the prompt vanishes on light themes and the borders vanish on dark ones.
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    backgroundColor: theme.canvas,
+    screenMode: 'alternate-screen',
+  });
   const root = createRoot(renderer);
 
   return await new Promise<number>((resolve) => {
