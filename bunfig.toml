@@ -1,0 +1,8 @@
+# Bun configuration for the Omakase workspace.
+[install]
+# Hoist workspace packages; link @omakase/* to their src entrypoints.
+linker = "hoisted"
+
+[test]
+# Co-located *.test.ts files, run with `bun test`.
+root = "packages"

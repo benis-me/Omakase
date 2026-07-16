@@ -1,0 +1,22 @@
+{
+  "name": "@omakase/tui",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Omakase TUI: OpenTUI + React 19 terminal interface for goals, runs, workflows and sessions.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "@omakase/engine": "workspace:*",
+    "@omakase/providers": "workspace:*",
+    "@opentui/core": "^0.4.3",
+    "@opentui/react": "^0.4.3",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0"
+  }
+}

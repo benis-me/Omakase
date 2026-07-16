@@ -1,0 +1,33 @@
+{
+  "name": "omakase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Omakase (omks) — orchestrate your installed AI agent CLIs with Dynamic Workflows and Goal-loops.",
+  "license": "MIT",
+  "homepage": "https://github.com/omakase-cli/omakase",
+  "repository": { "type": "git", "url": "https://github.com/omakase-cli/omakase" },
+  "keywords": ["ai", "agents", "cli", "tui", "workflow", "orchestration", "opentui", "bun"],
+  "workspaces": ["packages/*"],
+  "bin": { "omks": "./packages/cli/bin/omks.ts" },
+  "engines": { "bun": ">=1.3.0" },
+  "scripts": {
+    "omks": "bun ./packages/cli/bin/omks.ts",
+    "dev": "bun ./packages/cli/bin/omks.ts",
+    "typecheck": "tsc -p tsconfig.json --pretty",
+    "typecheck:tui": "tsc -p packages/tui/tsconfig.json --pretty",
+    "typecheck:web": "tsc -p packages/web/tsconfig.json --pretty",
+    "typecheck:all": "bun run typecheck && bun run typecheck:tui && bun run typecheck:web",
+    "test": "bun test",
+    "check": "bun run typecheck:all && bun test",
+    "build:web": "bun --filter @omakase/web build",
+    "build:cli": "bun build packages/cli/bin/omks.ts --compile --outfile dist/omks",
+    "format": "prettier --write \"packages/**/*.{ts,tsx}\""
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.2",
+    "prettier": "^3.4.2"
+  }
+}

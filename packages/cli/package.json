@@ -1,0 +1,20 @@
+{
+  "name": "@omakase/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "The omks command — Omakase's CLI entrypoint and TUI launcher.",
+  "bin": {
+    "omks": "./bin/omks.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "@omakase/providers": "workspace:*",
+    "@omakase/engine": "workspace:*",
+    "@omakase/tui": "workspace:*"
+  }
+}

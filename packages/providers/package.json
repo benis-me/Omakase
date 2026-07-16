@@ -1,0 +1,14 @@
+{
+  "name": "@omakase/providers",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Omakase agent providers: detect & drive installed AI agent CLIs (claude, codex, gemini, cursor-agent, ...).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@omakase/core": "workspace:*"
+  }
+}

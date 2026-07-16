@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnp.*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Omakase machine state (regenerated, not version-controlled)
+.omks/omks.db
+.omks/omks.db-wal
+.omks/omks.db-shm
+.omks/agents.json
+.omks/runs/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Bun
+.bun/
+
+# Local tooling state
+.impeccable/

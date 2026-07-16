@@ -1,0 +1,15 @@
+{
+  "name": "@omakase/engine",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Omakase engine: dynamic-workflow runtime (w API), goal-loop, resume, durable retry, multi-harness.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@omakase/core": "workspace:*",
+    "@omakase/providers": "workspace:*"
+  }
+}
