@@ -3,7 +3,8 @@
 
 import type { AnyRunEvent } from '@omakase/core';
 
-const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+// FORCE_COLOR lets piped/captured output keep its colours (CI logs, demos).
+const useColor = (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR)) && !process.env.NO_COLOR;
 
 function wrap(code: string, s: string): string {
   return useColor ? `\x1b[${code}m${s}\x1b[0m` : s;
@@ -44,43 +45,33 @@ export function banner(): string {
   return c.bold(c.magenta('omakase')) + c.dim(' — orchestrate your agents');
 }
 
-/** Compact per-agent markers, so concurrent agents stay tellable apart. */
-const SLOT_GLYPHS = ['❶', '❷', '❸', '❹', '❺', '❻', '❼', '❽', '❾', '❿'];
+/** Agents already have an identity — show it, don't invent one. */
+export function agentTag(callId: string): string {
+  return callId.replace(/^agt_/, '');
+}
 
 /**
  * A stateful renderer for one run's stream. Workflows run agents concurrently,
- * so their activity/result lines interleave; this tags each agent line with a
- * slot marker (❶❷❸…) once a run has actually gone parallel, which is the only
- * way to tell "which agent is doing what" in a flat stream.
+ * so their activity/result lines interleave. Each agent's line carries its real
+ * call id (the same id in the event log, the JSONL journal and `--json`, so you
+ * can grep for it). The id anchors every `agent:started` line; the child lines
+ * only carry it once a run has actually gone parallel, so sequential runs stay
+ * quiet.
  */
 export function createEventRenderer(): (e: AnyRunEvent) => string | null {
-  const slot = new Map<string, number>();
   const active = new Set<string>();
   let everConcurrent = false;
 
-  const assign = (callId: string): void => {
-    const used = new Set(slot.values());
-    let n = 1;
-    while (used.has(n)) n++;
-    slot.set(callId, n);
-    active.add(callId);
-    if (active.size > 1) everConcurrent = true;
-  };
-  const release = (callId: string): void => {
-    active.delete(callId);
-    slot.delete(callId);
-  };
-  const tag = (callId: string): string => {
-    if (!everConcurrent) return '';
-    const n = slot.get(callId);
-    if (!n) return '';
-    return c.dim(SLOT_GLYPHS[n - 1] ?? `#${n}`) + ' ';
-  };
+  const tag = (callId: string, always = false): string =>
+    always || everConcurrent ? c.dim(agentTag(callId)) + ' ' : '';
 
   return (e: AnyRunEvent): string | null => {
-    if (e.type === 'agent:started') assign(e.payload.callId);
+    if (e.type === 'agent:started') {
+      active.add(e.payload.callId);
+      if (active.size > 1) everConcurrent = true;
+    }
     const line = renderEventWith(e, tag);
-    if (e.type === 'agent:completed' || e.type === 'agent:failed') release(e.payload.callId);
+    if (e.type === 'agent:completed' || e.type === 'agent:failed') active.delete(e.payload.callId);
     return line;
   };
 }
@@ -90,7 +81,7 @@ export function renderEvent(e: AnyRunEvent): string | null {
   return renderEventWith(e, () => '');
 }
 
-function renderEventWith(e: AnyRunEvent, tag: (callId: string) => string): string | null {
+function renderEventWith(e: AnyRunEvent, tag: (callId: string, always?: boolean) => string): string | null {
   switch (e.type) {
     case 'run:started':
       return `${sym.arrow} ${c.bold('Goal')} ${c.dim('·')} ${c.cyan(e.payload.workflow)}\n  ${e.payload.goal.text}`;
@@ -101,7 +92,7 @@ function renderEventWith(e: AnyRunEvent, tag: (callId: string) => string): strin
     case 'phase:ended':
       return null;
     case 'agent:started':
-      return `  ${tag(e.payload.callId)}${c.gray(e.payload.provider)} ${c.dim('›')} ${e.payload.title}`;
+      return `  ${tag(e.payload.callId, true)}${c.gray(e.payload.provider)} ${c.dim('›')} ${e.payload.title}`;
     case 'agent:activity': {
       const a = e.payload.activity;
       const mark = a.kind === 'tool' ? c.yellow('⚙') : a.kind === 'reasoning' ? c.magenta('✱') : c.dim('·');

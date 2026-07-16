@@ -493,6 +493,30 @@ test('ask: uses the answerer, journals the answer, and replays it on resume', as
   }
 });
 
+test('cancel: an aborted run reports cancelled, not succeeded', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const controller = new AbortController();
+    // Abort while the agent is in flight; the workflow then finishes "normally"
+    // with an aborted agent and NO success criteria — the run must still be cancelled.
+    const harness = new FakeHarness(() => {
+      controller.abort();
+      return { status: 'error' as const, text: 'Cancelled' };
+    });
+    const out = await runGoal({
+      goal: { text: 'long job', workflow: 'solo', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+      signal: controller.signal,
+    });
+    expect(out.status).toBe('cancelled');
+    expect(store.getRun(out.runId)!.status).toBe('cancelled');
+  } finally {
+    cleanup();
+  }
+});
+
 test('discover: parallel built-in is present', () => {
   const names = discoverWorkflows().map((m) => m.name);
   expect(names).toContain('parallel');

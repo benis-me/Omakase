@@ -268,6 +268,14 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
 
       await loaded.fn(runtime);
 
+      // A workflow finishes "normally" even when its agents were aborted, so a
+      // cancel must be caught here — otherwise a run with no success criteria
+      // falls into the "trust the workflow" branch below and reports success.
+      if (ctx.signal.aborted) {
+        status = 'cancelled';
+        break;
+      }
+
       const verdict = await verify();
       gaps = verdict.gaps;
       const v: GoalVerdict = verdict.met ? 'met' : gaps.length ? 'unmet' : 'unknown';
