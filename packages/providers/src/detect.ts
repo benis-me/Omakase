@@ -87,10 +87,24 @@ interface AgentsCache {
   providers: ProviderInfo[];
 }
 
+/**
+ * A rescan costs one `--version` spawn per known provider (a few hundred ms),
+ * which is why the cache exists — so the window has to be long enough that
+ * ordinary commands never pay it. A day bounds how long an install, uninstall
+ * or upgrade of an agent CLI can stay invisible without forcing `omks agent
+ * scan`: a stale list is not merely incomplete, it silently reroutes a run to
+ * another provider (Runtime.selectProvider falls back to the preference order
+ * when the requested provider is missing from the available set).
+ */
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Cached providers, or null when absent, unreadable or past the TTL. */
 export function loadAgentsCache(path: string): ProviderInfo[] | null {
   if (!existsSync(path)) return null;
   try {
     const cache = JSON.parse(readFileSync(path, 'utf8')) as AgentsCache;
+    // A cache with no scannedAt predates the TTL and is treated as expired.
+    if (!(Date.now() - cache.scannedAt < CACHE_TTL_MS)) return null;
     return cache.providers ?? null;
   } catch {
     return null;

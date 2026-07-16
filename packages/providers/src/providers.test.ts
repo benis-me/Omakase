@@ -6,9 +6,9 @@ import type { AgentActivity } from '@omakase/core';
 import { claudeProvider, codexProvider, geminiProvider, cursorProvider } from './providers.ts';
 import { getProvider, commandBase } from './registry.ts';
 import { runTurn } from './runner.ts';
-import { detectProviders } from './detect.ts';
+import { detectProviders, detectCached, loadAgentsCache } from './detect.ts';
 import { GenericJsonParser, CodexJsonParser, isRateLimit } from './parsers.ts';
-import type { ProcessSpawner, SpawnRequest, SpawnResult } from './spawn.ts';
+import { BunSpawner, type ProcessSpawner, type SpawnRequest, type SpawnResult } from './spawn.ts';
 import type { TurnContext } from './types.ts';
 
 class FakeSpawner implements ProcessSpawner {
@@ -265,5 +265,136 @@ test('detectProviders probes every known provider and reports availability', asy
   for (const id of ['claude', 'codex', 'gemini', 'cursor-agent']) {
     expect(byId[id]).toBeDefined();
     expect(typeof byId[id]!.available).toBe('boolean');
+  }
+}, 15000);
+
+/** Write an executable fake CLI; absolute interpreter path, no PATH lookup. */
+function writeFakeBin(dir: string, name: string, body: string): string {
+  const p = join(dir, name);
+  writeFileSync(p, `#!${process.execPath}\n${body}`);
+  chmodSync(p, 0o755);
+  return p;
+}
+
+// What `cursor-agent models` prints with no authenticated session: ASCII art in
+// colour, then a prompt, then a non-zero exit.
+const FAKE_CURSOR_BANNER_BODY = `
+process.stdout.write('\\x1b[36m' + [
+  '+i":;;',
+  '[?+<l,",::;;;I',
+  '11{[#M##M##M#########*ppll',
+  '^^^O>>',
+  '>>',
+  'Press any key to sign in...',
+].join('\\n') + '\\x1b[0m\\n');
+process.exit(Number(process.env.FAKE_EXIT_CODE ?? '1'));
+`;
+
+const FAKE_CURSOR_MODELS_BODY = `
+process.stdout.write('\\x1b[1mgpt-5\\x1b[0m\\n\\nsonnet-4\\n  \\u2500\\u2500\\u2500\\u2500  \\nsonnet-4-thinking\\n');
+`;
+
+test('cursor: a sign-in banner with a non-zero exit yields no models', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-models-'));
+  try {
+    const fake = writeFakeBin(dir, 'fake-cursor-banner.ts', FAKE_CURSOR_BANNER_BODY);
+    expect(await cursorProvider.discoverModels!(fake)).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+test('cursor: banner decoration is rejected even on a clean exit; real ids survive', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-models-'));
+  try {
+    const banner = writeFakeBin(dir, 'fake-cursor-ok-banner.ts', FAKE_CURSOR_BANNER_BODY);
+    process.env.FAKE_EXIT_CODE = '0';
+    try {
+      expect(await cursorProvider.discoverModels!(banner)).toEqual([]);
+    } finally {
+      delete process.env.FAKE_EXIT_CODE;
+    }
+    const list = writeFakeBin(dir, 'fake-cursor-models.ts', FAKE_CURSOR_MODELS_BODY);
+    expect(await cursorProvider.discoverModels!(list)).toEqual(['gpt-5', 'sonnet-4', 'sonnet-4-thinking']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+// --- agents cache TTL ------------------------------------------------------
+
+function writeCache(dir: string, scannedAt: number): string {
+  const p = join(dir, 'agents.json');
+  const providers = [
+    { id: 'ghost-agent', command: 'ghost-agent', label: 'Ghost', available: true, version: '1.0', path: '/bin/ghost', models: ['g-1'] },
+  ];
+  writeFileSync(p, JSON.stringify({ scannedAt, providers }, null, 2) + '\n');
+  return p;
+}
+
+test('loadAgentsCache honours scannedAt: fresh is served, expired is not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-cache-'));
+  try {
+    const fresh = loadAgentsCache(writeCache(dir, Date.now() - 60_000));
+    expect(fresh?.map((p) => p.id)).toEqual(['ghost-agent']);
+
+    const stale = loadAgentsCache(writeCache(dir, Date.now() - 25 * 60 * 60 * 1000));
+    expect(stale).toBeNull();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A stale cache must not be served: it decides which providers exist, and
+// Runtime.selectProvider silently reroutes to another one when the requested
+// provider is missing from it.
+test('detectCached rescans past the TTL instead of serving a stale provider list', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-cache-'));
+  try {
+    const path = writeCache(dir, Date.now() - 25 * 60 * 60 * 1000);
+    const rescanned = await detectCached(path, { discoverModels: false });
+    expect(rescanned.some((p) => p.id === 'ghost-agent')).toBe(false);
+    expect(rescanned.some((p) => p.id === 'claude')).toBe(true); // a real scan of the registry
+
+    const path2 = writeCache(dir, Date.now() - 60_000);
+    const cached = await detectCached(path2, { discoverModels: false });
+    expect(cached.map((p) => p.id)).toEqual(['ghost-agent']); // still cheap within the TTL
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+// --- stderr decoding -------------------------------------------------------
+
+// Splits a 3-byte '…' across two stderr writes, which land as separate chunks.
+const FAKE_SPLIT_STDERR_BODY = `
+const b = Buffer.from('Error: timed out \\u2026 retry\\n', 'utf8');
+const cut = b.indexOf(0xe2) + 1;
+process.stderr.write(b.subarray(0, cut));
+setTimeout(() => process.stderr.write(b.subarray(cut)), 50);
+setTimeout(() => process.exit(3), 100);
+`;
+
+test('BunSpawner: a multi-byte character split across stderr chunks is not corrupted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-stderr-'));
+  try {
+    const fake = writeFakeBin(dir, 'fake-split-stderr.ts', FAKE_SPLIT_STDERR_BODY);
+    const chunks: string[] = [];
+    const res = await new BunSpawner().run({
+      command: fake,
+      args: [],
+      cwd: dir,
+      env: process.env as Record<string, string>,
+      onStdoutLine: () => {},
+      onStderrChunk: (c) => chunks.push(c),
+      timeoutMs: 10_000,
+      maxStdoutBytes: 1 << 20,
+    });
+    expect(res.exitCode).toBe(3);
+    expect(res.stderrTail).toBe('Error: timed out … retry\n');
+    expect(res.stderrTail).not.toContain('�');
+    expect(chunks.join('')).toBe('Error: timed out … retry\n');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }, 15000);

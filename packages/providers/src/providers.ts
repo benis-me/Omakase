@@ -3,6 +3,7 @@
 
 import type { AgentProvider, TurnContext, SpawnPlan } from './types.ts';
 import { ClaudeStreamParser, GenericJsonParser, CodexJsonParser, CursorStreamParser, TextTailParser } from './parsers.ts';
+import { augmentedPath } from './env.ts';
 
 /** For providers without a system-prompt flag, fold it into the prompt. */
 function withSystem(ctx: TurnContext): string {
@@ -167,11 +168,37 @@ export const opencodeProvider: AgentProvider = {
 
 // --- model discovery helpers ----------------------------------------------
 
+const PROBE_TIMEOUT_MS = 3000;
+/** CSI/OSC escapes and stray control bytes, as emitted by a banner or spinner. */
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][\s\S]*?(?:\x07|\x1b\\)|[\x00-\x08\x0b-\x1f\x7f]/g;
+/** A plausible model id — anything else is decoration, not a model. */
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$/;
+
+/**
+ * Stdout of a model-list probe, or null if it did not complete cleanly. A CLI
+ * that cannot reach an authenticated session still writes to stdout (a sign-in
+ * banner, a prompt), so only a zero exit makes that output a model list.
+ */
+async function probeStdout(command: string, argv: string[]): Promise<string | null> {
+  const p = Bun.spawn([command, ...argv], {
+    stdout: 'pipe',
+    stderr: 'ignore',
+    env: { ...process.env, PATH: augmentedPath() } as Record<string, string>,
+  });
+  const timer = setTimeout(() => p.kill(), PROBE_TIMEOUT_MS);
+  try {
+    const out = await new Response(p.stdout).text();
+    const code = await p.exited;
+    return code === 0 ? out : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function probeJsonModels(command: string, argv: string[]): Promise<string[]> {
   try {
-    const p = Bun.spawn([command, ...argv], { stdout: 'pipe', stderr: 'ignore' });
-    const out = await new Response(p.stdout).text();
-    await p.exited;
+    const out = await probeStdout(command, argv);
+    if (out == null) return [];
     const data = JSON.parse(out);
     const list = Array.isArray(data) ? data : (data.models ?? data.data ?? []);
     return list.map((m: any) => (typeof m === 'string' ? m : m.id ?? m.name)).filter(Boolean);
@@ -182,13 +209,12 @@ async function probeJsonModels(command: string, argv: string[]): Promise<string[
 
 async function probeLineModels(command: string, argv: string[]): Promise<string[]> {
   try {
-    const p = Bun.spawn([command, ...argv], { stdout: 'pipe', stderr: 'ignore' });
-    const out = await new Response(p.stdout).text();
-    await p.exited;
+    const out = await probeStdout(command, argv);
+    if (out == null) return [];
     return out
       .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.includes(' '));
+      .map((l) => l.replace(ANSI_RE, '').trim())
+      .filter((l) => MODEL_ID_RE.test(l));
   } catch {
     return [];
   }

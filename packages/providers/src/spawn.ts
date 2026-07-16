@@ -70,9 +70,22 @@ export class BunSpawner implements ProcessSpawner {
       let stdoutBytes = 0;
 
       const outDecoder = new StringDecoder('utf8');
+      // Stateful too: a chunk boundary can fall inside a multi-byte character,
+      // and stderrTail is surfaced to the user verbatim on a failing run.
+      const errDecoder = new StringDecoder('utf8');
       let lineBuf = '';
       const stderrChunks: string[] = [];
       let stderrLen = 0;
+
+      const pushStderr = (s: string) => {
+        if (!s) return;
+        stderrLen += s.length;
+        stderrChunks.push(s);
+        // Keep only a bounded tail.
+        while (stderrLen > STDERR_TAIL_BYTES && stderrChunks.length > 1) {
+          stderrLen -= stderrChunks.shift()!.length;
+        }
+      };
 
       const done = (exitCode: number) => {
         if (settled) return;
@@ -85,6 +98,7 @@ export class BunSpawner implements ProcessSpawner {
         if (lineBuf.length) {
           for (const line of lineBuf.split('\n')) if (line.length) safeLine(line);
         }
+        pushStderr(errDecoder.end());
         resolve({
           exitCode,
           stderrTail: stderrChunks.join('').slice(-STDERR_TAIL_BYTES),
@@ -136,18 +150,14 @@ export class BunSpawner implements ProcessSpawner {
       });
 
       child.stderr?.on('data', (buf: Buffer) => {
-        const s = buf.toString('utf8');
-        stderrLen += s.length;
-        stderrChunks.push(s);
-        // Keep only a bounded tail.
-        while (stderrLen > STDERR_TAIL_BYTES && stderrChunks.length > 1) {
-          stderrLen -= stderrChunks.shift()!.length;
-        }
+        const s = errDecoder.write(buf);
+        if (!s) return; // chunk ended mid-character; wait for the rest
+        pushStderr(s);
         req.onStderrChunk?.(s);
       });
 
       child.on('error', (err) => {
-        stderrChunks.push(`\n[spawn error] ${(err as Error).message}\n`);
+        pushStderr(`\n[spawn error] ${(err as Error).message}\n`);
         done(127);
       });
 
