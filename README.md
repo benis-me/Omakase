@@ -41,8 +41,8 @@ Requires **[Bun](https://bun.sh) ≥ 1.3** and at least one agent CLI on your `P
 (`claude`, `codex`, `gemini`, or `cursor-agent`).
 
 ```bash
-git clone https://github.com/omakase-cli/omakase
-cd omakase
+git clone https://github.com/benis-me/Omakase
+cd Omakase
 bun install
 bun link            # exposes `omks` globally (or: alias omks="bun /path/to/packages/cli/bin/omks.ts")
 ```

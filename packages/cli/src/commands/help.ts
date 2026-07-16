@@ -48,6 +48,6 @@ ${h('RUN OPTIONS')}
   ${c.dim('--param k=v              workflow parameter (repeatable)   --session <id>  continue')}
   ${c.dim('--cwd <dir>              working directory   --json  emit JSONL events')}
 
-${c.dim('Docs: https://github.com/omakase-cli/omakase')}`);
+${c.dim('Docs: https://github.com/benis-me/Omakase')}`);
   return 0;
 }
