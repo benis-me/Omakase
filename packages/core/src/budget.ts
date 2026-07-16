@@ -23,6 +23,7 @@ export class Budget {
   private spentAgents = 0;
   private tokens = 0;
   private costUsd = 0;
+  private denied: string | null = null;
   private readonly maxUsd: number | null;
   private readonly maxWallClockMs: number | null;
   private readonly startedAt: number;
@@ -46,9 +47,22 @@ export class Budget {
 
   /** Reserve one agent call. Returns false (without charging) if exhausted. */
   chargeAgent(): boolean {
-    if (this.stopReason()) return false;
+    const stop = this.stopReason();
+    if (stop) {
+      this.denied = stop;
+      return false;
+    }
     this.spentAgents += 1;
     return true;
+  }
+
+  /**
+   * Why a call was actually turned away, or null if none ever was. Distinct from
+   * stopReason(), which only reports headroom: a run that lands exactly on its
+   * cap is exhausted but denied nothing, so every slot it spent did real work.
+   */
+  deniedReason(): string | null {
+    return this.denied;
   }
 
   addUsage(tokens: number, costUsd: number): void {

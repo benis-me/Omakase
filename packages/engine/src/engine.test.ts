@@ -2,9 +2,10 @@ import { test, expect } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, chmodSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Workspace, Store } from '@omakase/core';
+import { Workspace, Store, AbortError } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { runGoal, resumeRun } from './orchestrator.ts';
+import { buildResumeState } from './resume.ts';
 import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
 import { verifyGoal } from './verify.ts';
@@ -123,7 +124,7 @@ test('resume: cached agent results are not re-run', async () => {
   }
 });
 
-test('runGoal: budget exhaustion emits agent:failed', async () => {
+test('runGoal: budget exhaustion fails the run and reports the exhaustion', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {
     const harness = new FakeHarness((req) => (req.role === 'planner' ? 'A\nB\nC' : 'done'));
@@ -135,7 +136,37 @@ test('runGoal: budget exhaustion emits agent:failed', async () => {
       maxAgents: 1,
     });
     const events = store.getEvents(out.runId);
-    expect(events.some((e) => e.type === 'agent:failed')).toBe(true);
+    expect(events.some((e) => e.type === 'agent:failed' && e.payload.error.startsWith('budget:'))).toBe(true);
+    // The planner burned the only slot; every later agent was turned away, so the
+    // workflow "completed" having built nothing. It must not pass as a success,
+    // nor may its final report stand in as the run's summary.
+    expect(out.status).toBe('failed');
+    expect(store.getRun(out.runId)!.status).toBe('failed');
+    expect(out.summary).toContain('max agents reached');
+    expect(out.summary).not.toContain('built them');
+  } finally {
+    cleanup();
+  }
+});
+
+test('runGoal: a run that lands exactly on its budget still succeeds', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // 3 steps = 1 planner + 3 × (build + review) = exactly 7 agents. Spending the
+    // last slot leaves no headroom, but nothing was ever denied — the work is done.
+    const harness = new FakeHarness((req) => (req.role === 'planner' ? 'A\nB\nC' : 'done'));
+    const out = await runGoal({
+      goal: { text: 'big', workflow: 'goal', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+      maxAgents: 7,
+    });
+    expect(harness.calls).toHaveLength(7);
+    const events = store.getEvents(out.runId);
+    expect(events.some((e) => e.type === 'agent:failed')).toBe(false);
+    expect(out.status).toBe('succeeded');
+    expect(out.summary).toContain('built them');
   } finally {
     cleanup();
   }
@@ -226,6 +257,83 @@ test('params: w.params reaches the workflow', async () => {
     });
     const rep = store.listReports(out.runId).find((r) => r.kind === 'final');
     expect(rep?.summary).toBe('foo=bar');
+  } finally {
+    cleanup();
+  }
+});
+
+test('params: the goal loop feeds gaps to a goal that started without params', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    writeFileSync(
+      join(ws.paths.workflows, 'echoround.ts'),
+      `export default async function echoround(w){
+        w.requestReport({kind:'final', title:'r', summary: 'round=' + String(w.params.round) + ' gaps=' + JSON.stringify(w.params.gaps ?? null)});
+      }\n`,
+    );
+    const harness = new FakeHarness(() => 'ok');
+    const out = await runGoal({
+      // No params: the common CLI shape, where goal.params starts undefined.
+      goal: { text: 'x', workflow: 'echoround', cwd: ws.root, checks: [{ kind: 'command', run: 'false' }] },
+      workspace: ws,
+      store,
+      harness,
+    });
+    const last = store.listReports(out.runId).filter((r) => r.kind === 'final').at(-1);
+    expect(last?.summary).toContain('round=1');
+    expect(last?.summary).toContain('exit 1');
+  } finally {
+    cleanup();
+  }
+});
+
+test('resume: a failed agent keeps its budget slot rather than being refunded', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // The planner completes; the first worker charges its slot and then errors,
+    // so the run ends fully spent with only ONE agent:completed to replay.
+    const first = new FakeHarness((req) =>
+      req.role === 'planner' ? 'A' : { status: 'error' as const, text: 'worker down' },
+    );
+    const out = await runGoal({
+      goal: { text: 'x', workflow: 'goal', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: first,
+      maxAgents: 2,
+    });
+    const started = store.getEvents(out.runId).filter((e) => e.type === 'agent:started').length;
+    expect(started).toBe(2);
+    expect(buildResumeState(store, out.runId).spentAgents).toBe(2);
+
+    // Resuming must not hand back the failed agent's slot: the planner replays
+    // from cache and there is nothing left to spend.
+    const second = new FakeHarness(() => 'should NOT be called');
+    await resumeRun(out.runId, { workspace: ws, store, harness: second, maxAgents: 2 });
+    expect(second.calls).toHaveLength(0);
+  } finally {
+    cleanup();
+  }
+}, 15000);
+
+test('verify: an aborted command criterion is torn down instead of answered', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const harness = new FakeHarness(() => 'ok');
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+    const started = Date.now();
+    const verdict = verifyGoal({
+      goal: { text: 'g', checks: [{ kind: 'command', run: 'sleep 5' }] },
+      cwd: ws.root,
+      harness,
+      judgeProvider: null,
+      signal: controller.signal,
+    });
+    // A cancel must not wait out the check, nor come back with a verdict on it.
+    expect(verdict).rejects.toThrow();
+    await verdict.catch(() => {});
+    expect(Date.now() - started).toBeLessThan(3000);
   } finally {
     cleanup();
   }
@@ -415,6 +523,42 @@ test('isolate: parallel work merges back via git worktrees', async () => {
   }
 }, 20000);
 
+test('isolate: a throwing callback keeps its worktree instead of force-removing it', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  let wtPath = '';
+  try {
+    const g = (args: string[]) => Bun.spawnSync(['git', ...args], { cwd: ws.root, stdout: 'ignore', stderr: 'ignore' });
+    g(['init', '-q']);
+    g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init']);
+
+    writeFileSync(
+      join(ws.paths.workflows, 'iso3.ts'),
+      `export default async function iso3(w){
+        await w.isolate('compA', async (dir) => {
+          await Bun.write(dir + '/agent-work.txt', 'WORK');
+          throw new Error('boom');
+        });
+      }\n`,
+    );
+    const harness = new FakeHarness(() => 'ok');
+    const out = await runGoal({ goal: { text: 'iso', workflow: 'iso3', cwd: ws.root }, workspace: ws, store, harness });
+    expect(out.status).toBe('failed');
+
+    // Nothing was committed, so the branch holds none of the work — the worktree
+    // is the only copy of it and must survive for the user to recover.
+    const list = Bun.spawnSync(['git', 'worktree', 'list'], { cwd: ws.root, stdout: 'pipe', stderr: 'ignore' })
+      .stdout.toString()
+      .split('\n')
+      .filter((l) => l.trim());
+    expect(list.length).toBe(2);
+    wtPath = list[1]!.split(' ')[0]!;
+    expect(readFileSync(join(wtPath, 'agent-work.txt'), 'utf8')).toBe('WORK');
+  } finally {
+    if (wtPath) rmSync(wtPath, { recursive: true, force: true });
+    cleanup();
+  }
+}, 20000);
+
 test('fallback: switches to the next provider when the first fails', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {
@@ -533,6 +677,32 @@ test('cancel: an aborted run reports cancelled, not succeeded', async () => {
     });
     expect(out.status).toBe('cancelled');
     expect(store.getRun(out.runId)!.status).toBe('cancelled');
+  } finally {
+    cleanup();
+  }
+});
+
+test('cancel: an agent cut short mid-turn reports the cancel, not a failure', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const controller = new AbortController();
+    // A real turn is a subprocess: cancelling kills it and the call throws.
+    const harness = new FakeHarness(() => {
+      controller.abort();
+      throw new AbortError();
+    });
+    const out = await runGoal({
+      goal: { text: 'long job', workflow: 'solo', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+      signal: controller.signal,
+    });
+    expect(out.status).toBe('cancelled');
+    const failed = store.getEvents(out.runId).filter((e) => e.type === 'agent:failed');
+    expect(failed).toHaveLength(1);
+    // 'agent failed' is the generic initializer — it would read as a real break.
+    expect(failed[0]!.payload.error).toBe('aborted');
   } finally {
     cleanup();
   }

@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Goal, SuccessCriterion } from '@omakase/core';
+import { AbortError, type Goal, type SuccessCriterion } from '@omakase/core';
 import type { Harness } from './harness.ts';
 
 export interface VerifyContext {
@@ -31,6 +31,10 @@ export interface VerifyResult {
 }
 
 export async function verifyGoal(ctx: VerifyContext): Promise<VerifyResult> {
+  // A cancel must abandon the verdict, not answer it: criteria torn down mid-way
+  // read as unmet, which would fail (and let the caller memoise) a run the user
+  // merely stopped. Throwing leaves the abort as the run's outcome.
+  if (ctx.signal?.aborted) throw new AbortError();
   const checks = ctx.goal.checks ?? [];
   const nlCriteria = ctx.goal.successCriteria ?? [];
 
@@ -75,21 +79,28 @@ async function evalCommand(
 ): Promise<CriterionResult> {
   const label = c.label ?? `\`${c.run}\``;
   ctx.log?.(`verify: running ${c.run}`);
+  let code: number;
   try {
     const proc = Bun.spawn(['sh', '-c', c.run], {
       cwd: ctx.cwd,
       stdout: 'pipe',
       stderr: 'pipe',
       env: process.env as Record<string, string>,
+      // Without this the child outlives the abort and the run stays pinned on it
+      // for the rest of the timeout — a user's suite can be minutes of that.
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
     });
     const timer = setTimeout(() => proc.kill(), c.timeoutMs ?? 120_000);
-    const code = await proc.exited;
+    code = await proc.exited;
     clearTimeout(timer);
-    const met = code === 0;
-    return { label, met, detail: met ? 'exit 0' : `exit ${code}` };
   } catch (err) {
+    if (ctx.signal?.aborted) throw err;
     return { label, met: false, detail: (err as Error).message };
   }
+  // An aborted child exits non-zero for reasons that say nothing about the goal.
+  if (ctx.signal?.aborted) throw new AbortError();
+  const met = code === 0;
+  return { label, met, detail: met ? 'exit 0' : `exit ${code}` };
 }
 
 function evalFile(

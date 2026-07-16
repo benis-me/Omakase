@@ -251,7 +251,9 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
     harness: ctx.harness,
     budget: ctx.budget,
     signal: ctx.signal,
-    params: goal.params ?? {},
+    // One object, shared with the goal: the round loop below feeds each pass its
+    // gaps by mutating goal.params, which w.params must alias rather than copy.
+    params: (goal.params ??= {}),
     autoApprove: workspace.settings.autoApprove ?? true,
     defaultProvider: ctx.defaultProvider,
     providerPreference: ctx.providerPreference,
@@ -273,6 +275,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   let status: RunStatus = 'running';
   let gaps: string[] = [];
   let prevSignature = '';
+  let budgetStop: string | null = null;
 
   try {
     for (let round = 0; round < maxRounds; round++) {
@@ -282,8 +285,8 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
       }
       if (round > 0) {
         // Feed the gaps to the next pass via params.
-        (goal.params ??= {}).gaps = gaps;
-        (goal.params as Record<string, unknown>).round = round;
+        goal.params!.gaps = gaps;
+        goal.params!.round = round;
       }
 
       await loaded.fn(runtime);
@@ -306,8 +309,18 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
         note: verdict.results.map((r) => `${r.met ? '✓' : '✗'} ${r.label}`).join('; '),
       });
 
-      if (verdict.met) {
+      if (hasCriteria && verdict.met) {
         status = 'succeeded';
+        break;
+      }
+      // Agents the budget turned away returned an error the workflow was free to
+      // swallow, so its completion is no oracle — it can finish and file a rosy
+      // report having built nothing. Only a refused call counts: a run that lands
+      // exactly on its cap spent every slot on real work.
+      const denied = ctx.budget.deniedReason();
+      if (denied) {
+        budgetStop = denied;
+        status = 'failed';
         break;
       }
       if (!hasCriteria) {
@@ -338,17 +351,20 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   }
 
   // A workflow may have filed a rosy final report before it was cut short, so a
-  // cancelled run always reports the cancel rather than the workflow's summary.
+  // run stopped by a cancel or an exhausted budget always reports that rather
+  // than the workflow's summary.
   const finalReport = store.listReports(run.id).filter((r) => r.kind === 'final').at(-1);
   const summary =
     status === 'cancelled'
       ? 'Run cancelled.'
-      : (finalReport?.summary ??
-        (status === 'succeeded'
-          ? 'Goal achieved.'
-          : gaps.length
-            ? `Incomplete. Remaining: ${gaps.slice(0, 3).join('; ')}`
-            : 'Run ended without meeting the goal.'));
+      : budgetStop
+        ? `Budget exhausted: ${budgetStop}.`
+        : (finalReport?.summary ??
+          (status === 'succeeded'
+            ? 'Goal achieved.'
+            : gaps.length
+              ? `Incomplete. Remaining: ${gaps.slice(0, 3).join('; ')}`
+              : 'Run ended without meeting the goal.'));
 
   store.updateRun(run.id, { status, summary });
 

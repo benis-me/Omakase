@@ -158,6 +158,17 @@ test('budget: charge + remaining', () => {
   expect(unbounded.remainingAgents()).toBe(Infinity);
 });
 
+test('budget: only a refused call counts as denied, not a spent-out cap', () => {
+  const b = new Budget(2);
+  b.chargeAgent();
+  b.chargeAgent();
+  // Exactly on the cap: no headroom left, but every slot did real work.
+  expect(b.canSpend()).toBe(false);
+  expect(b.deniedReason()).toBe(null);
+  expect(b.chargeAgent()).toBe(false);
+  expect(b.deniedReason()).toBe('max agents reached');
+});
+
 test('budget: cost limit stops charging', () => {
   const b = new Budget(null, { maxUsd: 0.01 });
   expect(b.chargeAgent()).toBe(true);

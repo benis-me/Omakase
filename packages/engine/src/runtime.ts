@@ -173,11 +173,15 @@ export class WorkflowRuntime implements WorkflowContext {
     const systemPrompt = spec.systemPrompt ?? this.d.systemPromptFor(spec);
     const agentCwd = this.resolveAgentCwd(spec.cwd);
     let lastError = 'agent failed';
+    let aborted = false;
 
     // Try each candidate provider in turn; on failure, fall back to the next.
     for (let pi = 0; pi < candidates.length; pi++) {
       const provider = candidates[pi]!;
-      if (this.signal.aborted) break;
+      if (this.signal.aborted) {
+        aborted = true;
+        break;
+      }
       if (pi > 0) this.emit('harness:switched', { from: candidates[pi - 1]!, to: provider, reason: lastError.slice(0, 80) });
 
       try {
@@ -241,15 +245,22 @@ export class WorkflowRuntime implements WorkflowContext {
         });
         return out;
       } catch (err) {
-        if (isAbortError(err)) break;
+        if (isAbortError(err)) {
+          aborted = true;
+          break;
+        }
         lastError = err instanceof Error ? err.message : String(err);
         // fall through to the next candidate provider
       }
     }
 
+    // A cancel is not a failure, and reporting one as `agent failed` makes a
+    // whole cancelled run read like it broke. The pre-flight check above already
+    // says 'aborted'; an agent cut short mid-turn says the same.
+    if (aborted) lastError = 'aborted';
     this.d.store.addSpend(this.d.runId, { agents: 1 });
     this.emit('agent:failed', { callId, stepKey, error: lastError, attempt: this.d.maxAttempts ?? 3 });
-    return this.errorResult(lastError, candidates[0]!);
+    return this.errorResult(aborted ? 'Cancelled' : lastError, candidates[0]!);
   }
 
   /** Ordered provider candidates: the selected one, then fallbacks (bounded). */
@@ -284,15 +295,19 @@ export class WorkflowRuntime implements WorkflowContext {
     const base = this.cwd;
     if (!isGitRepo(base)) return await fn(base);
     const wt = await this.git.run(() => createWorktree(base, label));
-    let merged = false;
     try {
       const result = await fn(wt.path);
       const res = await this.git.run(() => commitAndMerge(base, wt, label));
-      merged = res.merged;
+      const merged = res.merged;
       if (!merged) this.log(`isolate(${label}): merge conflict — changes kept on branch ${wt.branch}`);
-      return result;
-    } finally {
       await this.git.run(() => removeWorktree(base, wt, merged));
+      return result;
+    } catch (err) {
+      // Only the success path above commits, so nothing here is on the branch
+      // yet, and removeWorktree's `git worktree remove --force` would discard
+      // every edit the callback had already made. Leave it on disk instead.
+      this.log(`isolate(${label}): failed — work left in ${wt.path} (branch ${wt.branch})`);
+      throw err;
     }
   }
 

@@ -29,10 +29,14 @@ export function buildResumeState(store: Store, runId: RunId): ResumeState {
       answers.set(e.payload.stepKey, e.payload.answer);
     } else if (e.type === 'agent:started') {
       const p = e.payload;
+      // One agent:started per call that charged the budget — the no-provider,
+      // aborted and budget-denied paths emit agent:failed without ever charging.
+      // Counting completions instead would refund every failed agent's slot and
+      // let each resume spend past the cap the user set.
+      if (!providerByCall.has(p.callId)) spentAgents += 1;
       providerByCall.set(p.callId, p.provider);
     } else if (e.type === 'agent:completed') {
       const p = e.payload;
-      spentAgents += 1;
       tokens += p.tokens;
       costUsd += p.costUsd;
       cache.set(p.stepKey, {
