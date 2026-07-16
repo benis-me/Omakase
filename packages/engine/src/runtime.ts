@@ -123,7 +123,10 @@ export class WorkflowRuntime implements WorkflowContext {
     if (explicit && avail.includes(explicit)) return explicit;
     if (this.d.defaultProvider && avail.includes(this.d.defaultProvider)) return this.d.defaultProvider;
     for (const p of this.d.providerPreference) if (avail.includes(p)) return p;
-    return avail[0] ?? explicit ?? null;
+    // Last resort: detection may return nothing (CI, a cache miss, or a forced
+    // command) — still try the explicit/default so the run attempts it rather
+    // than giving up. A genuinely-missing binary then fails with a clear error.
+    return explicit ?? this.d.defaultProvider ?? avail[0] ?? this.d.providerPreference[0] ?? null;
   }
 
   // --- agent --------------------------------------------------------------

@@ -43,7 +43,12 @@ export function commitAndMerge(baseCwd: string, wt: Worktree, label: string): { 
     ['-c', 'user.name=Omakase', '-c', 'user.email=omks@local', 'commit', '-m', `omks: ${label}`, '--allow-empty', '--no-verify'],
     wt.path,
   );
-  const m = git(['merge', '--no-edit', '--no-ff', wt.branch], baseCwd);
+  // The merge commit needs a committer identity — pass one inline so it works
+  // even where git has no global user configured (e.g. CI).
+  const m = git(
+    ['-c', 'user.name=Omakase', '-c', 'user.email=omks@local', 'merge', '--no-edit', '--no-ff', wt.branch],
+    baseCwd,
+  );
   if (m.code !== 0) {
     git(['merge', '--abort'], baseCwd);
     return { merged: false };

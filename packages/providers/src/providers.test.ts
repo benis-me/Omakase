@@ -256,13 +256,14 @@ test('runTurn: REAL spawn of a fake claude binary, parsed end-to-end', async () 
   }
 }, 15000);
 
-// Integration: actually probe the machine. Installed CLIs should be detected.
-test('detectProviders finds installed CLIs (integration)', async () => {
+// Integration: actually probe the machine. Every known provider is reported
+// with a boolean availability (which specific CLIs are installed varies by env,
+// so we don't assert any particular one — that would fail on a clean CI runner).
+test('detectProviders probes every known provider and reports availability', async () => {
   const infos = await detectProviders({ discoverModels: false });
   const byId = Object.fromEntries(infos.map((i) => [i.id, i]));
-  // At least one known coding agent should be installed in this environment.
-  const available = infos.filter((i) => i.available).map((i) => i.id);
-  expect(available.length).toBeGreaterThan(0);
-  // claude is present in this environment.
-  expect(byId.claude?.available).toBe(true);
+  for (const id of ['claude', 'codex', 'gemini', 'cursor-agent']) {
+    expect(byId[id]).toBeDefined();
+    expect(typeof byId[id]!.available).toBe('boolean');
+  }
 }, 15000);
