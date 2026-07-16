@@ -172,7 +172,13 @@ function versionWorkflow(args: ParsedArgs): number {
     printErr(c.red('Cannot version a built-in workflow. Create a workspace copy first.'));
     return 1;
   }
-  const next = bumpVersion(meta.version, bump as 'patch' | 'minor' | 'major');
+  // bumpVersion falls through to a patch bump for anything it doesn't recognise,
+  // so an unvalidated typo would silently persist the wrong version.
+  if (bump !== 'patch' && bump !== 'minor' && bump !== 'major') {
+    printErr(c.red(`Invalid --bump "${bump}".`) + c.dim('  Use: patch, minor, major'));
+    return 1;
+  }
+  const next = bumpVersion(meta.version, bump);
   // Snapshot the current entry, then rewrite the version in place.
   const snapDir = join(ws.paths.workflows, '.versions');
   mkdirSync(snapDir, { recursive: true });

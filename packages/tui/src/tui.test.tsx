@@ -1,11 +1,12 @@
 import { test, expect } from 'bun:test';
-import { createElement } from 'react';
+import { createElement, act } from 'react';
 import { testRender } from '@opentui/react/test-utils';
 import { RGBA } from '@opentui/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Workspace, Store } from '@omakase/core';
+import type { RunRecord } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { App } from './app.tsx';
 import { SettingsView } from './settings-view.tsx';
@@ -24,10 +25,9 @@ function isColor(c: RGBA, want: string): boolean {
   return hex(c) === hex(RGBA.fromHex(want));
 }
 
-async function render(width = 100, height = 30, initialGoal?: string) {
+async function render(width = 100, height = 30, initialGoal?: string, store = new Store(':memory:')) {
   const dir = mkdtempSync(join(tmpdir(), 'omks-tui-'));
   const ws = Workspace.init(dir);
-  const store = new Store(':memory:');
   const setup = await testRender(
     createElement(App, {
       workspace: ws,
@@ -134,6 +134,74 @@ test('input: palette filters by prefix and shows argument suggestions', async ()
     expect(frame).toContain('auto');
     expect(frame).toContain('tdd');
     expect(frame).not.toContain('/quit'); // narrowed to the exact command
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+}, 20000);
+
+// /cancel is only submittable while the input takes keys — i.e. while nothing
+// is running — so its one reachable path must say something rather than
+// silently no-op on a null controller.
+test('input: /cancel says so when there is nothing to cancel', async () => {
+  const { setup, cleanup } = await render();
+  try {
+    await act(async () => {
+      await setup.mockInput.typeText('/cancel');
+      setup.mockInput.pressEnter();
+    });
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain('nothing to cancel');
+    expect(frame).toContain('esc or ^C'); // points at the keys that do cancel
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+}, 20000);
+
+function seedRun(store: Store, id: string, events: number): void {
+  const now = Date.now();
+  const run: RunRecord = {
+    id, sessionId: null, mode: 'goal', workflow: 'goal', status: 'succeeded',
+    goal: { text: 'seeded goal' }, title: 'seeded goal', summary: null,
+    spentAgents: 0, budgetAgents: null, spentTokens: 0, spentCostUsd: 0,
+    lastSeq: 0, checkpointSeq: 0, error: null,
+    createdAt: now, updatedAt: now, heartbeatAt: now, rateLimitedUntil: null,
+  };
+  store.createRun(run);
+  for (let i = 0; i < events; i++) store.appendEvent(id, 'phase:started', { name: `Phase ${i}`, index: i });
+}
+
+// A stored run's log is read from SQLite. Nothing else re-reads it, so the read
+// must be keyed on the selection — an unmemoised read runs on every re-render,
+// and the spinner alone re-renders 10x/second for the length of a run.
+test('runs: selecting a stored run reads its events once, not on every re-render', async () => {
+  const store = new Store(':memory:');
+  seedRun(store, 'run_seed_a', 5);
+  let reads = 0;
+  const real = store.getEvents.bind(store);
+  store.getEvents = ((id: string, afterSeq?: number) => {
+    reads++;
+    return real(id, afterSeq);
+  }) as typeof store.getEvents;
+
+  const { setup, cleanup } = await render(100, 30, undefined, store);
+  try {
+    await act(async () => {
+      setup.mockInput.pressArrow('down'); // move off "current" onto the stored run
+    });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain('Phase 0'); // its log is on screen
+    const afterSelect = reads;
+    expect(afterSelect).toBeGreaterThan(0);
+
+    // Re-renders that change nothing about the selection must not re-read it.
+    await act(async () => {
+      await setup.mockInput.typeText('abc');
+    });
+    await setup.renderOnce();
+    expect(reads).toBe(afterSelect);
     setup.renderer.destroy();
   } finally {
     cleanup();

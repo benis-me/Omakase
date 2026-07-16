@@ -5,29 +5,37 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runGoal, discoverWorkflows, RunBus, subscribeRun, type RunOutcome } from '@omakase/engine';
+import { runGoal, discoverWorkflows, RunBus, subscribeRun, type Harness, type RunOutcome } from '@omakase/engine';
 import { detectCached } from '@omakase/providers';
-import type { Goal, RunRecord } from '@omakase/core';
-import { parseArgs, flagNum, flagBool } from '../args.ts';
+import type { Goal, RunRecord, Store, Workspace } from '@omakase/core';
+import { parseArgs, flagNum, flagBool, flagStr } from '../args.ts';
 import { openOrInit } from './shared.ts';
 import { print, printErr, c, banner } from '../ui.ts';
 
 const WEB_DIST = join(import.meta.dir, '..', '..', '..', 'web', 'dist');
+const DEFAULT_PORT = 4517;
 
-export async function cmdWeb(rawArgs: string[]): Promise<number> {
-  const args = parseArgs(rawArgs, { value: ['port', 'cwd'] });
-  const port = flagNum(args, 'port') ?? 4517;
-  const cwd = (args.flags['cwd'] as string) || process.cwd();
-  const { workspace, store } = openOrInit(cwd);
-  const hasDist = existsSync(join(WEB_DIST, 'index.html'));
+export interface WebContext {
+  workspace: Workspace;
+  store: Store;
+  port?: number;
+  bus?: RunBus;
+  harness?: Harness;
+}
 
+function hasDist(): boolean {
+  return existsSync(join(WEB_DIST, 'index.html'));
+}
+
+export function startWebServer(ctx: WebContext) {
+  const { workspace, store } = ctx;
   const active = new Map<string, AbortController>();
-  const bus = new RunBus();
+  const bus = ctx.bus ?? new RunBus();
 
-  const server = Bun.serve({
-    port,
+  return Bun.serve({
+    port: ctx.port ?? DEFAULT_PORT,
     idleTimeout: 120,
-    async fetch(req) {
+    async fetch(req, server) {
       const url = new URL(req.url);
       const path = url.pathname;
 
@@ -73,6 +81,7 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
         const after = Number(url.searchParams.get('after') ?? '0') || 0;
         const enc = new TextEncoder();
         let unsub = () => {};
+        let ended = false;
         const stream = new ReadableStream({
           start(controller) {
             const send = (e: unknown) => {
@@ -85,6 +94,7 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
             unsub = subscribeRun(store, bus, id, after, (e) => {
               send(e);
               if (e.type === 'run:ended') {
+                ended = true;
                 unsub();
                 try {
                   controller.close();
@@ -93,6 +103,11 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
                 }
               }
             });
+            // subscribeRun replays history synchronously, so an already-finished
+            // run delivers `run:ended` before the real unsubscriber exists — and
+            // closing the stream here means cancel() never fires either. Release
+            // the listener now that it can actually be reached.
+            if (ended) unsub();
           },
           cancel() {
             unsub();
@@ -109,18 +124,32 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
         const goal: Goal = { text: body.text.trim(), cwd: workspace.root, ...(body.workflow ? { workflow: body.workflow } : {}) };
         const controller = new AbortController();
         let resolveId!: (id: string) => void;
-        const idP = new Promise<string>((r) => (resolveId = r));
+        let rejectId!: (err: unknown) => void;
+        const idP = new Promise<string>((res, rej) => {
+          resolveId = res;
+          rejectId = rej;
+        });
+        // The run id only exists once the first event is emitted, but runGoal can
+        // reject before that — an unknown workflow, a workflow file that fails to
+        // load, a store that won't open. Without the reject arm this endpoint
+        // would await an id that never arrives. Once resolved, rejectId is a no-op.
         void runGoal({
           goal,
           workspace,
           store,
           bus,
           signal: controller.signal,
+          ...(ctx.harness ? { harness: ctx.harness } : {}),
           onEvent: (e) => resolveId(e.runId),
         })
           .then((o: RunOutcome) => active.delete(o.runId))
-          .catch(() => {});
-        const runId = await idP;
+          .catch((err: unknown) => rejectId(err));
+        let runId: string;
+        try {
+          runId = await idP;
+        } catch (err) {
+          return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+        }
         active.set(runId, controller);
         return json({ runId });
       }
@@ -128,8 +157,8 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
       if (path.startsWith('/api/')) return json({ error: 'not found' }, 404);
 
       // --- static SPA ---
-      if (!hasDist) {
-        return new Response(devNotice(port), { headers: { 'content-type': 'text/html' } });
+      if (!hasDist()) {
+        return new Response(devNotice(server.port ?? DEFAULT_PORT), { headers: { 'content-type': 'text/html' } });
       }
       const filePath = path === '/' ? '/index.html' : path;
       const file = Bun.file(join(WEB_DIST, filePath));
@@ -137,18 +166,25 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
       return new Response(Bun.file(join(WEB_DIST, 'index.html'))); // SPA fallback
     },
   });
+}
+
+export async function cmdWeb(rawArgs: string[]): Promise<number> {
+  const args = parseArgs(rawArgs, { value: ['port', 'cwd'] });
+  const cwd = flagStr(args, 'cwd') ?? process.cwd();
+  const { workspace, store } = openOrInit(cwd);
+  const server = startWebServer({ workspace, store, port: flagNum(args, 'port') ?? DEFAULT_PORT });
 
   const openUrl = `http://localhost:${server.port}`;
   print(banner() + '\n');
   print(`${c.green('▸')} Dashboard API on ${c.cyan(openUrl)}`);
-  if (hasDist) print(`  ${c.dim('open')} ${c.cyan(openUrl)}`);
+  if (hasDist()) print(`  ${c.dim('open')} ${c.cyan(openUrl)}`);
   else {
     print(c.yellow('  SPA not built yet.') + c.dim(' Dev: ') + c.cyan('bun --filter @omakase/web dev') + c.dim(` (proxies /api → :${server.port})`));
     print(c.dim('  Prod: ') + c.cyan('bun --filter @omakase/web build') + c.dim(' then reopen this URL.'));
   }
   print(c.dim('\nPress Ctrl-C to stop.'));
 
-  if (hasDist && flagBool(args, 'open')) openBrowser(openUrl);
+  if (hasDist() && flagBool(args, 'open')) openBrowser(openUrl);
 
   return await new Promise<number>((resolve) => {
     process.on('SIGINT', () => {

@@ -42,3 +42,18 @@ test('value flag at end with no value becomes boolean', () => {
   const a = parseArgs(['--provider'], { value: ['provider'] });
   expect(a.flags['provider']).toBe(true);
 });
+
+test('repeatable flag with a missing value is a usage error, not the string "true"', () => {
+  const spec = { value: ['provider'], repeatable: ['check', 'criteria'] };
+  // The real shape: `omks run "fix the tests" --check --provider claude` must not
+  // quietly become a success check of the shell command `true`, which always passes.
+  expect(() => parseArgs(['fix the tests', '--check', '--provider', 'claude'], spec)).toThrow(/Missing value for --check/);
+  expect(() => parseArgs(['fix the tests', '--check'], spec)).toThrow(/Missing value for --check/);
+  expect(() => parseArgs(['--criteria'], spec)).toThrow(/Missing value for --criteria/);
+});
+
+test('repeatable short flag with a missing value is a usage error too', () => {
+  expect(() => parseArgs(['-c', '--provider', 'claude'], { value: ['provider'], repeatable: ['check'], alias: { c: 'check' } })).toThrow(
+    /Missing value for --check/,
+  );
+});

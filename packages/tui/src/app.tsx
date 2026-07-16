@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useKeyboard, useTerminalDimensions } from '@opentui/react';
 import { runGoal, resumeRun } from '@omakase/engine';
 import type { Workspace, Store, AnyRunEvent, RunRecord } from '@omakase/core';
@@ -179,7 +179,12 @@ export function App(props: AppProps) {
         case 'settings': setView('settings'); break;
         case 'runs': setSel(runs.length ? 1 : 0); break;
         case 'resume': void resume(arg || liveRunId || ''); break;
-        case 'cancel': abortRef.current?.abort(); break;
+        // The input only takes keys while nothing is running, so a submitted
+        // /cancel arrives with no controller to abort — name the keys that do.
+        case 'cancel':
+          if (abortRef.current) abortRef.current.abort();
+          else setNotice('nothing to cancel — esc or ^C stops a run');
+          break;
         case 'clear': setLiveEvents([]); break;
         case 'help': setView('help'); break;
         case 'quit': props.onExit(0); break;
@@ -237,14 +242,26 @@ export function App(props: AppProps) {
 
   const viewingLive = sel === 0;
   const viewingRun = viewingLive ? null : runs[sel - 1];
-  const shownEvents: AnyRunEvent[] = viewingLive ? liveEvents : viewingRun ? safeEvents(props.store, viewingRun.id) : [];
+
+  // A stored run's log comes straight off SQLite and is unbounded, so it must
+  // not sit on the render path: the spinner re-renders at 10Hz for the whole of
+  // a run, and the runs list stays browsable while one is in flight. Re-read it
+  // only while the selected run is the one still writing — a finished log cannot
+  // change, and another run's events say nothing about it.
+  const growing = viewingRun && viewingRun.id === liveRunId ? liveEvents.length : 0;
+  const storedEvents = useMemo<AnyRunEvent[]>(
+    () => (viewingRun ? safeEvents(props.store, viewingRun.id) : []),
+    [viewingRun?.id, growing, props.store],
+  );
+  const shownEvents = viewingLive ? liveEvents : storedEvents;
+  const lines = useMemo(() => eventLines(shownEvents), [shownEvents]);
 
   const compact = height < 24;
   const PALETTE_MAX = 9;
   const paletteRows = paletteOpen ? Math.min(PALETTE_MAX, Math.max(1, matches.length)) + 2 : 0;
   const chromeRows = (compact ? 8 : 11) + paletteRows;
   const logHeight = Math.max(3, height - chromeRows);
-  const visible = eventLines(shownEvents).slice(-logHeight);
+  const visible = lines.slice(-logHeight);
 
   const available = props.providers.filter((p) => p.available);
   const spin = SPINNER[tick % SPINNER.length]!;

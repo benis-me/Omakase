@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 import { Workspace, Store, type Goal, type SuccessCriterion } from '@omakase/core';
 import { runGoal } from '@omakase/engine';
-import { parseArgs, type ParsedArgs, flagStr, flagNum, flagBool } from '../args.ts';
+import { parseArgs, type ParsedArgs, flagStr, flagBool } from '../args.ts';
 import { openOrInit } from './shared.ts';
 import { print, printErr, createEventRenderer, c, banner } from '../ui.ts';
 
@@ -24,6 +24,29 @@ async function stdinAnswerer(req: { question: string; options?: string[]; defaul
   }
 }
 
+const LIMITS = ['max-agents', 'max-rounds', 'concurrency', 'max-usd', 'max-time'] as const;
+type Limit = (typeof LIMITS)[number];
+
+/**
+ * Read the run's ceilings. A limit flag is a promise about how far a run may
+ * go, so an unparseable or non-positive value has to be an error rather than a
+ * silent fall back to the default — `--max-agents 0` quietly becoming 64 is the
+ * opposite of what was asked for. Zero is rejected rather than honoured because
+ * it has no coherent meaning here: it would deadlock `--concurrency` and leave
+ * `--max-rounds` with no round to run. Returns the offending flag's name.
+ */
+function readLimits(args: ParsedArgs): Partial<Record<Limit, number>> | Limit {
+  const out: Partial<Record<Limit, number>> = {};
+  for (const name of LIMITS) {
+    const raw = args.flags[name];
+    if (raw === undefined) continue;
+    const n = typeof raw === 'string' ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || n <= 0) return name;
+    out[name] = n;
+  }
+  return out;
+}
+
 /** Parse `key=value` params; coerce numbers/booleans. */
 function parseParams(pairs: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -42,6 +65,12 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
   const goalText = args.positionals.join(' ').trim();
   if (!goalText) {
     printErr(`Usage: ${c.cyan('omks run "<goal>"')} [--workflow name] [--provider id] [--check "cmd"]`);
+    return 1;
+  }
+
+  const limits = readLimits(args);
+  if (typeof limits === 'string') {
+    printErr(c.red(`--${limits} must be a positive number.`));
     return 1;
   }
 
@@ -83,11 +112,11 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       store,
       signal: controller.signal,
       ...(flagStr(args, 'session') ? { sessionId: flagStr(args, 'session') } : {}),
-      ...(flagNum(args, 'max-agents') ? { maxAgents: flagNum(args, 'max-agents') } : {}),
-      ...(flagNum(args, 'max-usd') ? { maxUsd: flagNum(args, 'max-usd') } : {}),
-      ...(flagNum(args, 'max-time') ? { maxWallClockMs: flagNum(args, 'max-time')! * 1000 } : {}),
-      ...(flagNum(args, 'max-rounds') ? { maxRounds: flagNum(args, 'max-rounds') } : {}),
-      ...(flagNum(args, 'concurrency') ? { maxConcurrent: flagNum(args, 'concurrency') } : {}),
+      ...(limits['max-agents'] !== undefined ? { maxAgents: limits['max-agents'] } : {}),
+      ...(limits['max-usd'] !== undefined ? { maxUsd: limits['max-usd'] } : {}),
+      ...(limits['max-time'] !== undefined ? { maxWallClockMs: limits['max-time'] * 1000 } : {}),
+      ...(limits['max-rounds'] !== undefined ? { maxRounds: limits['max-rounds'] } : {}),
+      ...(limits['concurrency'] !== undefined ? { maxConcurrent: limits['concurrency'] } : {}),
       ...(process.stdin.isTTY && !json ? { ask: stdinAnswerer } : {}),
       onEvent: (e) => {
         if (json) print(JSON.stringify(e));

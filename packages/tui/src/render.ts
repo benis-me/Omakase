@@ -57,6 +57,7 @@ export function agentTag(callId: string): string {
 export function eventLines(events: AnyRunEvent[]): Line[] {
   const out: Line[] = [];
   const active = new Set<string>();
+  const started = new Set<string>();
   let everConcurrent = false;
 
   const tag = (callId: string, always = false): string =>
@@ -64,9 +65,14 @@ export function eventLines(events: AnyRunEvent[]): Line[] {
 
   for (const e of events) {
     if (e.type === 'agent:started') {
+      started.add(e.payload.callId);
       active.add(e.payload.callId);
       if (active.size > 1) everConcurrent = true;
     }
+    // A cancelled run's workflow keeps handing over the steps it had queued, and
+    // each is turned away before it starts. They never ran, so one ✗ per queued
+    // step only buries the cancel that caused them.
+    if (e.type === 'agent:failed' && e.payload.error === 'aborted' && !started.has(e.payload.callId)) continue;
     switch (e.type) {
       case 'run:started':
         out.push({ text: `❯ ${short(e.payload.goal.text, 160)}`, color: theme.fg });
@@ -124,8 +130,9 @@ export function eventLines(events: AnyRunEvent[]): Line[] {
         out.push({ text: short(e.payload.message, 120), color: theme.dim, indent: 1 });
         break;
       case 'report':
-        if (e.payload.report.kind === 'final')
-          out.push({ text: `✓ ${e.payload.report.title}: ${short(e.payload.report.summary, 120)}`, color: theme.ok });
+        // `run:ended` summarises the workflow's final report, so showing it here
+        // says the same thing twice — and a workflow that filed a rosy report
+        // before it was cut short would stamp a ✓ above its own ◼ cancelled.
         break;
       case 'wiki:updated':
         out.push({ text: `📓 ${e.payload.title}`, color: theme.dim, indent: 1 });

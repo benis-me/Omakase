@@ -32,19 +32,31 @@ export function App() {
     if (!selected) return;
     const id = selected;
     let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    // Only fetch events past the ones already held; both the poll and the stream
+    // advance this, and mergeEvents still dedupes where the two overlap.
+    let lastSeq = 0;
     setDetail(null);
 
     const poll = async () => {
       try {
-        const d = await api.run(id);
+        const d = await api.run(id, lastSeq);
         if (!alive) return;
+        const top = d.events[d.events.length - 1]?.seq ?? 0;
+        if (top > lastSeq) lastSeq = top;
         setDetail((prev) => (prev && prev.run.id === id ? { ...d, events: mergeEvents(prev.events, d.events) } : d));
+        // A terminal run's log and metadata are frozen and its stream is already
+        // closed server-side, so polling on can only re-render the same state.
+        if (!RUNNING.has(d.run.status) && timer) {
+          clearInterval(timer);
+          timer = null;
+        }
       } catch {
         /* ignore */
       }
     };
     poll();
-    const t = setInterval(poll, 2000);
+    timer = setInterval(poll, 2000);
 
     let es: EventSource | null = null;
     try {
@@ -52,6 +64,7 @@ export function App() {
       es.onmessage = (m) => {
         try {
           const e = JSON.parse(m.data) as RunEvent;
+          if (e.seq > lastSeq) lastSeq = e.seq;
           setDetail((prev) => (prev ? { ...prev, events: mergeEvents(prev.events, [e]) } : prev));
         } catch {
           /* ignore */
@@ -67,7 +80,7 @@ export function App() {
 
     return () => {
       alive = false;
-      clearInterval(t);
+      if (timer) clearInterval(timer);
       es?.close();
     };
   }, [selected]);

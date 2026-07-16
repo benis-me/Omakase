@@ -16,7 +16,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'settings', usage: '/settings', description: 'Open workspace settings', arg: 'none' },
   { name: 'runs', usage: '/runs', description: 'Focus the runs list to browse history', arg: 'none' },
   { name: 'resume', usage: '/resume <runId>', description: 'Resume an interrupted run', arg: 'runId' },
-  { name: 'cancel', usage: '/cancel', description: 'Cancel the run in progress', arg: 'none' },
+  { name: 'cancel', usage: '/cancel', description: 'Cancel the run in progress (esc or ^C)', arg: 'none' },
   { name: 'clear', usage: '/clear', description: 'Clear the event log view', arg: 'none' },
   { name: 'help', usage: '/help', description: 'Show keys and commands', arg: 'none' },
   { name: 'quit', usage: '/quit', description: 'Exit Omakase', arg: 'none' },

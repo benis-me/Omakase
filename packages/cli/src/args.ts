@@ -28,7 +28,11 @@ export function parseArgs(argv: string[], spec: FlagSpec = {}): ParsedArgs {
 
   const setFlag = (name: string, value: string | boolean) => {
     if (repeatable.has(name)) {
-      (multi[name] ??= []).push(String(value));
+      // A repeatable flag has no boolean form — stringifying the `true` that a
+      // missing value produces would fabricate a real entry (`--check` becomes
+      // the shell command `true`, a success check that always passes).
+      if (typeof value !== 'string') throw new Error(`Missing value for --${name}. Usage: --${name} <value>`);
+      (multi[name] ??= []).push(value);
     } else {
       flags[name] = value;
     }

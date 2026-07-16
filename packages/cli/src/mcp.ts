@@ -34,7 +34,13 @@ export interface McpContext {
 
 const PROTOCOL_VERSION = '2024-11-05';
 
+const encoder = new TextEncoder();
+const writeStdout = (res: JsonRpcResponse) => void process.stdout.write(encoder.encode(JSON.stringify(res) + '\n'));
+
 export class McpServer {
+  /** In-flight tool calls by request id, so `notifications/cancelled` can abort one. */
+  private inflight = new Map<string, AbortController>();
+
   constructor(private ctx: McpContext) {}
 
   private harness(): Harness {
@@ -93,8 +99,23 @@ export class McpServer {
         case 'tools/call': {
           const name = String(req.params?.name ?? '');
           const args = (req.params?.arguments as Record<string, unknown>) ?? {};
-          const text = await this.callTool(name, args);
-          return reply({ content: [{ type: 'text', text }] });
+          // A tool call is cancellable by its own request id; ctx.signal, when the
+          // host supplies one, cancels every call at once.
+          const controller = new AbortController();
+          const signal = this.ctx.signal ? AbortSignal.any([this.ctx.signal, controller.signal]) : controller.signal;
+          const key = String(req.id);
+          if (!isNotification) this.inflight.set(key, controller);
+          try {
+            const text = await this.callTool(name, args, signal);
+            return reply({ content: [{ type: 'text', text }] });
+          } finally {
+            this.inflight.delete(key);
+          }
+        }
+        case 'notifications/cancelled': {
+          const requestId = req.params?.['requestId'];
+          if (requestId !== undefined && requestId !== null) this.inflight.get(String(requestId))?.abort();
+          return null;
         }
         default:
           if (req.method.startsWith('notifications/')) return null;
@@ -107,7 +128,7 @@ export class McpServer {
     }
   }
 
-  private async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  private async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
     switch (name) {
       case 'omakase_list_workflows': {
         const wfs = discoverWorkflows({ workspace: this.ctx.workspace.paths.workflows });
@@ -143,7 +164,7 @@ export class McpServer {
           workspace: this.ctx.workspace,
           store: this.ctx.store,
           harness: this.harness(),
-          ...(this.ctx.signal ? { signal: this.ctx.signal } : {}),
+          ...(signal ? { signal } : {}),
           ...(typeof args.maxAgents === 'number' ? { maxAgents: args.maxAgents } : {}),
         });
         return `Run ${outcome.runId}: ${outcome.status}\n${outcome.summary ?? ''}${outcome.gaps.length ? `\nRemaining: ${outcome.gaps.join('; ')}` : ''}`;
@@ -153,13 +174,12 @@ export class McpServer {
     }
   }
 
-  /** Run the stdio server loop until stdin closes. */
-  async serve(): Promise<number> {
-    const encoder = new TextEncoder();
-    const write = (res: JsonRpcResponse) => process.stdout.write(encoder.encode(JSON.stringify(res) + '\n'));
+  /** Run the stdio server loop until the input closes. Params are injectable for tests. */
+  async serve(input: ReadableStream<Uint8Array> = Bun.stdin.stream(), write: (res: JsonRpcResponse) => void = writeStdout): Promise<number> {
     let buffer = '';
     const decoder = new TextDecoder();
-    for await (const chunk of Bun.stdin.stream()) {
+    const pending = new Set<Promise<void>>();
+    for await (const chunk of input) {
       buffer += decoder.decode(chunk, { stream: true });
       let nl = buffer.indexOf('\n');
       while (nl !== -1) {
@@ -173,10 +193,20 @@ export class McpServer {
         } catch {
           continue;
         }
-        const res = await this.handle(req);
-        if (res) write(res);
+        // MCP is concurrent, and a tool call can drive agent CLIs for minutes —
+        // awaiting one here would stop reading stdin for its whole duration, so
+        // no ping, cancellation or second call could land until it finished.
+        // Each response is written whole, and ids let the client correlate them.
+        const p = this.handle(req)
+          .then((res) => {
+            if (res) write(res);
+          })
+          .catch(() => {})
+          .finally(() => pending.delete(p));
+        pending.add(p);
       }
     }
+    await Promise.all(pending);
     return 0;
   }
 }

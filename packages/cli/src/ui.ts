@@ -60,6 +60,7 @@ export function agentTag(callId: string): string {
  */
 export function createEventRenderer(): (e: AnyRunEvent) => string | null {
   const active = new Set<string>();
+  const started = new Set<string>();
   let everConcurrent = false;
 
   const tag = (callId: string, always = false): string =>
@@ -67,9 +68,15 @@ export function createEventRenderer(): (e: AnyRunEvent) => string | null {
 
   return (e: AnyRunEvent): string | null => {
     if (e.type === 'agent:started') {
+      started.add(e.payload.callId);
       active.add(e.payload.callId);
       if (active.size > 1) everConcurrent = true;
     }
+    // A cancelled run's workflow keeps handing over the steps it had queued, and
+    // each is turned away before it starts. They never ran, so one ✗ per queued
+    // step only buries the cancel that caused them. The events stay in the log
+    // for `--json` and the journal.
+    if (e.type === 'agent:failed' && e.payload.error === 'aborted' && !started.has(e.payload.callId)) return null;
     const line = renderEventWith(e, tag);
     if (e.type === 'agent:completed' || e.type === 'agent:failed') active.delete(e.payload.callId);
     return line;
@@ -121,9 +128,11 @@ function renderEventWith(e: AnyRunEvent, tag: (callId: string, always?: boolean)
     case 'log':
       return c.dim(`  ${e.payload.message}`);
     case 'report':
-      return e.payload.report.kind === 'final'
-        ? `\n${sym.ok} ${c.bold(e.payload.report.title)}\n  ${e.payload.report.summary}`
-        : null;
+      // A workflow's final report is what `run:ended` goes on to summarise, so
+      // rendering it here prints the same sentence twice — and a workflow that
+      // filed a rosy report before it was cut short would stamp a ✓ directly
+      // above its own `◼ cancelled` line. Let the ending speak for the run.
+      return null;
     case 'wiki:updated':
       return c.dim(`  📓 wiki: ${e.payload.title}`);
     case 'run:ended': {
