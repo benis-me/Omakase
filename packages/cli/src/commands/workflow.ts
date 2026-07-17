@@ -44,11 +44,6 @@ export async function cmdWorkflow(rawArgs: string[]): Promise<number> {
   }
 }
 
-function dirs() {
-  const ws = openContext().workspace;
-  return { ws, dirs: { workspace: ws.paths.workflows } };
-}
-
 function listWorkflows(): number {
   const metas = discoverWorkflows(discoverDirs());
   print(c.bold('\nWorkflows') + c.dim(`  (${metas.length})`));
@@ -85,7 +80,7 @@ function newWorkflow(args: ParsedArgs): number {
   const rawName = args.positionals[0];
   if (!rawName) return usage('omks workflow new <name> [--flat]');
   const name = slugify(rawName);
-  const { ws } = dirs();
+  const ws = openContext().workspace;
   mkdirSync(ws.paths.workflows, { recursive: true });
   const flat = flagBool(args, 'flat');
   const fnName = name.replace(/-([a-z])/g, (_m, ch) => ch.toUpperCase());

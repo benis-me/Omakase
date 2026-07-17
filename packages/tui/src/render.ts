@@ -6,7 +6,7 @@
 // ratios (vs. canvas) were verified: fg 15:1, dim 7.3:1, faint 4.5:1,
 // accent 8.8:1, border 1.7:1 (subtle but visible).
 
-import type { AnyRunEvent } from '@omakase/core';
+import { agentTag, type AnyRunEvent } from '@omakase/core';
 
 export const theme = {
   canvas: '#0F1115',
@@ -40,11 +40,6 @@ export interface Line {
 function short(s: string, n = 200): string {
   const one = s.replace(/\s+/g, ' ').trim();
   return one.length > n ? one.slice(0, n - 1) + '…' : one;
-}
-
-/** Agents already have an identity — show it, don't invent one. */
-export function agentTag(callId: string): string {
-  return callId.replace(/^agt_/, '');
 }
 
 /**

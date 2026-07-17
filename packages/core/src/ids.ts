@@ -32,3 +32,8 @@ export function reportId(): string {
 export function agentCallId(): string {
   return `agt_${shortId(6)}`;
 }
+
+/** Decode an agent call id to its bare tag — the inverse of `agentCallId`'s `agt_` prefix. */
+export function agentTag(callId: string): string {
+  return callId.replace(/^agt_/, '');
+}

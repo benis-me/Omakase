@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
-import type { AnyRunEvent, RunEventType, RunEventPayloadMap, RunId } from '@omakase/core';
-import { createEventRenderer, agentTag } from './ui.ts';
+import { agentTag, type AnyRunEvent, type RunEventType, type RunEventPayloadMap, type RunId } from '@omakase/core';
+import { createEventRenderer, exitCodeFor } from './ui.ts';
 
 let seq = 0;
 function ev<T extends RunEventType>(type: T, payload: RunEventPayloadMap[T]): AnyRunEvent {
@@ -21,6 +21,12 @@ const failed = (callId: string, error: string) => ev('agent:failed', { callId, s
 
 test('agentTag: an agent is shown by its own id, not an invented marker', () => {
   expect(agentTag('agt_q298tw')).toBe('q298tw');
+});
+
+test('exitCodeFor: a cancel exits 130 (Ctrl-C convention), success 0, failure 1', () => {
+  expect(exitCodeFor('cancelled')).toBe(130);
+  expect(exitCodeFor('succeeded')).toBe(0);
+  expect(exitCodeFor('failed')).toBe(1);
 });
 
 test('render: a cancel drops the steps that never started, keeps the one that did', () => {

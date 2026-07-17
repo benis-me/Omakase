@@ -28,6 +28,11 @@ function firstString(obj: any, keys: string[]): string | null {
   return null;
 }
 
+/** A command's opening line, capped — the summary shown for a shell tool call. */
+function firstLine(cmd: unknown, n = 80): string {
+  return String(cmd ?? '').split('\n')[0]!.slice(0, n);
+}
+
 const NOISE_PATTERNS = [
   /^YOLO mode is enabled/i,
   /^Loaded cached credentials/i,
@@ -67,7 +72,7 @@ export function toolSummary(name: string, input: any): string {
     case 'Read':
       return `Reading ${path ?? 'a file'}`;
     case 'Bash': {
-      const cmd = String(input?.command ?? '').split('\n')[0]!.slice(0, 80);
+      const cmd = firstLine(input?.command);
       return cmd ? `Running ${cmd}` : 'Running a command';
     }
     case 'Grep':
@@ -210,7 +215,7 @@ export class GenericJsonParser implements StreamParser {
       (obj.msg?.type === 'exec_command' ? 'Bash' : null);
     if (toolName) {
       const cmd = obj.input?.command ?? obj.command ?? obj.item?.command ?? obj.msg?.command;
-      out.push(act('tool', cmd ? `Running ${String(cmd).split('\n')[0]!.slice(0, 80)}` : `Using ${toolName}`, toolName));
+      out.push(act('tool', cmd ? `Running ${firstLine(cmd)}` : `Using ${toolName}`, toolName));
     }
 
     // Assistant text across known shapes.
@@ -286,7 +291,7 @@ export class CodexJsonParser implements StreamParser {
         const item = obj.item ?? {};
         const itype = item.type;
         if (itype === 'command_execution') {
-          const cmd = String(item.command ?? '').split('\n')[0]!.slice(0, 80);
+          const cmd = firstLine(item.command);
           if (cmd && obj.type !== 'item.updated') out.push(act('tool', `Running ${cmd}`, 'Bash'));
         } else if (itype === 'file_change') {
           const changes = Array.isArray(item.changes) ? item.changes : [];

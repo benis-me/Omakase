@@ -3,7 +3,7 @@ import { Workspace, Store, type Goal, type SuccessCriterion } from '@omakase/cor
 import { runGoal } from '@omakase/engine';
 import { parseArgs, type ParsedArgs, flagStr, flagBool } from '../args.ts';
 import { openOrInit } from './shared.ts';
-import { print, printErr, createEventRenderer, c, banner } from '../ui.ts';
+import { print, printErr, streamPrinter, exitCodeFor, c, banner } from '../ui.ts';
 
 const SPEC = {
   value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time'],
@@ -105,7 +105,6 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
   process.on('SIGINT', onSigint);
 
   try {
-    const render = createEventRenderer();
     const outcome = await runGoal({
       goal,
       workspace,
@@ -118,19 +117,13 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       ...(limits['max-rounds'] !== undefined ? { maxRounds: limits['max-rounds'] } : {}),
       ...(limits['concurrency'] !== undefined ? { maxConcurrent: limits['concurrency'] } : {}),
       ...(process.stdin.isTTY && !json ? { ask: stdinAnswerer } : {}),
-      onEvent: (e) => {
-        if (json) print(JSON.stringify(e));
-        else {
-          const line = render(e);
-          if (line !== null) print(line);
-        }
-      },
+      onEvent: streamPrinter(json),
     });
     if (!json) {
       const sid = store.getRun(outcome.runId)?.sessionId;
       print(c.dim(`\nrun ${outcome.runId}${sid ? ` · session ${sid}` : ''} · resume: omks resume ${outcome.runId}`));
     }
-    return outcome.status === 'succeeded' ? 0 : outcome.status === 'cancelled' ? 130 : 1;
+    return exitCodeFor(outcome.status);
   } catch (err) {
     printErr(c.red(`Error: ${(err as Error).message}`));
     return 1;

@@ -1,7 +1,7 @@
 import { resumeRun } from '@omakase/engine';
 import { parseArgs, flagBool } from '../args.ts';
 import { openContext } from '../context.ts';
-import { print, printErr, createEventRenderer, c, banner } from '../ui.ts';
+import { print, printErr, streamPrinter, exitCodeFor, c, banner } from '../ui.ts';
 
 export async function cmdResume(rawArgs: string[]): Promise<number> {
   const args = parseArgs(rawArgs, {});
@@ -23,20 +23,13 @@ export async function cmdResume(rawArgs: string[]): Promise<number> {
   const onSigint = () => controller.abort();
   process.on('SIGINT', onSigint);
   try {
-    const render = createEventRenderer();
     const outcome = await resumeRun(runId, {
       workspace,
       store,
       signal: controller.signal,
-      onEvent: (e) => {
-        if (json) print(JSON.stringify(e));
-        else {
-          const line = render(e);
-          if (line !== null) print(line);
-        }
-      },
+      onEvent: streamPrinter(json),
     });
-    return outcome.status === 'succeeded' ? 0 : 1;
+    return exitCodeFor(outcome.status);
   } catch (err) {
     printErr(c.red(`Error: ${(err as Error).message}`));
     return 1;

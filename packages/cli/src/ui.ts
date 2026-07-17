@@ -1,7 +1,7 @@
 // Terminal output helpers: ANSI colors, symbols, and event rendering for the
 // headless `omks run` stream. No dependencies.
 
-import type { AnyRunEvent } from '@omakase/core';
+import { agentTag, type AnyRunEvent, type RunStatus } from '@omakase/core';
 
 // FORCE_COLOR lets piped/captured output keep its colours (CI logs, demos).
 const useColor = (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR)) && !process.env.NO_COLOR;
@@ -45,11 +45,6 @@ export function banner(): string {
   return c.bold(c.magenta('omakase')) + c.dim(' — orchestrate your agents');
 }
 
-/** Agents already have an identity — show it, don't invent one. */
-export function agentTag(callId: string): string {
-  return callId.replace(/^agt_/, '');
-}
-
 /**
  * A stateful renderer for one run's stream. Workflows run agents concurrently,
  * so their activity/result lines interleave. Each agent's line carries its real
@@ -83,9 +78,25 @@ export function createEventRenderer(): (e: AnyRunEvent) => string | null {
   };
 }
 
-/** Render one run event as a compact terminal line. Returns null to skip. */
-export function renderEvent(e: AnyRunEvent): string | null {
-  return renderEventWith(e, () => '');
+/**
+ * A ready-made `onEvent` sink for a single run's stream. In `--json` mode every
+ * event is emitted verbatim (one JSON object per line); otherwise it renders
+ * through its own `createEventRenderer`, so each stream keeps its own state.
+ */
+export function streamPrinter(json: boolean): (e: AnyRunEvent) => void {
+  const render = createEventRenderer();
+  return (e: AnyRunEvent): void => {
+    if (json) print(JSON.stringify(e));
+    else {
+      const line = render(e);
+      if (line !== null) print(line);
+    }
+  };
+}
+
+/** Map a run's terminal status to a process exit code — 130 for a cancel keeps Ctrl-C's convention. */
+export function exitCodeFor(status: RunStatus): number {
+  return status === 'succeeded' ? 0 : status === 'cancelled' ? 130 : 1;
 }
 
 function renderEventWith(e: AnyRunEvent, tag: (callId: string, always?: boolean) => string): string | null {
