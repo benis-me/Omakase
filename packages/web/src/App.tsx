@@ -1,17 +1,22 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { api, type DashboardState, type RunDetail, type RunEvent } from './api.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, type DashboardState, type RunDetail, type RunEvent, type RunOptions, type RunSummary } from './api.ts';
+import { RunView } from './RunView.tsx';
+import { Composer } from './Composer.tsx';
+import { useTheme } from './useTheme.ts';
+import { statusGlyph, relTime, fmtCost, RUNNING } from './format.ts';
 
-const RUNNING = new Set(['running', 'pending', 'paused']);
+type Filter = 'all' | 'running' | 'succeeded' | 'failed';
 
 export function App() {
   const [state, setState] = useState<DashboardState | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
-  const [text, setText] = useState('');
-  const [workflow, setWorkflow] = useState('goal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [railOpen, setRailOpen] = useState(false);
+  const [theme, toggleTheme] = useTheme();
 
   const refreshState = useCallback(async () => {
     try {
@@ -27,14 +32,12 @@ export function App() {
     return () => clearInterval(t);
   }, [refreshState]);
 
-  // Live stream via SSE, with a slow poll to refresh run metadata/reports.
+  // Live stream via SSE + a slow poll for run metadata, past the seq we hold.
   useEffect(() => {
     if (!selected) return;
     const id = selected;
     let alive = true;
     let timer: ReturnType<typeof setInterval> | null = null;
-    // Only fetch events past the ones already held; both the poll and the stream
-    // advance this, and mergeEvents still dedupes where the two overlap.
     let lastSeq = 0;
     setDetail(null);
 
@@ -45,8 +48,6 @@ export function App() {
         const top = d.events[d.events.length - 1]?.seq ?? 0;
         if (top > lastSeq) lastSeq = top;
         setDetail((prev) => (prev && prev.run.id === id ? { ...d, events: mergeEvents(prev.events, d.events) } : d));
-        // A terminal run's log and metadata are frozen and its stream is already
-        // closed server-side, so polling on can only re-render the same state.
         if (!RUNNING.has(d.run.status) && timer) {
           clearInterval(timer);
           timer = null;
@@ -75,7 +76,7 @@ export function App() {
         es = null;
       };
     } catch {
-      /* EventSource unavailable — polling covers it */
+      /* polling covers it */
     }
 
     return () => {
@@ -85,18 +86,17 @@ export function App() {
     };
   }, [selected]);
 
-  useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [detail?.events.length]);
+  const open = (id: string | null) => {
+    setSelected(id);
+    setRailOpen(false);
+  };
 
-  const start = async () => {
-    if (!text.trim() || busy) return;
+  const run = async (opts: RunOptions) => {
     setBusy(true);
     setError(null);
     try {
-      const { runId } = await api.start(text.trim(), workflow);
-      setText('');
-      setSelected(runId);
+      const { runId } = await api.start(opts);
+      open(runId);
       refreshState();
     } catch (e) {
       setError((e as Error).message);
@@ -105,15 +105,60 @@ export function App() {
     }
   };
 
+  const runs = state?.runs ?? [];
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return runs.filter((r) => {
+      if (filter === 'running' && !RUNNING.has(r.status)) return false;
+      if (filter === 'succeeded' && r.status !== 'succeeded') return false;
+      if (filter === 'failed' && r.status !== 'failed' && r.status !== 'cancelled') return false;
+      if (q && !`${r.title} ${r.workflow}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [runs, filter, query]);
+
+  const groups = useMemo(() => groupBySession(filtered, state), [filtered, state]);
+
+  // j/k / arrows move through the visible list; Enter opens.
+  const flat = filtered;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        step(1);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        step(-1);
+      } else if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
+        open(null);
+      }
+    };
+    const step = (d: number) => {
+      if (!flat.length) return;
+      const i = flat.findIndex((r) => r.id === selected);
+      const next = i < 0 ? (d > 0 ? 0 : flat.length - 1) : Math.min(flat.length - 1, Math.max(0, i + d));
+      open(flat[next]!.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [flat, selected]);
+
   const available = state?.providers.filter((p) => p.available) ?? [];
 
   return (
     <div className="app">
       <header className="topbar">
+        <button className="iconbtn menu-toggle" onClick={() => setRailOpen((o) => !o)} aria-label="Menu">
+          ☰
+        </button>
         <div className="brand">
-          omakase<span className="dim"> · {state?.workspace.name ?? '…'}</span>
+          <span className="tick">▍</span>omakase
+          <span className="ws">· {state?.workspace.name ?? '…'}</span>
         </div>
-        <div className="chips">
+        <span className="spacer" />
+        <div className="provs">
           {available.length ? (
             available.map((p) => (
               <span key={p.id} className="chip ok" title={p.version ?? ''}>
@@ -124,63 +169,67 @@ export function App() {
             <span className="chip warn">no providers</span>
           )}
         </div>
+        <button className="iconbtn" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+          {theme === 'dark' ? '☾' : '☀'}
+        </button>
       </header>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="errbar">{error}</div>}
 
-      <div className="layout">
-        <aside className="sidebar">
-          <div className="panel">
-            <div className="panel-title">New goal</div>
-            <textarea
-              className="goal-input"
-              placeholder="Describe your goal…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') start();
-              }}
-              rows={3}
-            />
-            <div className="row">
-              <select value={workflow} onChange={(e) => setWorkflow(e.target.value)}>
-                {(state?.workflows ?? []).map((w) => (
-                  <option key={w.name} value={w.name}>
-                    {w.name} · v{w.version}
-                  </option>
-                ))}
-              </select>
-              <button className="run-btn" onClick={start} disabled={busy || !text.trim()}>
-                {busy ? 'Starting…' : 'Run ▸'}
-              </button>
+      <div className="body">
+        <aside className={`rail ${railOpen ? 'mobile-open' : ''}`}>
+          <div className="rail-top">
+            <button className={`newbtn ${selected === null ? 'active' : ''}`} onClick={() => open(null)}>
+              <span className="plus">＋</span> New goal <kbd>n</kbd>
+            </button>
+            <div className="search">
+              <span className="sicon">⌕</span>
+              <input placeholder="Search runs…" value={query} onChange={(e) => setQuery(e.target.value)} />
             </div>
-            <div className="hint">⌘/Ctrl + Enter to run</div>
+            <div className="filters">
+              {(['all', 'running', 'succeeded', 'failed'] as Filter[]).map((f) => (
+                <button key={f} className={`filter ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="panel scroll">
-            <div className="panel-title">Runs</div>
-            {(state?.runs ?? []).map((r) => (
-              <button
-                key={r.id}
-                className={`run-item ${selected === r.id ? 'active' : ''}`}
-                onClick={() => setSelected(r.id)}
-              >
-                <span className={`status ${r.status}`}>{statusDot(r.status)}</span>
-                <span className="run-title">{r.title || r.id}</span>
-                <span className="run-meta">
-                  {r.workflow} · ${r.spentCostUsd.toFixed(3)}
-                </span>
-              </button>
+          <div className="runlist">
+            {groups.map((g) => (
+              <div key={g.label}>
+                {groups.length > 1 && <div className="sess-label">{g.label}</div>}
+                {g.runs.map((r) => (
+                  <button key={r.id} className={`runrow ${selected === r.id ? 'active' : ''}`} onClick={() => open(r.id)}>
+                    <span className={`dot status-${r.status}`}>{statusGlyph(r.status)}</span>
+                    <span className="rr-main">
+                      <div className="rr-title">{r.title || r.id}</div>
+                      <div className="rr-meta">
+                        <span className="wf">{r.workflow}</span>
+                        <span>·</span>
+                        <span className="tnum">{fmtCost(r.spentCostUsd)}</span>
+                        <span>·</span>
+                        <span>{relTime(r.updatedAt)}</span>
+                      </div>
+                    </span>
+                  </button>
+                ))}
+              </div>
             ))}
-            {(state?.runs ?? []).length === 0 && <div className="empty">No runs yet.</div>}
+            {filtered.length === 0 && <div className="empty" style={{ padding: 24, margin: 0 }}>No runs{query || filter !== 'all' ? ' match' : ' yet'}.</div>}
           </div>
         </aside>
 
         <main className="main">
-          {detail ? (
-            <RunView detail={detail} onCancel={() => selected && api.cancel(selected)} logRef={logRef} />
+          {selected && detail ? (
+            <RunView detail={detail} onCancel={() => selected && api.cancel(selected)} />
+          ) : selected ? (
+            <div className="empty">
+              <div className="big">◍</div>
+              Loading run…
+            </div>
           ) : (
-            <div className="placeholder">Select a run, or start a new goal.</div>
+            <Composer state={state} busy={busy} onRun={run} />
           )}
         </main>
       </div>
@@ -188,103 +237,41 @@ export function App() {
   );
 }
 
-function RunView({
-  detail,
-  onCancel,
-  logRef,
-}: {
-  detail: RunDetail;
-  onCancel: () => void;
-  logRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const { run, events } = detail;
-  const running = RUNNING.has(run.status);
-  return (
-    <div className="runview">
-      <div className="runhead">
-        <div>
-          <div className="runtitle">{run.goal.text}</div>
-          <div className="runsub">
-            <span className={`badge ${run.status}`}>{run.status}</span>
-            <span className="dim">
-              {' '}
-              {run.workflow} · {run.spentAgents} agent(s) · ${run.spentCostUsd.toFixed(4)}
-            </span>
-          </div>
-        </div>
-        {running && (
-          <button className="cancel-btn" onClick={onCancel}>
-            Cancel
-          </button>
-        )}
-      </div>
-      <div className="log" ref={logRef}>
-        {events.map((e) => {
-          const l = line(e);
-          if (!l) return null;
-          return (
-            <div key={e.seq} className={`log-line ${l.cls}`} style={{ paddingLeft: (l.indent ?? 0) * 14 + 8 }}>
-              {l.text}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+interface Group {
+  label: string;
+  runs: RunSummary[];
 }
 
-function statusDot(status: string): string {
-  return status === 'succeeded' ? '✓' : status === 'failed' ? '✗' : status === 'cancelled' ? '◼' : '●';
-}
+function groupBySession(runs: RunSummary[], state: DashboardState | null): Group[] {
+  // A single-run session is just a run — labelling it repeats the title. Only a
+  // session that actually gathered a follow-up thread earns a heading; lone runs
+  // fall through into one flat, recency-ordered list.
+  const titleOf = new Map((state?.sessions ?? []).map((s) => [s.id, s.title]));
+  const size = new Map<string, number>();
+  for (const r of runs) if (r.sessionId) size.set(r.sessionId, (size.get(r.sessionId) ?? 0) + 1);
 
-interface Line {
-  text: string;
-  cls: string;
-  indent?: number;
-}
-
-function line(e: RunEvent): Line | null {
-  const p = e.payload ?? {};
-  switch (e.type) {
-    case 'run:started':
-      return { text: `❯ ${p.goal?.text ?? ''}`, cls: 'fg' };
-    case 'phase:started':
-      return { text: `▸ ${p.name}`, cls: 'phase' };
-    case 'agent:started':
-      return { text: `${p.provider} › ${p.title}`, cls: 'agent', indent: 1 };
-    case 'agent:activity':
-      return { text: `${p.activity?.kind === 'tool' ? '⚙' : '·'} ${p.activity?.summary ?? ''}`, cls: 'dim', indent: 3 };
-    case 'agent:completed':
-      return { text: `${p.status === 'ok' ? '✓' : '✗'} ${trim(p.text)}${p.costUsd > 0 ? `  $${p.costUsd.toFixed(4)}` : ''}`, cls: p.status === 'ok' ? 'ok' : 'err', indent: 2 };
-    case 'agent:failed':
-      return { text: `✗ ${trim(p.error)}`, cls: 'err', indent: 2 };
-    case 'goal:evaluated':
-      return { text: `goal ${p.verdict?.toUpperCase()}${p.gaps?.length ? ` · ${p.gaps.length} gap(s)` : ''}`, cls: p.verdict === 'met' ? 'ok' : 'warn', indent: 1 };
-    case 'harness:switched':
-      return { text: `↪ ${p.from} → ${p.to}`, cls: 'warn', indent: 2 };
-    case 'user:asked':
-      return { text: `? ${p.question}${p.options?.length ? ` [${p.options.join('/')}]` : ''}`, cls: 'fg', indent: 1 };
-    case 'user:answered':
-      return { text: `↳ ${p.answer}`, cls: 'dim', indent: 2 };
-    case 'log':
-      return { text: trim(p.message), cls: 'dim', indent: 1 };
-    case 'report':
-      return p.report?.kind === 'final' ? { text: `✓ ${p.report.title}: ${trim(p.report.summary)}`, cls: 'ok' } : null;
-    case 'run:ended':
-      return { text: `${p.status === 'succeeded' ? '✓' : '✗'} ${p.status} · ${trim(p.summary)}`, cls: p.status === 'succeeded' ? 'ok' : 'err' };
-    default:
-      return null;
+  const groups: Group[] = [];
+  const index = new Map<string, number>();
+  for (const r of runs) {
+    const multi = r.sessionId && (size.get(r.sessionId) ?? 0) > 1;
+    const key = multi ? r.sessionId! : '~flat';
+    let gi = index.get(key);
+    if (gi === undefined) {
+      gi = groups.length;
+      index.set(key, gi);
+      groups.push({ label: multi ? titleOf.get(r.sessionId!) || 'Session' : '', runs: [] });
+    }
+    groups[gi]!.runs.push(r);
   }
-}
-
-function trim(s: unknown, n = 160): string {
-  const one = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return one.length > n ? one.slice(0, n - 1) + '…' : one;
+  return groups;
 }
 
 function mergeEvents(prev: RunEvent[], incoming: RunEvent[]): RunEvent[] {
+  if (!incoming.length) return prev;
   const seen = new Set(prev.map((e) => e.seq));
-  const merged = prev.concat(incoming.filter((e) => !seen.has(e.seq)));
+  const fresh = incoming.filter((e) => !seen.has(e.seq));
+  if (!fresh.length) return prev;
+  const merged = prev.concat(fresh);
   merged.sort((a, b) => a.seq - b.seq);
   return merged;
 }

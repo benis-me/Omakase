@@ -23,6 +23,23 @@ export interface WebContext {
   harness?: Harness;
 }
 
+/** The dashboard's launch payload — mirrors the flags `omks run` accepts. */
+interface RunRequest {
+  text?: string;
+  workflow?: string;
+  provider?: string;
+  model?: string;
+  checks?: string[];
+  criteria?: string[];
+  maxAgents?: number;
+  maxUsd?: number;
+  params?: Record<string, unknown>;
+}
+
+const posInt = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+const posNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+
 function hasDist(): boolean {
   return existsSync(join(WEB_DIST, 'index.html'));
 }
@@ -49,10 +66,12 @@ export function startWebServer(ctx: WebContext) {
           description: m.description,
         }));
         const runs = store.listRuns({ limit: 50 }).map(summarize);
+        const sessions = store.listSessions(30).map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt }));
         return json({
           providers: providers.map((p) => ({ id: p.id, label: p.label, available: p.available, version: p.version, models: p.models })),
           workflows,
           runs,
+          sessions,
           workspace: { name: workspace.getConfig().name, root: workspace.root },
         });
       }
@@ -119,9 +138,26 @@ export function startWebServer(ctx: WebContext) {
       }
 
       if (path === '/api/run' && req.method === 'POST') {
-        const body = (await req.json().catch(() => ({}))) as { text?: string; workflow?: string };
+        const body = (await req.json().catch(() => ({}))) as RunRequest;
         if (!body.text?.trim()) return json({ error: 'text required' }, 400);
-        const goal: Goal = { text: body.text.trim(), cwd: workspace.root, ...(body.workflow ? { workflow: body.workflow } : {}) };
+        const checks = (body.checks ?? []).filter((s) => s.trim()).map((run) => ({ kind: 'command' as const, run }));
+        const criteria = (body.criteria ?? []).filter((s) => s.trim());
+        const goal: Goal = {
+          text: body.text.trim(),
+          cwd: workspace.root,
+          ...(body.workflow ? { workflow: body.workflow } : {}),
+          ...(body.provider ? { provider: body.provider } : {}),
+          ...(body.model ? { model: body.model } : {}),
+          ...(checks.length ? { checks } : {}),
+          ...(criteria.length ? { successCriteria: criteria } : {}),
+          ...(body.params && Object.keys(body.params).length ? { params: body.params } : {}),
+        };
+        // The dashboard is a trusted local surface, but a caller can still fat-finger
+        // a cap — a non-positive budget has no coherent meaning, so reject it.
+        const maxAgents = posInt(body.maxAgents);
+        const maxUsd = posNum(body.maxUsd);
+        if (body.maxAgents !== undefined && maxAgents === null) return json({ error: 'maxAgents must be a positive number' }, 400);
+        if (body.maxUsd !== undefined && maxUsd === null) return json({ error: 'maxUsd must be a positive number' }, 400);
         const controller = new AbortController();
         let resolveId!: (id: string) => void;
         let rejectId!: (err: unknown) => void;
@@ -139,6 +175,8 @@ export function startWebServer(ctx: WebContext) {
           store,
           bus,
           signal: controller.signal,
+          ...(maxAgents !== null ? { maxAgents } : {}),
+          ...(maxUsd !== null ? { maxUsd } : {}),
           ...(ctx.harness ? { harness: ctx.harness } : {}),
           onEvent: (e) => resolveId(e.runId),
         })
@@ -198,12 +236,15 @@ export async function cmdWeb(rawArgs: string[]): Promise<number> {
 function summarize(r: RunRecord) {
   return {
     id: r.id,
+    sessionId: r.sessionId,
     status: r.status,
     workflow: r.workflow,
     title: r.title,
     summary: r.summary,
     spentAgents: r.spentAgents,
+    spentTokens: r.spentTokens,
     spentCostUsd: r.spentCostUsd,
+    createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
 }
