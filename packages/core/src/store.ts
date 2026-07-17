@@ -134,6 +134,16 @@ interface RunRow {
   rate_limited_until: number | null;
 }
 
+interface SessionRow {
+  id: string;
+  title: string;
+  run_ids_json: string;
+  rolling_summary: string;
+  cwd: string;
+  created_at: number;
+  updated_at: number;
+}
+
 function rowToRun(r: RunRow): RunRecord {
   return {
     id: r.id,
@@ -348,13 +358,27 @@ export class Store {
     return { runId, seq, type, payload, createdAt: now };
   }
 
-  getEvents(runId: RunId, afterSeq = 0): AnyRunEvent[] {
+  getEvents(runId: RunId, afterSeq = 0, types?: readonly RunEventType[]): AnyRunEvent[] {
+    // A caller that only reads a few event types (resume) shouldn't fetch and
+    // JSON.parse the whole log — a run is mostly agent:activity. Filter in SQL;
+    // the (run_id, seq) PK still drives the scan. Bind each type, never
+    // interpolate, and treat an empty list as "no rows" rather than a syntax error.
+    const params: Record<string, Bind> = { $id: runId, $after: afterSeq };
+    let typeClause = '';
+    if (types) {
+      if (types.length === 0) return [];
+      const names = types.map((t, i) => {
+        params[`$t${i}`] = t;
+        return `$t${i}`;
+      });
+      typeClause = ` AND type IN (${names.join(', ')})`;
+    }
     const rows = this.db
       .query(
         `SELECT run_id, seq, type, payload_json, created_at FROM run_events
-         WHERE run_id = $id AND seq > $after ORDER BY seq ASC`,
+         WHERE run_id = $id AND seq > $after${typeClause} ORDER BY seq ASC`,
       )
-      .all({ $id: runId, $after: afterSeq }) as {
+      .all(params) as {
       run_id: string;
       seq: number;
       type: string;
@@ -506,19 +530,7 @@ export class Store {
     return s;
   }
 
-  getSession(id: SessionId): SessionRecord | null {
-    const r = this.db.query('SELECT * FROM sessions WHERE id = $id').get({ $id: id }) as
-      | {
-          id: string;
-          title: string;
-          run_ids_json: string;
-          rolling_summary: string;
-          cwd: string;
-          created_at: number;
-          updated_at: number;
-        }
-      | null;
-    if (!r) return null;
+  private toSession(r: SessionRow): SessionRecord {
     return {
       id: r.id,
       title: r.title,
@@ -528,6 +540,11 @@ export class Store {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
+  }
+
+  getSession(id: SessionId): SessionRecord | null {
+    const r = this.db.query('SELECT * FROM sessions WHERE id = $id').get({ $id: id }) as SessionRow | null;
+    return r ? this.toSession(r) : null;
   }
 
   updateSession(id: SessionId, patch: Partial<Pick<SessionRecord, 'title' | 'runIds' | 'rollingSummary'>>): void {
@@ -549,10 +566,12 @@ export class Store {
   }
 
   listSessions(limit = 50): SessionRecord[] {
+    // One SELECT, not a SELECT-id then getSession per row: the sidebar reads the
+    // whole list on every render.
     const rows = this.db
-      .query('SELECT id FROM sessions ORDER BY updated_at DESC LIMIT $limit')
-      .all({ $limit: limit }) as { id: string }[];
-    return rows.map((r) => this.getSession(r.id)!).filter(Boolean);
+      .query('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT $limit')
+      .all({ $limit: limit }) as SessionRow[];
+    return rows.map((r) => this.toSession(r));
   }
 
   // --- Wiki ---------------------------------------------------------------

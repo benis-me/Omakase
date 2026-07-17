@@ -27,6 +27,7 @@ import { makeSystemPromptFactory } from './prompt.ts';
 import { buildResumeState } from './resume.ts';
 import { Journal } from './journal.ts';
 import { FatalError } from './retry.ts';
+import type { Answerer } from './workflow-types.ts';
 
 export const DEFAULT_PROVIDER_PREFERENCE = ['claude', 'codex', 'gemini', 'cursor-agent'];
 
@@ -51,7 +52,7 @@ export interface RunGoalOptions {
   /** Max concurrent agent turns. */
   maxConcurrent?: number;
   /** Host answerer for w.ask (e.g. CLI stdin, TUI prompt). */
-  ask?: (req: { question: string; options?: string[]; default?: string }) => Promise<string>;
+  ask?: Answerer;
   onEvent?: (event: AnyRunEvent) => void;
 }
 
@@ -198,8 +199,8 @@ async function prepare(opts: RunGoalOptions, prior: RunRecord | null): Promise<E
 }
 
 async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
-  const { opts, run, store } = { opts: ctx.opts, run: ctx.run, store: ctx.opts.store };
-  const { goal, workspace } = opts;
+  const { opts, run } = ctx;
+  const { store, goal, workspace } = opts;
   const emit = <T extends RunEventType>(type: T, payload: RunEventPayloadMap[T]) => {
     const e = store.appendEvent(run.id, type, payload);
     ctx.bus.emit(e as AnyRunEvent);
@@ -232,6 +233,13 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
       judgeProvider,
       signal: ctx.signal,
       log: (m) => emit('log', { level: 'info', message: m }),
+      // A judge criterion spends real money the run never charged an agent for.
+      // Record it against both the run's reported cost and the budget, so
+      // `--max-usd` accounts for verification instead of overshooting silently.
+      onSpend: (tokens, costUsd) => {
+        ctx.budget.addUsage(tokens, costUsd);
+        store.addSpend(run.id, { tokens, costUsd });
+      },
     });
     memo = { epoch, result };
     // Never cache a failure: a criterion that threw (an aborted command, a judge

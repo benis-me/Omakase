@@ -172,6 +172,28 @@ test('runGoal: a run that lands exactly on its budget still succeeds', async () 
   }
 });
 
+test('verify: a judge criterion spends real money that lands in the run cost', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // successCriteria are always judged by a model call. That call spends, so it
+    // must show up in the run's reported cost — not vanish, leaving the total a lie.
+    const harness = new FakeHarness((req) => (req.role === 'validator' ? 'PASS: looks done' : 'built it'));
+    const out = await runGoal({
+      goal: { text: 'do it', workflow: 'solo', cwd: ws.root, successCriteria: ['the thing is done'] },
+      workspace: ws,
+      store,
+      harness,
+    });
+    expect(out.status).toBe('succeeded');
+    // Exactly one worker + one judge, each 0.001 in the FakeHarness.
+    const validators = harness.calls.filter((c) => c.role === 'validator');
+    expect(validators).toHaveLength(1);
+    expect(store.getRun(out.runId)!.spentCostUsd).toBeCloseTo(0.002, 6);
+  } finally {
+    cleanup();
+  }
+});
+
 test('verify: command criterion passes on exit 0, fails otherwise', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {

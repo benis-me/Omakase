@@ -1,8 +1,13 @@
 // Resume support: rebuild the cache of already-completed agent results by
 // replaying the event log, so a re-executed workflow skips finished work.
 
-import type { RunId, Store } from '@omakase/core';
+import type { RunId, RunEventType, Store } from '@omakase/core';
 import type { AgentResult } from './workflow-types.ts';
+
+// The only event types resume reads. A busy run's log is dominated by
+// agent:activity and log entries this replay never touches, so the store fetches
+// just these three rather than parsing the whole log to throw most of it away.
+const RESUME_TYPES: readonly RunEventType[] = ['user:answered', 'agent:started', 'agent:completed'];
 
 export interface ResumeState {
   cache: Map<string, AgentResult>;
@@ -14,17 +19,18 @@ export interface ResumeState {
 }
 
 export function buildResumeState(store: Store, runId: RunId): ResumeState {
-  const events = store.getEvents(runId);
+  const events = store.getEvents(runId, 0, RESUME_TYPES);
   const providerByCall = new Map<string, string>();
   const cache = new Map<string, AgentResult>();
   const answers = new Map<string, string>();
   let spentAgents = 0;
   let tokens = 0;
   let costUsd = 0;
-  let lastSeq = 0;
+  // The true high-water seq, kept off the filtered replay: the RunRecord already
+  // tracks it, so read it there rather than the last matching event's seq.
+  const lastSeq = store.getRun(runId)?.lastSeq ?? 0;
 
   for (const e of events) {
-    lastSeq = e.seq;
     if (e.type === 'user:answered') {
       answers.set(e.payload.stepKey, e.payload.answer);
     } else if (e.type === 'agent:started') {

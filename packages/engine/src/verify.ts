@@ -16,6 +16,10 @@ export interface VerifyContext {
   judgeModel?: string;
   signal?: AbortSignal;
   log?: (message: string) => void;
+  /** A judge criterion spends a real model call. Report its usage so the run's
+   *  cost stays honest and the spend cap can see it. Fires only when a judge
+   *  actually runs, so a memo cache hit never double-counts. */
+  onSpend?: (tokens: number, costUsd: number) => void;
 }
 
 export interface CriterionResult {
@@ -155,6 +159,7 @@ async function evalJudge(
 ): Promise<CriterionResult> {
   const label = c.label ?? 'judge';
   if (!ctx.judgeProvider) return { label, met: false, detail: 'no provider for judging' };
+  ctx.log?.(`verify: judging against ${label}`);
   const prompt = [
     'You are a strict verifier. Inspect the current state of the working directory',
     'and decide whether ALL of the following criteria are satisfied:',
@@ -174,6 +179,7 @@ async function evalJudge(
     autoApprove: true,
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
+  ctx.onSpend?.(res.tokens, res.costUsd);
   const line = res.text.trim().split('\n').find((l) => /\b(PASS|FAIL)\b/i.test(l)) ?? res.text.trim();
   const met = /^\s*PASS\b/i.test(line) || (/\bPASS\b/i.test(line) && !/\bFAIL\b/i.test(line));
   return { label, met, detail: line.slice(0, 200) };

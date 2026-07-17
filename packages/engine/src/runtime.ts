@@ -14,6 +14,8 @@ import { join, isAbsolute } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import {
   agentCallId,
+  reportId,
+  slugify,
   uuid,
   isAbortError,
   type Budget,
@@ -35,6 +37,8 @@ import type {
   WorkflowContext,
   AgentSpec,
   AgentResult,
+  AskRequest,
+  Answerer,
   ReportSpec,
   WikiSpec,
   PipelineStage,
@@ -62,7 +66,7 @@ export interface RuntimeDeps {
   /** Cached user answers by stepKey (resume). */
   resumeAnswers?: Map<string, string>;
   /** Host answerer for w.ask (CLI stdin, TUI prompt); absent → auto-default. */
-  ask?: (req: { question: string; options?: string[]; default?: string }) => Promise<string>;
+  ask?: Answerer;
   /** Max concurrent agent turns. */
   maxConcurrent?: number;
   /** Retry attempts per agent call. */
@@ -382,7 +386,7 @@ export class WorkflowRuntime implements WorkflowContext {
   requestReport(spec: ReportSpec): void {
     const report = {
       runId: this.d.runId,
-      id: `rep_${uuid().slice(0, 6)}`,
+      id: reportId(),
       kind: spec.kind ?? ('progress' as const),
       title: spec.title,
       summary: spec.summary,
@@ -398,7 +402,7 @@ export class WorkflowRuntime implements WorkflowContext {
   }
 
   updateWiki(spec: WikiSpec): void {
-    const slug = spec.slug ?? slugifyLocal(spec.title);
+    const slug = spec.slug ?? slugify(spec.title);
     this.d.store.upsertWiki({ slug, title: spec.title, body: spec.body, updatedAt: Date.now() });
     this.emit('wiki:updated', { slug, title: spec.title });
   }
@@ -423,7 +427,7 @@ export class WorkflowRuntime implements WorkflowContext {
     this.emit('user:asked', { stepKey, question, options: opts.options ?? [] });
     let answer: string;
     if (this.d.ask) {
-      const answerOpts: { question: string; options?: string[]; default?: string } = { question };
+      const answerOpts: AskRequest = { question };
       if (opts.options) answerOpts.options = opts.options;
       if (opts.default !== undefined) answerOpts.default = opts.default;
       answer = await this.d.ask(answerOpts);
@@ -434,16 +438,6 @@ export class WorkflowRuntime implements WorkflowContext {
     this.emit('user:answered', { stepKey, answer });
     return answer;
   }
-}
-
-function slugifyLocal(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64) || 'untitled'
-  );
 }
 
 export { FatalError };

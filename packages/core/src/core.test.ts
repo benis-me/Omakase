@@ -49,6 +49,11 @@ test('store: run lifecycle + event log ordering', () => {
   const after = store.getEvents(run.id, 1);
   expect(after.map((e) => e.seq)).toEqual([2, 3]);
 
+  // A type filter fetches only the asked-for rows (resume replays 3 of ~13 types).
+  const filtered = store.getEvents(run.id, 0, ['log', 'phase:started']);
+  expect(filtered.map((e) => e.type)).toEqual(['log', 'phase:started']);
+  expect(store.getEvents(run.id, 0, [])).toEqual([]);
+
   const reread = store.getRun(run.id)!;
   expect(reread.lastSeq).toBe(3);
 
