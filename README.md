@@ -4,7 +4,7 @@
 
 Omakase is a local‑first, open‑source CLI + TUI that turns `claude`, `codex`, `gemini`, `cursor-agent` (and more) into a fleet you can compose. You give it a **goal**; it plans, dispatches agents in parallel, verifies the result against success criteria, and loops until it's met — with durable **resume**, **retry**, and an event‑sourced history of everything that happened.
 
-Built on **Bun**, **TypeScript**, **React 19** and **OpenTUI**. Zero runtime dependencies beyond the terminal renderer.
+Built on **Bun**, **TypeScript**, **React 19** and **OpenTUI**. Zero runtime dependencies outside the terminal and browser renderers.
 
 ```
 omakase — orchestrate your agents
@@ -114,12 +114,15 @@ CORE
   run "<goal>" [opts]           drive a goal to completion (headless)
   resume <runId>                resume an interrupted run
   runs [show <id>]              list / inspect past runs
+  logs <runId> [-f]             print / follow a run’s event stream
 
 WORKFLOWS  (reusable, versioned, skills-like)
   workflow list                 list available workflows
   workflow show <name>          show a workflow’s docs
   workflow new <name> [--flat]  scaffold a new workflow
   workflow run <name> "<goal>"  run a specific workflow
+  workflow test <name>          dry-run against a mock harness (no spend)
+  workflow edit <name>          print the entry path ($(omks workflow edit x))
   workflow version <name>       show / --bump patch|minor|major
 
 AGENTS & CONFIG
@@ -129,7 +132,7 @@ AGENTS & CONFIG
   config [get|set|list]         workspace settings
   session [list|show]           grouped runs
   doctor                        environment diagnostics
-  web [--port n] [--open]       browser dashboard (Vite + React)
+  web [--port n] [--open]       browser control center (default :4517)
   mcp                           run as an MCP server (stdio) for other agents
 
 RUN OPTIONS
@@ -140,9 +143,85 @@ RUN OPTIONS
   --criteria "<text>"           natural-language criterion, judged (repeatable)
   --max-agents <n>              cap agent calls   --concurrency <n>  parallelism
   --max-usd <n>                 cap total spend   --max-time <sec>   wall-clock budget
-  --param k=v                   workflow parameter (repeatable)   --session <id>  continue
-  --cwd <dir>                   working directory   --json  emit JSONL events
+  --max-rounds <n>              cap goal-loop rounds (plan → build → verify → fix)
+  --param k=v                   workflow parameter (repeatable)
+  --session, -s <id>            continue a session   --cwd <dir>  working directory
+  --json                        emit one JSON event per line (JSONL)
 ```
+
+Every cap must be a positive number — `--max-agents 0` is rejected rather than
+silently ignored. A repeatable flag with no value (`--check` followed by another
+flag) is a usage error too, so a missing check can't quietly become one that
+always passes.
+
+---
+
+## The terminal UI
+
+`omks` with no arguments opens the TUI: a runs sidebar on the left, the live
+event log on the right, and a composer at the bottom. It reads the same store
+as the CLI, so a run you started headlessly shows up here and vice‑versa.
+
+| Key | Does |
+| --- | --- |
+| `⏎` | run the goal (or the typed command) |
+| `⌥⏎` | newline in the composer — a goal can be several lines |
+| `/` | open the command palette |
+| `↑ ↓` | browse runs (or pick a command when the palette is open) |
+| `⇥` | cycle the workflow (or complete a command) |
+| `⇞ ⇟` | scroll the log back and forward — the title shows `↑N` while held |
+| `^F` | full text: wrap agent results instead of clipping them |
+| `^U` · `^R` | clear the composer · refresh the runs list |
+| `esc` · `^C` | cancel a run · clear the input · quit |
+
+Slash commands: `/workflow <name>`, `/provider <id\|auto>`, `/settings`,
+`/runs`, `/resume <runId>`, `/cancel`, `/clear`, `/help`, `/quit`.
+
+## Headless & scripting
+
+Everything the TUI does is available without it, which is the point — Omakase is
+meant to run in scripts, CI, and other agents' tool calls.
+
+```bash
+# Stream a run and stop when the tests pass. Exit code: 0 met, 1 not, 130 cancelled.
+omks run "fix the failing tests" --check "bun test" --max-usd 2
+
+# Machine-readable: one JSON event per line, pipe it anywhere.
+omks run "add /healthz" --json | jq -r 'select(.type=="agent:completed") | .payload.text'
+
+# Watch a run started elsewhere (another shell, the dashboard, CI).
+omks logs run_ab12cd34 -f
+
+# Pick up an interrupted run: finished agent calls replay from cache.
+omks resume run_ab12cd34
+
+# Prove a workflow's shape without spending anything.
+omks workflow test ship
+```
+
+Because each agent call carries a stable id (`agt_q298tw` → `q298tw`) that
+appears in the log, the JSONL stream, and the per‑run journal alike,
+`omks logs <runId> | grep q298tw` pulls one agent's whole story out of an
+interleaved multi‑agent run.
+
+Other agents can drive Omakase directly: `omks mcp` speaks MCP over stdio,
+exposing the workflow list and a `run_goal` tool, and honours
+`notifications/cancelled` mid‑run.
+
+## The dashboard
+
+`omks web` serves a local control center (default port **4517**; `--port n`,
+`--cwd <dir>`, and `--open` to launch a browser — build the SPA first with
+`bun run build:web`, otherwise the page explains how).
+
+It is not a read‑only viewer. You can start a goal from the browser — with the
+same workflow, provider, checks, criteria and budget caps `omks run` accepts —
+and cancel it mid‑flight; runs execute in the `omks web` process and stream over
+SSE into the same event store. The run view groups the stream into phase
+sections and collapsible per‑agent cards, each folding in its own activity,
+cost and final output; the run list is searchable, session‑grouped, and
+keyboard‑navigable (`j`/`k`). Dark and light both ship, and it is responsive
+down to a phone.
 
 ---
 
@@ -191,14 +270,17 @@ The `w` API:
 | Method | Purpose |
 | --- | --- |
 | `w.phase(name, fn)` | group work into a named, logged phase |
-| `w.agent({role,title,prompt,provider?,model?})` | run one agent turn → `{text,status,sessionId}` |
+| `w.agent({role,title,prompt,provider?,model?,systemPrompt?,cwd?})` | run one agent turn → `{text,status,sessionId,provider,tokens,costUsd}` |
 | `w.parallel([...])` | run thunks concurrently (bounded), await all |
 | `w.pipeline(items, ...stages)` | stage each item independently — no barrier |
 | `w.loopUntil(fn, {maxRounds})` | loop until `fn` returns `[]` |
 | `w.goalMet()` | evaluate the goal's success criteria now |
+| `w.ask(question, {options?,default?})` | ask the human — journaled, and replayed on resume |
+| `w.spawn(provider, prompt, title?)` | one-shot turn on a named provider |
 | `w.budget()` · `w.log()` · `w.requestReport()` · `w.updateWiki()` | accounting, logging, reports, knowledge |
 | `w.subdir(name)` · `w.isolate(label, fn)` | isolate parallel agents (subdir; or a git worktree that merges back) |
 | `w.recall(limit)` · `w.providers` | accumulated knowledge; available agents (for routing) |
+| `w.goal` · `w.params` · `w.cwd` · `w.signal` | the goal, `--param` values, working dir, cancellation |
 
 Workflows live either as a flat `<name>.ts` or a **skills‑like folder** with `WORKFLOW.md` (frontmatter incl. a SEMVER `version`) + `workflow.ts` + optional `references/`. Workspace workflows shadow built‑ins of the same name, so you can customize anything. `omks workflow version <name> --bump minor` snapshots and bumps. See [`examples/workflows/ship-feature/`](examples/workflows/ship-feature) for a real folder‑format workflow using `isolate` + provider routing + `recall`. Validate a workflow without spending anything: `omks workflow test <name>`.
 
@@ -232,6 +314,7 @@ A Bun workspace of focused packages:
 | `@omakase/providers` | detect & drive agent CLIs; spawn, stream‑parse, cancel |
 | `@omakase/engine` | the `w` runtime, goal‑loop, verify, resume, retry, workflow loader, built‑ins, harness |
 | `@omakase/tui` | OpenTUI + React 19 terminal interface |
+| `@omakase/web` | Vite 8 + React 19 dashboard SPA, served by `omks web` |
 | `@omakase/cli` | the `omks` command |
 
 ```
@@ -239,7 +322,8 @@ A Bun workspace of focused packages:
   workspace.json     identity + settings
   omks.db            runs, events, tasks, reports, sessions, wiki, kv
   workflows/         your Dynamic Workflows (versioned)
-  memory/AGENTS.md   briefing every agent reads
+  memory/AGENTS.md   briefing every agent reads (memory/rules/ alongside it)
+  agents/ commands/ specs/
   agents.json        cached provider scan
   runs/              per-run journals
 ```

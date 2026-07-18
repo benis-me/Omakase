@@ -4,7 +4,7 @@
 
 Omakase 是一个本地优先、可开源的 CLI + TUI，把 `claude`、`codex`、`gemini`、`cursor-agent` 等已安装的 Agent CLI 变成一支可编排的舰队。你给它一个**目标（Goal）**，它就会规划、并行派发多个 Agent、按成功标准**验证**结果，并循环直到达成 —— 同时具备可持久化的**续跑（Resume）**、**重试（Retry）**，以及对全过程的事件溯源记录。
 
-技术栈：**Bun**、**TypeScript**、**React 19**、**OpenTUI**。除终端渲染器外，零运行时依赖。
+技术栈：**Bun**、**TypeScript**、**React 19**、**OpenTUI**。除终端与浏览器渲染器外，零运行时依赖。
 
 ---
 
@@ -94,20 +94,26 @@ omks "<目标>"                   用默认工作流运行一个目标
   run "<目标>" [选项]           无头驱动目标直至完成
   resume <runId>                续跑被中断的运行
   runs [show <id>]              列出 / 查看历史运行
+  logs <runId> [-f]             打印 / 跟随一次运行的事件流
 
 工作流（可复用、可版本化、像 Skills）
   workflow list                 列出可用工作流
   workflow show <name>          查看某工作流文档
   workflow new <name> [--flat]  脚手架生成新工作流
   workflow run <name> "<目标>"  运行指定工作流
+  workflow test <name>          用 mock harness 空跑（不花钱）
+  workflow edit <name>          打印入口文件路径（$(omks workflow edit x)）
   workflow version <name>       查看 / --bump patch|minor|major
 
 Agent 与配置
   agent list                    显示已安装的 Agent CLI
   agent scan                    重新探测 provider 与模型
+  agent check                   实际发一次微调用，验证各 provider 已登录
   config [get|set|list]         工作区设置
   session [list|show]           分组运行
   doctor                        环境诊断
+  web [--port n] [--open]       浏览器控制台（默认 :4517）
+  mcp                           以 MCP 服务（stdio）供其它 Agent 调用
 
 run 选项
   --workflow, -w <name>         选择工作流（默认：goal）
@@ -116,8 +122,16 @@ run 选项
   --check "<cmd>"               成功校验：命令退出码须为 0（可重复）
   --criteria "<text>"           自然语言标准，由 Agent 判定（可重复）
   --max-agents <n>              限制 agent 调用数   --concurrency <n>  并发数
-  --cwd <dir>                   工作目录   --json  输出 JSONL 事件
+  --max-usd <n>                 限制总花费         --max-time <sec>   墙钟时间上限
+  --max-rounds <n>              限制目标循环轮数（规划 → 构建 → 验证 → 修补）
+  --param k=v                   工作流参数（可重复）
+  --session, -s <id>            延续一个会话       --cwd <dir>  工作目录
+  --json                        每行输出一个 JSON 事件（JSONL）
 ```
+
+所有上限都必须是正数 —— `--max-agents 0` 会直接报错，而不是被悄悄忽略。可重复的
+参数若漏了值（例如 `--check` 后面直接跟了另一个参数）同样是用法错误，避免一个缺失
+的校验被静默地变成"永远通过"。
 
 ---
 
@@ -156,7 +170,118 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 }
 ```
 
-内置工作流：**goal**（默认）、**mission**、**tdd**、**review**、**research**、**solo**。工作区里的同名工作流会覆盖内置版本。
+内置工作流：**goal**（默认）、**auto**（提示词自编排 —— 由模型自己设计 DAG）、**mission**、**tdd**、**review**、**research**、**parallel**、**solo**。工作区里的同名工作流会覆盖内置版本。用 `omks workflow test <name>` 可以不花钱地验证一个工作流的形状。
+
+`w` API：
+
+| 方法 | 用途 |
+| --- | --- |
+| `w.phase(name, fn)` | 把一段工作归入一个命名的、会被记录的阶段 |
+| `w.agent({role,title,prompt,provider?,model?,systemPrompt?,cwd?})` | 跑一次 agent → `{text,status,sessionId,provider,tokens,costUsd}` |
+| `w.parallel([...])` | 并发跑一组 thunk（有上限），全部等待 |
+| `w.pipeline(items, ...stages)` | 每个条目各自穿过所有阶段 —— 没有屏障 |
+| `w.loopUntil(fn, {maxRounds})` | 循环直到 `fn` 返回 `[]` |
+| `w.goalMet()` | 立刻按成功标准评估目标 |
+| `w.ask(question, {options?,default?})` | 问人 —— 会被记录，续跑时直接重放 |
+| `w.spawn(provider, prompt, title?)` | 在指定 provider 上跑一次性调用 |
+| `w.budget()` · `w.log()` · `w.requestReport()` · `w.updateWiki()` | 计量、日志、报告、知识沉淀 |
+| `w.subdir(name)` · `w.isolate(label, fn)` | 隔离并行 agent（子目录；或用完即合并的 git worktree） |
+| `w.recall(limit)` · `w.providers` | 沉淀下来的知识；可用的 agent（用于路由） |
+| `w.goal` · `w.params` · `w.cwd` · `w.signal` | 目标、`--param` 值、工作目录、取消信号 |
+
+工作流可以是一个扁平的 `<name>.ts`，也可以是**像 Skills 那样的文件夹**：`WORKFLOW.md`
+（frontmatter 里带 SEMVER `version`）+ `workflow.ts` + 可选的 `references/`。
+`omks workflow version <name> --bump minor` 会先存快照再升版本。
+
+**隔离并行的 agent。** `parallel`/`pipeline` 里的 agent 默认共用同一个工作目录。
+当各分支互不相干时，用 `w.subdir(name)` + `agent({ cwd })` 给每个分支一个自己的目录，
+它们就不会改到同一批文件 —— 内置的 **parallel** 工作流正是这么做的。
+
+### 目标循环、验证、续跑与重试
+
+- **成功标准**分四种：`command`（退出码 0）、`file`（存在 / 匹配）、`rule`（对文件树做正则）、
+  `judge`（由 Agent 按评审准则打分）。只有全部通过才算*完成*；预算耗尽、致命错误、
+  被取消，或**连续两轮没有进展**都会提前停下。
+- **续跑：** 每次 `agent()` 调用都由一条确定性的结构化路径作为 key，结果会被记录。
+  `omks resume <id>` 从缓存重放已完成的调用、只重跑剩下的 —— 即使跨 `parallel`/`pipeline` 也成立。
+- **Foundation 重试：** provider 调用会以指数退避 + 抖动重试，被取消时绝不重试；
+  **限流 / 过载**类错误会退避得更狠，并记下 `rateLimitedUntil`。
+- **Provider 回退：** 某个 agent 的 provider 一直失败时，Omakase 会换到下一个可用的
+  provider（并发出 `harness:switched`）—— 于是 claude 挂掉不会卡死整个运行。
+- **预算：** 可以按 agent 调用数、**美元花费**或**墙钟时间**给一次运行封顶
+  （`--max-agents` / `--max-usd` / `--max-time`），停下时会说明确切原因。
+
+### Provider 与 Harness
+
+通过在增强过的 `PATH` 上执行 `<cmd> --version` 来探测，结果缓存在 `.omks/agents.json`。
+每个适配器负责拼出确切的无头调用命令，并把该 CLI 的流规整成「活动 + 结果」。
+
+> **鉴权：** 探测只能确认 CLI 装了 —— 每个 provider 还必须**能在无头模式下通过鉴权**：
+> `claude` 需要已登录（`claude` → `/login`），`gemini` 需要 `GEMINI_API_KEY`，
+> `codex` 需要 `OPENAI_API_KEY`，`cursor-agent` 需要 `CURSOR_API_KEY`。
+> 没鉴权时 Omakase 会把它真实的报错（例如 "Not logged in"）呈现出来，然后继续。
+
+---
+
+## 终端界面（TUI）
+
+不带参数运行 `omks` 就会进入 TUI：左边是运行列表，右边是实时事件日志，底部是输入区。
+它与 CLI 读写同一个存储 —— 你在无头模式下启动的运行会出现在这里，反之亦然。
+
+| 按键 | 作用 |
+| --- | --- |
+| `⏎` | 运行目标（或执行输入的命令） |
+| `⌥⏎` | 输入区换行 —— 目标可以写很多行 |
+| `/` | 打开命令面板 |
+| `↑ ↓` | 浏览历史运行（面板打开时是选择命令） |
+| `⇥` | 切换工作流（或补全命令） |
+| `⇞ ⇟` | 回滚 / 前进日志 —— 停在上方时标题会显示 `↑N` |
+| `^F` | 全文模式：折行显示 Agent 的完整输出，而不是截断 |
+| `^U` · `^R` | 清空输入 · 刷新运行列表 |
+| `esc` · `^C` | 取消运行 · 清空输入 · 退出 |
+
+斜杠命令：`/workflow <name>`、`/provider <id|auto>`、`/settings`、`/runs`、
+`/resume <runId>`、`/cancel`、`/clear`、`/help`、`/quit`。
+
+## 无头运行与脚本化
+
+TUI 能做的事情，不用 TUI 也都能做 —— 这正是重点：Omakase 就是为脚本、CI
+和「被其它 Agent 当作工具调用」而设计的。
+
+```bash
+# 流式运行，直到测试通过为止。退出码：0 达成，1 未达成，130 被取消。
+omks run "修好挂掉的测试" --check "bun test" --max-usd 2
+
+# 机器可读：每行一个 JSON 事件，可以接到任何地方。
+omks run "加一个 /healthz" --json | jq -r 'select(.type=="agent:completed") | .payload.text'
+
+# 跟随一个在别处启动的运行（另一个终端、控制台、CI）。
+omks logs run_ab12cd34 -f
+
+# 接着跑被中断的运行：已完成的 agent 调用直接从缓存重放。
+omks resume run_ab12cd34
+
+# 不花一分钱地验证工作流的形状。
+omks workflow test ship
+```
+
+每次 agent 调用都带着稳定的 id（`agt_q298tw` → `q298tw`），它同时出现在日志、
+JSONL 流和每次运行的 journal 里，所以 `omks logs <runId> | grep q298tw`
+就能把某一个 agent 的完整经过从多 Agent 交错的运行里捞出来。
+
+其它 Agent 也可以直接驱动 Omakase：`omks mcp` 以 stdio 说 MCP 协议，暴露工作流
+列表和一个 `run_goal` 工具，并且支持运行中途的 `notifications/cancelled`。
+
+## 控制台（Web）
+
+`omks web` 会起一个本地控制台（默认端口 **4517**；支持 `--port n`、`--cwd <dir>`，
+以及 `--open` 直接打开浏览器 —— 需要先 `bun run build:web` 构建 SPA，否则页面会告诉你怎么做）。
+
+它不是只读的看板。你可以直接从浏览器发起一个目标 —— 工作流、provider、校验命令、
+自然语言标准、预算上限这些 `omks run` 支持的选项它都支持 —— 也可以中途取消；
+运行就在 `omks web` 进程里执行，并通过 SSE 流进同一个事件存储。运行详情会把事件流
+按阶段分组、每个 Agent 折叠成一张卡片，卡片里收着它自己的活动记录、花费和最终输出；
+运行列表支持搜索、按会话分组、键盘导航（`j`/`k`）。深色与浅色主题都有，窄到手机也能用。
 
 ---
 
@@ -170,6 +295,7 @@ Bun workspace，职责清晰的若干包：
 | `@omakase/providers` | 探测并驱动 Agent CLI：spawn、流式解析、取消 |
 | `@omakase/engine` | `w` 运行时、目标循环、验证、续跑、重试、工作流加载器、内置工作流、Harness |
 | `@omakase/tui` | OpenTUI + React 19 终端界面 |
+| `@omakase/web` | Vite 8 + React 19 控制台 SPA，由 `omks web` 提供服务 |
 | `@omakase/cli` | `omks` 命令 |
 
 ## 开发
@@ -177,7 +303,11 @@ Bun workspace，职责清晰的若干包：
 ```bash
 bun install
 bun run check          # 全部包类型检查 + 测试
-bun test
+bun test               # 各包的单元与集成测试
+bun run typecheck:all
+
+bun run build:cli      # 编译出独立的 ./dist/omks 二进制（运行时不需要 Bun）
+bun run build:web      # 构建控制台 SPA（Vite）
 ```
 
 ## 许可证
