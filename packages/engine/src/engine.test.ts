@@ -301,9 +301,12 @@ test('params: the goal loop feeds gaps to a goal that started without params', a
       store,
       harness,
     });
-    const last = store.listReports(out.runId).filter((r) => r.kind === 'final').at(-1);
-    expect(last?.summary).toContain('round=1');
-    expect(last?.summary).toContain('exit 1');
+    // Assert on round 1's own report rather than the last one: a stalled loop is
+    // now offered an advisor and one further round, so "last" is no longer round 1.
+    const reports = store.listReports(out.runId).filter((r) => r.kind === 'final');
+    const round1 = reports.find((r) => r.summary.includes('round=1'));
+    expect(round1).toBeDefined();
+    expect(round1!.summary).toContain('exit 1');
   } finally {
     cleanup();
   }
@@ -749,4 +752,43 @@ test('frontmatter: parses scalars, arrays, block lists + comment meta', () => {
   const cm = parseCommentMeta('// name: X\n// version: 0.3.0\nexport default 1;');
   expect(cm.name).toBe('X');
   expect(cm.version).toBe('0.3.0');
+});
+
+test('advisor: a stalled loop is advised once, and the advice reaches the agents', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // A check that never passes: the fix agents will close two rounds on the
+    // same gap, which is exactly the stall the advisor exists for.
+    const seen: string[] = [];
+    const harness = new FakeHarness((req) => {
+      seen.push(`${req.role}:${req.title}`);
+      if (req.role === 'advisor') {
+        return '{"headline":"the check greps a file nobody writes","advice":"create docs/api.md before re-running the check"}';
+      }
+      // Record whether a worker was briefed with the advice.
+      if (req.role === 'worker' && req.systemPrompt?.includes('ADVICE')) seen.push('worker-briefed');
+      return req.role === 'planner' ? 'Write the doc' : 'done';
+    });
+    const out = await runGoal({
+      goal: { text: 'document the API', workflow: 'goal', cwd: ws.root, checks: [{ kind: 'command', run: 'false' }] },
+      workspace: ws,
+      store,
+      harness,
+      maxRounds: 4,
+    });
+
+    const advisorCalls = harness.calls.filter((c) => c.role === 'advisor');
+    expect(advisorCalls).toHaveLength(1); // consulted, and only once
+    // The advisor is handed the evidence, not asked to go dig for it.
+    expect(advisorCalls[0]!.prompt).toContain('document the API');
+    expect(advisorCalls[0]!.autoApprove).toBe(false);
+    // Its suggestion then briefs the agents that run afterwards.
+    expect(seen).toContain('worker-briefed');
+    // It buys a round, but a loop that stalls again still ends.
+    expect(out.status).toBe('failed');
+    const logs = store.getEvents(out.runId).filter((e) => e.type === 'log').map((e) => e.payload.message);
+    expect(logs.some((m) => m.startsWith('Advice:'))).toBe(true);
+  } finally {
+    cleanup();
+  }
 });

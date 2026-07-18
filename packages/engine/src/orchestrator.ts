@@ -23,6 +23,7 @@ import { SubprocessHarness, type Harness } from './harness.ts';
 import { WorkflowRuntime } from './runtime.ts';
 import { findWorkflow, loadWorkflow, type WorkflowMeta } from './workflows.ts';
 import { verifyGoal, type VerifyResult } from './verify.ts';
+import { consultAdvisor, advicePreamble } from './advisor.ts';
 import { makeSystemPromptFactory } from './prompt.ts';
 import { buildResumeState } from './resume.ts';
 import { Journal } from './journal.ts';
@@ -284,6 +285,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   let gaps: string[] = [];
   let prevSignature = '';
   let budgetStop: string | null = null;
+  let advised = false; // one consult per run
 
   try {
     for (let round = 0; round < maxRounds; round++) {
@@ -343,6 +345,37 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
       // Stall detection: identical unmet signature two rounds running.
       const signature = gaps.slice().sort().join('|');
       if (signature && signature === prevSignature) {
+        // Circling the same gaps means the fix agents are repeating an approach
+        // that does not work. The run knows how it got here — hand that log to
+        // one advisor and spend a final round on what it suggests, rather than
+        // stopping with the evidence unread. Once only: if the round after the
+        // advice stalls again, the advice did not help and stopping is right.
+        const canAdvise = !advised && judgeProvider && round + 1 < maxRounds && ctx.budget.canSpend();
+        if (canAdvise) {
+          advised = true;
+          emit('log', { level: 'info', message: 'No progress — consulting an advisor.' });
+          const advice = await consultAdvisor(
+            { goalText: goal.text, gaps, round, events: store.getEvents(run.id) },
+            {
+              harness: ctx.harness,
+              provider: judgeProvider,
+              cwd: ctx.cwd,
+              signal: ctx.signal,
+              onSpend: (tokens, costUsd) => {
+                ctx.budget.addUsage(tokens, costUsd);
+                store.addSpend(run.id, { tokens, costUsd });
+              },
+            },
+          );
+          if (advice) {
+            goal.params!.advice = advicePreamble(advice);
+            emit('log', { level: 'info', message: `Advice: ${advice.headline}` });
+            // Exactly one round to act on it: the signature is left in place, so
+            // if that round closes on the same gaps the stall check ends the run.
+            continue;
+          }
+          emit('log', { level: 'warn', message: 'No advice available.' });
+        }
         status = 'failed';
         emit('log', { level: 'warn', message: 'No progress detected — stopping (stalled).' });
         break;

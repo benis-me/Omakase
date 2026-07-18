@@ -31,6 +31,11 @@ export function makeSystemPromptFactory(deps: PromptDeps): (spec: AgentSpec) => 
   return (spec: AgentSpec): string => {
     const role = spec.role ?? 'worker';
     const guidance = ROLE_GUIDANCE[role] ?? ROLE_GUIDANCE.worker!;
-    return `You are an Omakase agent operating autonomously in a shared working directory.\nRole: ${role}.\n${guidance}${goalBlock}${memoryBlock}\n\nWork decisively. When done, summarize what you did in a few lines.`;
+    // Read at call time, not closure time: when the goal-loop stalls it puts an
+    // advisor's suggestion on the goal, and every agent dispatched afterwards
+    // should see it — including the ones in workflows that never look at params.
+    const advice = deps.goal.params?.advice;
+    const adviceBlock = typeof advice === 'string' && advice.trim() ? `\n\n## ${advice.trim()}` : '';
+    return `You are an Omakase agent operating autonomously in a shared working directory.\nRole: ${role}.\n${guidance}${goalBlock}${adviceBlock}${memoryBlock}\n\nWork decisively. When done, summarize what you did in a few lines.`;
   };
 }
