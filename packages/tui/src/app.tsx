@@ -3,7 +3,7 @@ import { useKeyboard, useTerminalDimensions } from '@opentui/react';
 import { runGoal, resumeRun } from '@omakase/engine';
 import type { Workspace, Store, AnyRunEvent, RunRecord } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
-import { eventLines, theme } from './render.ts';
+import { eventLines, layoutRows, logWindow, theme } from './render.ts';
 import { SettingsView } from './settings-view.tsx';
 import { COMMANDS, filterCommands, isCommandInput, parseCommand, argSuggestions } from './commands.ts';
 
@@ -54,6 +54,10 @@ export function App(props: AppProps) {
   const [sel, setSel] = useState(0); // 0 = live/current, 1.. = runs[sel-1]
   const [palIndex, setPalIndex] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  // Rows scrolled back from the newest; 0 pins the log to the tail so a live run
+  // keeps streaming into view.
+  const [scrollBack, setScrollBack] = useState(0);
+  const [full, setFull] = useState(false); // wrap results instead of clipping
   const abortRef = useRef<AbortController | null>(null);
 
   const workflow = props.workflows[wfIndex] ?? 'goal';
@@ -229,6 +233,14 @@ export function App(props: AppProps) {
       }
       return;
     }
+    // Scrollback: the log is the one pane that outgrows its box, so it gets the
+    // paging keys. ↑↓ stay on the runs list — a live run would otherwise fight
+    // the reader for the cursor.
+    // Page keys only: home/end belong to the composer's text cursor, and the
+    // input keeps focus while the log is being read.
+    if (name === 'pageup') { setScrollBack((s) => s + Math.max(1, logHeight - 1)); return; }
+    if (name === 'pagedown') { setScrollBack((s) => Math.max(0, s - Math.max(1, logHeight - 1))); return; }
+    if (name === 'f' && key.ctrl) { setFull((f) => !f); return; }
     if (name === 'up') {
       if (paletteOpen) setPalIndex((i) => Math.max(0, i - 1));
       else setSel((s) => Math.max(0, s - 1));
@@ -239,6 +251,9 @@ export function App(props: AppProps) {
       refreshRuns();
     }
   });
+
+  // Switching runs, or starting a new one, returns the log to the newest row.
+  useEffect(() => { setScrollBack(0); }, [sel, liveRunId]);
 
   const viewingLive = sel === 0;
   const viewingRun = viewingLive ? null : runs[sel - 1];
@@ -259,22 +274,41 @@ export function App(props: AppProps) {
   const compact = height < 24;
   const PALETTE_MAX = 9;
   const paletteRows = paletteOpen ? Math.min(PALETTE_MAX, Math.max(1, matches.length)) + 2 : 0;
-  const chromeRows = (compact ? 8 : 11) + paletteRows;
+  // Everything the log box does not get: padding, the header and its rule, the
+  // row gaps, the status line, the bordered input, the footer, and this panel's
+  // own borders. Overshooting costs a blank row; undershooting paints rows on
+  // top of each other, so this errs high.
+  const chromeRows = (compact ? 12 : 15) + paletteRows;
   const logHeight = Math.max(3, height - chromeRows);
-  const visible = lines.slice(-logHeight);
+  const sidebarW = Math.min(32, Math.max(22, Math.floor(width * 0.26)));
+  // The log box's usable width: the root's padding, the sidebar and the gap, then
+  // this panel's own border and padding.
+  const logWidth = Math.max(12, width - sidebarW - 9);
+  const rows = useMemo(() => layoutRows(lines, logWidth, full), [lines, logWidth, full]);
+  const win = logWindow(rows.length, logHeight, scrollBack);
+  const offset = win.offset;
+  const visible = rows.slice(win.start, win.end);
 
   const available = props.providers.filter((p) => p.available);
   const spin = SPINNER[tick % SPINNER.length]!;
   const elapsed = running && startedAt ? `${((Date.now() - startedAt) / 1000).toFixed(0)}s` : null;
-  const sidebarW = Math.min(32, Math.max(22, Math.floor(width * 0.26)));
   const rowW = Math.max(4, sidebarW - 4);
 
-  const logTitle = viewingLive
+  const baseTitle = viewingLive
     ? running ? ` ${spin} running ` : phase === 'done' ? ' result ' : ' ready '
     : ` ${fit(viewingRun?.id ?? '', sidebarW)} `;
-  const stateGlyph = running ? spin : lastStatus === 'succeeded' ? '✓' : lastStatus ? '✗' : '◦';
-  const stateColor = running ? theme.accent : lastStatus === 'succeeded' ? theme.ok : lastStatus ? theme.err : theme.faint;
-  const stateLabel = running ? 'working' : lastStatus ? lastStatus : 'ready';
+  // Say so when the log is held above the tail — otherwise a paused view looks
+  // like a stalled run.
+  const logTitle = offset > 0 ? `${baseTitle}↑${offset} ` : baseTitle;
+
+  // While browsing history the status line belongs to the run being read, not to
+  // whatever the live slot last did.
+  const shownStatus = viewingLive ? (running ? 'running' : lastStatus) : (viewingRun?.status ?? null);
+  const shownAgents = viewingLive ? spend.agents : (viewingRun?.spentAgents ?? 0);
+  const shownCost = viewingLive ? spend.cost : (viewingRun?.spentCostUsd ?? 0);
+  const stateGlyph = running && viewingLive ? spin : shownStatus === 'succeeded' ? '✓' : shownStatus === 'cancelled' ? '◼' : shownStatus ? '✗' : '◦';
+  const stateColor = running && viewingLive ? theme.accent : statusColor(shownStatus ?? '');
+  const stateLabel = running && viewingLive ? 'working' : (shownStatus ?? 'ready');
 
   return (
     <box style={{ backgroundColor: theme.canvas, flexDirection: 'column', width, height, paddingLeft: 2, paddingRight: 2, paddingTop: 1, rowGap: compact ? 0 : 1 }}>
@@ -325,7 +359,7 @@ export function App(props: AppProps) {
                 <text fg={theme.faint}>{viewingLive && phase === 'idle' ? 'Ready when you are — press ⏎ to run, or / for commands.' : 'No events.'}</text>
               ) : (
                 visible.map((ln, i) => (
-                  <text key={i} fg={ln.color}>{'  '.repeat(ln.indent ?? 0) + ln.text}</text>
+                  <text key={i} fg={ln.color}>{ln.text}</text>
                 ))
               )}
             </box>
@@ -336,9 +370,9 @@ export function App(props: AppProps) {
             <box style={{ flexDirection: 'row' }}>
               <text fg={stateColor}>{`${stateGlyph} ${stateLabel}`}</text>
               <text fg={theme.faint}>{'  ·  '}</text>
-              <text fg={theme.dim}>{`${spend.agents} agents`}</text>
+              <text fg={theme.dim}>{`${shownAgents} agents`}</text>
               <text fg={theme.faint}>{'  ·  '}</text>
-              <text fg={theme.dim}>{`$${spend.cost.toFixed(4)}`}</text>
+              <text fg={theme.dim}>{`$${shownCost.toFixed(4)}`}</text>
               {elapsed ? <text fg={theme.faint}>{'  ·  '}</text> : null}
               {elapsed ? <text fg={theme.dim}>{elapsed}</text> : null}
               {notice ? <text fg={theme.warn}>{`  ·  ${fit(notice, 48)}`}</text> : null}
@@ -411,7 +445,8 @@ export function App(props: AppProps) {
             <Hint k="↑↓" label={paletteOpen ? 'pick' : 'runs'} />
             <Hint k="⇥" label={paletteOpen ? 'complete' : 'workflow'} />
             <Hint k="⏎" label="run" />
-            <Hint k="^U" label="clear" />
+            {!compact ? <Hint k="⇞⇟" label="scroll" /> : null}
+            {!compact ? <Hint k="^F" label={full ? 'clip' : 'full text'} /> : null}
             <Hint k="esc" label={running ? 'cancel' : 'quit'} />
           </box>
         </>
@@ -435,6 +470,8 @@ function HelpView(): React.ReactNode {
     ['/', 'open the command palette'],
     ['↑ ↓', 'browse runs (or pick a command)'],
     ['⇥', 'cycle workflow (or complete a command)'],
+    ['⇞ ⇟', 'scroll the log back and forward'],
+    ['^F', 'full text — wrap results instead of clipping'],
     ['^U', 'clear the input'],
     ['^R', 'refresh the runs list'],
     ['esc', 'cancel a run · clear input · quit'],

@@ -9,9 +9,10 @@ import { Workspace, Store } from '@omakase/core';
 import type { RunRecord } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { App } from './app.tsx';
+import { runGoal } from '@omakase/engine';
 import { SettingsView } from './settings-view.tsx';
 import { filterCommands, isCommandInput, parseCommand } from './commands.ts';
-import { eventLines, theme } from './render.ts';
+import { eventLines, layoutRows, logWindow, theme } from './render.ts';
 
 const providers: ProviderInfo[] = [
   { id: 'claude', command: 'claude', label: 'Claude', available: true, version: '1', path: '/c', models: ['sonnet'] },
@@ -258,4 +259,107 @@ test('eventLines maps events to styled lines', () => {
   expect(lines[0]!.color).toBe(theme.accent2);
   expect(lines[1]!.text).toContain('built it');
   expect(lines[1]!.color).toBe(theme.ok);
+});
+
+test('layoutRows: clip mode gives exactly one padded row per line', () => {
+  const long = 'x'.repeat(200);
+  const rows = layoutRows([{ text: long, color: theme.fg }, { text: 'short', color: theme.fg, indent: 2 }], 40, false);
+  // One row each is what the window arithmetic budgets for; more would overflow
+  // the panel and paint rows on top of each other.
+  expect(rows).toHaveLength(2);
+  for (const r of rows) expect(r.text.length).toBe(40);
+  expect(rows[0]!.text.endsWith('…')).toBe(true);
+  expect(rows[1]!.text.startsWith('    short')).toBe(true);
+});
+
+test('layoutRows: full mode wraps instead of truncating, and always terminates', () => {
+  const sentence = 'the handler returns ok and uptime as JSON with a 200 and the suite covers it';
+  const rows = layoutRows([{ text: sentence, color: theme.fg, indent: 1 }], 30, true);
+  expect(rows.length).toBeGreaterThan(1);
+  const joined = rows.map((r) => r.text.trim()).join(' ');
+  expect(joined).toContain('the suite covers it'); // nothing dropped
+  for (const r of rows) expect(r.text.length).toBe(30);
+
+  // A single token longer than the line has no space to break on — it must still
+  // consume the string rather than spin.
+  const unbroken = layoutRows([{ text: 'y'.repeat(120), color: theme.fg }], 20, true);
+  expect(unbroken.length).toBeGreaterThan(1);
+  expect(unbroken.length).toBeLessThan(20);
+});
+
+test('logWindow: pins to the tail, clamps scrollback, and stops at the top', () => {
+  expect(logWindow(100, 10, 0)).toEqual({ start: 90, end: 100, offset: 0 }); // tail
+  expect(logWindow(100, 10, 5)).toEqual({ start: 85, end: 95, offset: 5 });
+  // Paging past the top parks at the top rather than scrolling into nothing.
+  expect(logWindow(100, 10, 999)).toEqual({ start: 0, end: 10, offset: 90 });
+  // Fewer rows than the panel: everything shows and there is nothing to scroll.
+  expect(logWindow(3, 10, 7)).toEqual({ start: 0, end: 3, offset: 0 });
+});
+
+test('log rows do not overprint each other', async () => {
+  // A run long enough to overflow the panel. When the window arithmetic budgets
+  // more rows than the box can hold, the surplus is painted on top of rows that
+  // are already there and two lines blend into one unreadable row.
+  const store = new Store(':memory:');
+  const dir = mkdtempSync(join(tmpdir(), 'omks-tui-log-'));
+  const ws = Workspace.init(dir);
+  let n = 0;
+  const harness = {
+    id: 'scripted',
+    async runAgent(req: { role: string; title: string; provider: string; onActivity?: (a: unknown) => void }) {
+      n++;
+      if (req.role === 'worker') {
+        for (const s of ['Reading src/app.ts', 'Writing src/thing.ts', 'Running bun test']) {
+          req.onActivity?.({ kind: 'tool', summary: s, at: 0 });
+        }
+      }
+      return {
+        text: req.role === 'planner' ? 'Step one\nStep two\nStep three' : `Added src/thing.ts; bun test green. ${'detail '.repeat(12)}`,
+        status: 'ok' as const,
+        sessionId: `s${n}`,
+        tokens: 10,
+        costUsd: 0.01,
+        activities: [],
+        durationMs: 1,
+        provider: req.provider,
+      };
+    },
+    async listProviders() {
+      return providers;
+    },
+  };
+  try {
+    await runGoal({ goal: { text: 'build a thing', workflow: 'goal', cwd: dir }, workspace: ws, store, harness: harness as never });
+    const setup = await testRender(
+      createElement(App, { workspace: ws, store, providers, workflows: ['goal'], onExit: () => {} }),
+      // A short terminal: the log has far more rows than the panel, which is
+      // exactly when a wrong row budget starts painting lines over each other.
+      { width: 100, height: 20 },
+    );
+    await setup.renderOnce();
+    await act(async () => {
+      setup.mockInput.pressArrow('down'); // browse the stored run
+    });
+    await setup.renderOnce();
+
+    const runId = store.listRuns({ limit: 1 })[0]!.id;
+    const expected = layoutRows(eventLines(store.getEvents(runId)), 65, false).map((r) => r.text.trim());
+    // The log panel is the second bordered column on each row of the frame.
+    const painted = setup
+      .captureCharFrame()
+      .split('\n')
+      .map((l) => l.split('│'))
+      .filter((parts) => parts.length >= 4)
+      .map((parts) => parts[3]!.trim())
+      .filter(Boolean);
+
+    expect(painted.length).toBeGreaterThan(5); // the log really is populated
+    // What is on screen must be exactly the newest N rows, in order. Budgeting
+    // more rows than the panel holds shows up here as skipped or blended lines.
+    expect(painted).toEqual(expected.slice(expected.length - painted.length));
+    setup.renderer.destroy();
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

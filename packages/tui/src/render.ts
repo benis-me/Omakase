@@ -37,6 +37,71 @@ export interface Line {
   indent?: number;
 }
 
+/** One physical terminal row: exactly what gets painted on one line. */
+export interface Row {
+  text: string;
+  color: string;
+}
+
+/**
+ * Lay logical lines out as physical rows of a fixed width.
+ *
+ * A `<text>` whose content is wider than its box wraps, which silently costs
+ * more rows than the caller budgeted for — the window slice then overflows the
+ * panel and rows paint over each other. Deciding here how many rows each line
+ * really occupies is what keeps the log legible: `wrap: false` clips a line to
+ * exactly one row, `wrap: true` breaks it into as many as it needs, and either
+ * way the count the caller sees is the count it gets.
+ */
+export function layoutRows(lines: Line[], width: number, wrap: boolean): Row[] {
+  const w = Math.max(8, width);
+  const rows: Row[] = [];
+  // Every row is padded to the full width: the window slides a row's text under
+  // a reused element, and a shorter string would otherwise leave the tail of the
+  // previous one on screen.
+  const push = (text: string, color: string) => rows.push({ text: text.padEnd(w), color });
+  for (const ln of lines) {
+    const pad = '  '.repeat(ln.indent ?? 0);
+    const text = pad + ln.text;
+    if (!wrap) {
+      push(text.length > w ? text.slice(0, w - 1) + '…' : text, ln.color);
+      continue;
+    }
+    if (text.length <= w) {
+      push(text, ln.color);
+      continue;
+    }
+    // Wrapped continuations keep the line's indent, so a long agent result stays
+    // visually attached to the agent it came from.
+    const cont = pad + '  ';
+    let rest = text;
+    let first = true;
+    while (rest.length) {
+      const room = first ? w : Math.max(8, w - cont.length);
+      let cut = rest.length <= room ? rest.length : rest.lastIndexOf(' ', room);
+      if (cut <= 0 || rest.length <= room) cut = Math.min(room, rest.length);
+      push((first ? '' : cont) + rest.slice(0, cut).trimEnd(), ln.color);
+      rest = rest.slice(cut).trimStart();
+      first = false;
+    }
+  }
+  return rows;
+}
+
+/**
+ * The slice of rows a log panel should paint, given how far the reader has
+ * scrolled back from the newest row. `scrollBack` is clamped to what actually
+ * exists, so holding page-up past the top parks at the top, and a run that
+ * grows while pinned (offset 0) keeps showing its tail.
+ */
+export function logWindow(total: number, height: number, scrollBack: number): { start: number; end: number; offset: number } {
+  const h = Math.max(1, height);
+  const maxScroll = Math.max(0, total - h);
+  const offset = Math.min(Math.max(0, scrollBack), maxScroll);
+  const end = total - offset;
+  return { start: Math.max(0, end - h), end, offset };
+}
+
 function short(s: string, n = 200): string {
   const one = s.replace(/\s+/g, ' ').trim();
   return one.length > n ? one.slice(0, n - 1) + '…' : one;

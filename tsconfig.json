@@ -2,7 +2,9 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["bun"]
+    "types": [
+      "bun"
+    ]
   },
   "include": [
     "packages/core/src",
@@ -11,5 +13,8 @@
     "packages/cli/src",
     "packages/cli/bin",
     "scripts"
+  ],
+  "exclude": [
+    "scripts/capture-tui.ts"
   ]
 }
