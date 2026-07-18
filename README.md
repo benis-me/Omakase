@@ -146,6 +146,7 @@ RUN OPTIONS
   --max-rounds <n>              cap goal-loop rounds (plan → build → verify → fix)
   --param k=v                   workflow parameter (repeatable)
   --session, -s <id>            continue a session   --cwd <dir>  working directory
+  --save-as <name>              keep this run as a reusable workflow
   --json                        emit one JSON event per line (JSONL)
 ```
 
@@ -283,6 +284,13 @@ The `w` API:
 | `w.goal` · `w.params` · `w.cwd` · `w.signal` | the goal, `--param` values, working dir, cancellation |
 
 Workflows live either as a flat `<name>.ts` or a **skills‑like folder** with `WORKFLOW.md` (frontmatter incl. a SEMVER `version`) + `workflow.ts` + optional `references/`. Workspace workflows shadow built‑ins of the same name, so you can customize anything. `omks workflow version <name> --bump minor` snapshots and bumps. See [`examples/workflows/ship-feature/`](examples/workflows/ship-feature) for a real folder‑format workflow using `isolate` + provider routing + `recall`. Validate a workflow without spending anything: `omks workflow test <name>`.
+
+**Keeping a run.** `omks run "…" --workflow auto --save-as api-audit` writes what
+just executed into `.omks/workflows/api-audit/` as real source: the phases it ran,
+the agents that ran in parallel, and their prompts with the original goal swapped
+for `${w.goal.text}`. This is the accumulation loop — a good one-off orchestration
+becomes something you can run again, and edit. It works for any workflow, because
+the engine watched the execution rather than asking a model to reconstruct it.
 
 Built‑ins: **goal** (default), **auto** (prompt self‑orchestration — the model designs its own DAG), **mission**, **tdd**, **review**, **research**, **parallel**, **solo**.
 

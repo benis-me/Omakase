@@ -42,6 +42,7 @@ export { isGitRepo, createWorktree, commitAndMerge, removeWorktree, GitSerialize
 export { verifyGoal, type VerifyContext, type VerifyResult, type CriterionResult } from './verify.ts';
 export { buildResumeState, type ResumeState } from './resume.ts';
 export { Journal } from './journal.ts';
+export { crystallize, type Crystallized } from './crystallize.ts';
 export { makeSystemPromptFactory } from './prompt.ts';
 
 export {

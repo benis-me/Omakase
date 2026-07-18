@@ -1,11 +1,12 @@
 import { test, expect } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, chmodSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, chmodSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Workspace, Store, AbortError } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { runGoal, resumeRun } from './orchestrator.ts';
 import { buildResumeState } from './resume.ts';
+import { crystallize } from './crystallize.ts';
 import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
 import { verifyGoal } from './verify.ts';
@@ -788,6 +789,100 @@ test('advisor: a stalled loop is advised once, and the advice reaches the agents
     expect(out.status).toBe('failed');
     const logs = store.getEvents(out.runId).filter((e) => e.type === 'log').map((e) => e.payload.message);
     expect(logs.some((m) => m.startsWith('Advice:'))).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('crystallize: a run is saved as a workflow that runs again', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // A run with two phases and a genuinely parallel pair, so the saved source
+    // has to reproduce both the ordering and the concurrency.
+    const harness = new FakeHarness((req) => (req.role === 'planner' ? 'A\nB' : 'done'));
+    const first = await runGoal({
+      goal: { text: 'audit the API surface', workflow: 'goal', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+    });
+
+    const built = crystallize({
+      name: 'api-audit',
+      goalText: 'audit the API surface',
+      events: store.getEvents(first.runId),
+      sourceWorkflow: 'goal',
+    })!;
+    expect(built).not.toBeNull();
+    expect(built.phases).toEqual(['Plan', 'Build', 'Validate'].slice(0, built.phases.length));
+    // The original goal is gone from the prompts, replaced by the interpolation
+    // that produced it — otherwise the workflow would only ever fit one goal.
+    expect(built.script).not.toContain('audit the API surface');
+    expect(built.script).toContain('${w.goal.text}');
+    expect(built.script).toContain('w.parallel('); // the concurrent build steps
+    expect(built.doc).toContain('name: api-audit');
+
+    // The real assertion: write it where a workflow lives and run it.
+    const dir = join(ws.paths.workflows, 'api-audit');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'workflow.ts'), built.script);
+    writeFileSync(join(dir, 'WORKFLOW.md'), built.doc);
+
+    const replay = new FakeHarness(() => 'done');
+    const second = await runGoal({
+      goal: { text: 'audit the auth module instead', workflow: 'api-audit', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: replay,
+    });
+    expect(second.status).toBe('succeeded');
+    expect(replay.calls.length).toBeGreaterThanOrEqual(built.stepCount);
+    // It is running against its *own* goal, not the one it was saved from.
+    expect(replay.calls.some((c) => c.prompt.includes('audit the auth module instead'))).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('crystallize: refuses runs with nothing to save, and survives odd prompts', async () => {
+  // A run that never dispatched an agent is not a workflow.
+  expect(crystallize({ name: 'x', goalText: 'g', events: [], sourceWorkflow: 'goal' })).toBeNull();
+
+  // Backticks and ${} in a prompt must not break out of the template literal
+  // they are pasted into — that would emit source that does not parse.
+  const hostile = 'use `code` and ${injected} and a backslash \\ here';
+  const events = [
+    { runId: 'r', seq: 1, type: 'phase:started', payload: { name: 'Go', index: 0 }, createdAt: 0 },
+    {
+      runId: 'r', seq: 2, type: 'agent:started',
+      payload: { callId: 'a1', stepKey: 's', role: 'worker', title: "it's tricky", provider: 'claude', model: null, prompt: hostile, attempt: 1 },
+      createdAt: 0,
+    },
+    {
+      runId: 'r', seq: 3, type: 'agent:completed',
+      payload: { callId: 'a1', stepKey: 's', text: 'ok', status: 'ok', providerSessionId: null, tokens: 1, costUsd: 0, durationMs: 1 },
+      createdAt: 0,
+    },
+  ] as never;
+  const built = crystallize({ name: 'Odd Name!', goalText: 'g', events, sourceWorkflow: 'auto' })!;
+  expect(built.name).toBe('odd-name'); // slugified into a usable workflow name
+  expect(built.script).toContain('\\`code\\`');
+  expect(built.script).toContain('\\${injected}');
+  expect(built.script).toContain("title: 'it\\'s tricky'");
+
+  // Escaping is only correct if the emitted source actually parses and runs —
+  // asserting on the text alone would not catch a broken template literal.
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const dir = join(ws.paths.workflows, built.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'workflow.ts'), built.script);
+    const harness = new FakeHarness(() => 'ok');
+    const out = await runGoal({ goal: { text: 'anything', workflow: built.name, cwd: ws.root }, workspace: ws, store, harness });
+    expect(out.status).toBe('succeeded');
+    // The hostile characters reached the agent intact, not mangled by escaping.
+    expect(harness.calls[0]!.prompt).toContain('`code`');
+    expect(harness.calls[0]!.prompt).toContain('${injected}');
   } finally {
     cleanup();
   }

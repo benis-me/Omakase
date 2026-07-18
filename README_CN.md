@@ -126,6 +126,7 @@ run 选项
   --max-rounds <n>              限制目标循环轮数（规划 → 构建 → 验证 → 修补）
   --param k=v                   工作流参数（可重复）
   --session, -s <id>            延续一个会话       --cwd <dir>  工作目录
+  --save-as <name>              把这次运行固化成可复用的工作流
   --json                        每行输出一个 JSON 事件（JSONL）
 ```
 
@@ -169,6 +170,12 @@ export default async function ship(w: WorkflowContext): Promise<void> {
   w.requestReport({ kind: 'final', title: '完成', summary: `交付 ${steps.length} 步。` });
 }
 ```
+
+**把一次运行留下来。** `omks run "…" --workflow auto --save-as api-audit` 会把刚跑完的
+东西写进 `.omks/workflows/api-audit/`，是真正的源码：跑过的阶段、并行跑的那几个 agent、
+以及它们的 prompt（其中原来的目标被替换成 `${w.goal.text}`）。这就是"越用积累越多"的那个
+闭环——一次不错的临时编排，变成可以再跑、也可以改的东西。它对任何工作流都有效，因为引擎是
+**看着执行发生的**，不需要再让模型去复原。
 
 内置工作流：**goal**（默认）、**auto**（提示词自编排 —— 由模型自己设计 DAG）、**mission**、**tdd**、**review**、**research**、**parallel**、**solo**。工作区里的同名工作流会覆盖内置版本。用 `omks workflow test <name>` 可以不花钱地验证一个工作流的形状。
 

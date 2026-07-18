@@ -1,12 +1,14 @@
 import { createInterface } from 'node:readline';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Workspace, Store, type Goal, type SuccessCriterion } from '@omakase/core';
-import { runGoal } from '@omakase/engine';
+import { runGoal, crystallize } from '@omakase/engine';
 import { parseArgs, type ParsedArgs, flagStr, flagBool } from '../args.ts';
 import { openOrInit } from './shared.ts';
-import { print, printErr, streamPrinter, exitCodeFor, c, banner } from '../ui.ts';
+import { print, printErr, streamPrinter, exitCodeFor, sym, c, banner } from '../ui.ts';
 
 const SPEC = {
-  value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time'],
+  value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time', 'save-as'],
   repeatable: ['criteria', 'check', 'param'],
   alias: { w: 'workflow', p: 'provider', m: 'model', s: 'session' },
 };
@@ -58,6 +60,47 @@ function parseParams(pairs: string[]): Record<string, unknown> {
     out[key] = raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
   }
   return out;
+}
+
+/**
+ * Keep the run: write what just executed back out as a workflow you can run
+ * again. Refuses to clobber an existing name — a saved workflow is source you
+ * may have edited since, and silently overwriting it would lose that.
+ */
+function saveRunAsWorkflow(
+  saveAs: string,
+  runId: string,
+  goalText: string,
+  workspace: Workspace,
+  store: Store,
+  json: boolean,
+): void {
+  const run = store.getRun(runId);
+  const built = crystallize({
+    name: saveAs,
+    goalText,
+    events: store.getEvents(runId),
+    sourceWorkflow: run?.workflow ?? 'goal',
+  });
+  if (!built) {
+    printErr(c.yellow(`Not saved: the run had no agent steps to crystallise.`));
+    return;
+  }
+  const dir = join(workspace.paths.workflows, built.name);
+  if (existsSync(dir)) {
+    printErr(c.yellow(`Not saved: a workflow named "${built.name}" already exists at ${dir}.`));
+    return;
+  }
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'workflow.ts'), built.script);
+  writeFileSync(join(dir, 'WORKFLOW.md'), built.doc);
+  if (!json) {
+    print(
+      `\n${sym.ok} Saved as workflow ${c.cyan(built.name)} ${c.dim(`(${built.stepCount} step(s)${built.phases.length ? ` · ${built.phases.join(' → ')}` : ''})`)}\n` +
+        c.dim(`  ${dir}\n  run it: `) +
+        c.cyan(`omks run "<goal>" -w ${built.name}`),
+    );
+  }
 }
 
 export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }): Promise<number> {
@@ -119,6 +162,8 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       ...(process.stdin.isTTY && !json ? { ask: stdinAnswerer } : {}),
       onEvent: streamPrinter(json),
     });
+    const saveAs = flagStr(args, 'save-as');
+    if (saveAs) saveRunAsWorkflow(saveAs, outcome.runId, goalText, workspace, store, json);
     if (!json) {
       const sid = store.getRun(outcome.runId)?.sessionId;
       print(c.dim(`\nrun ${outcome.runId}${sid ? ` · session ${sid}` : ''} · resume: omks resume ${outcome.runId}`));
