@@ -101,6 +101,12 @@ for (const k of keys) {
   await act(async () => {
     if (k === 'down' || k === 'up' || k === 'left' || k === 'right') await setup.mockInput.pressArrow(k as 'down');
     else if (k.startsWith('ctrl+')) await setup.mockInput.pressKey(k.slice(5), { ctrl: true });
+    // The mock has no page keys, so feed the terminal's own escape sequences.
+    else if (k.startsWith('type:')) await setup.mockInput.typeText(k.slice(5));
+    else if (k === 'alt-enter') setup.renderer.stdin.emit('data', Buffer.from('\x1b\r'));
+    else if (k === 'enter') setup.mockInput.pressEnter();
+    else if (k === 'pageup') setup.renderer.stdin.emit('data', Buffer.from('\x1b[5~'));
+    else if (k === 'pagedown') setup.renderer.stdin.emit('data', Buffer.from('\x1b[6~'));
     else await setup.mockInput.pressKey(k);
   });
   await setup.renderOnce();

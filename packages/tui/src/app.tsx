@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useKeyboard, useTerminalDimensions } from '@opentui/react';
+import { defaultTextareaKeyBindings, type TextareaRenderable } from '@opentui/core';
 import { runGoal, resumeRun } from '@omakase/engine';
 import type { Workspace, Store, AnyRunEvent, RunRecord } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
@@ -37,6 +38,28 @@ function fit(s: string, w: number): string {
   return s.length > w ? s.slice(0, w - 1) + '…' : s;
 }
 
+/**
+ * The composer is a goal box, not a document editor, so it departs from the
+ * textarea defaults twice: ⏎ runs the goal (the default inserts a newline, and
+ * ⏎ has always been "go" here), and ↑↓ are left alone so they keep browsing the
+ * runs list. ⌥⏎ is the newline instead — terminals deliver it as an escape
+ * prefix, where shift+⏎ needs a protocol not every terminal speaks.
+ */
+const COMPOSER_BINDINGS = [
+  ...defaultTextareaKeyBindings.filter(
+    (b) => !['move-up', 'move-down', 'newline', 'submit'].includes(b.action),
+  ),
+  { name: 'return', action: 'submit' as const },
+  { name: 'kpenter', action: 'submit' as const },
+  { name: 'return', meta: true, action: 'newline' as const },
+  { name: 'kpenter', meta: true, action: 'newline' as const },
+];
+
+/** How many rows the composer shows: one per line, capped so the log keeps room. */
+function composerHeight(text: string): number {
+  return Math.min(6, Math.max(1, text.split('\n').length));
+}
+
 export function App(props: AppProps) {
   const { width, height } = useTerminalDimensions();
   const [view, setView] = useState<View>('main');
@@ -59,6 +82,14 @@ export function App(props: AppProps) {
   const [scrollBack, setScrollBack] = useState(0);
   const [full, setFull] = useState(false); // wrap results instead of clipping
   const abortRef = useRef<AbortController | null>(null);
+  const composerRef = useRef<TextareaRenderable | null>(null);
+
+  // The composer owns its own buffer, so anything that writes into it on the
+  // app's behalf (clearing, completing a command) has to say so twice.
+  const writeComposer = useCallback((text: string) => {
+    setGoal(text);
+    composerRef.current?.setText(text);
+  }, []);
 
   const workflow = props.workflows[wfIndex] ?? 'goal';
   const running = phase === 'running';
@@ -162,9 +193,9 @@ export function App(props: AppProps) {
     (value: string) => {
       const parsed = parseCommand(value);
       const cmd = matches[palIndex] ?? (parsed ? COMMANDS.find((c) => c.name === parsed.name) : undefined);
-      if (!cmd) { setNotice(`unknown command: ${value}`); setGoal(''); return; }
+      if (!cmd) { setNotice(`unknown command: ${value}`); writeComposer(''); return; }
       const arg = parsed?.arg ?? '';
-      setGoal('');
+      writeComposer('');
       setNotice(null);
       switch (cmd.name) {
         case 'workflow': {
@@ -194,7 +225,7 @@ export function App(props: AppProps) {
         case 'quit': props.onExit(0); break;
       }
     },
-    [matches, palIndex, props, runs.length, resume, liveRunId],
+    [matches, palIndex, props, runs.length, resume, liveRunId, writeComposer],
   );
 
   const submit = useCallback(
@@ -219,15 +250,15 @@ export function App(props: AppProps) {
     }
     if (name === 'escape') {
       if (running) abortRef.current?.abort();
-      else if (goal) setGoal('');
+      else if (goal) writeComposer('');
       else props.onExit(0);
       return;
     }
-    if (name === 'u' && key.ctrl) { setGoal(''); return; }
+    if (name === 'u' && key.ctrl) { writeComposer(''); return; }
     if (name === 'tab') {
       if (paletteOpen && matches[palIndex]) {
         const cmd = matches[palIndex]!;
-        setGoal(cmd.arg === 'none' ? `/${cmd.name}` : `/${cmd.name} `);
+        writeComposer(cmd.arg === 'none' ? `/${cmd.name}` : `/${cmd.name} `);
       } else if (!running) {
         setWfIndex((i) => (i + 1) % Math.max(1, props.workflows.length));
       }
@@ -278,7 +309,9 @@ export function App(props: AppProps) {
   // row gaps, the status line, the bordered input, the footer, and this panel's
   // own borders. Overshooting costs a blank row; undershooting paints rows on
   // top of each other, so this errs high.
-  const chromeRows = (compact ? 12 : 15) + paletteRows;
+  // 15 assumed a one-line composer; a taller one costs the log those rows.
+  const composerRows = composerHeight(goal);
+  const chromeRows = (compact ? 12 : 15) + paletteRows + (composerRows - 1);
   const logHeight = Math.max(3, height - chromeRows);
   const sidebarW = Math.min(32, Math.max(22, Math.floor(width * 0.26)));
   // The log box's usable width: the root's padding, the sidebar and the gap, then
@@ -424,8 +457,9 @@ export function App(props: AppProps) {
             {/* The value already shows the "/", so keep the caret glyph stable
                 and let its colour signal command mode. */}
             <text fg={paletteOpen ? theme.accent2 : theme.accent}>{running ? `${spin} ` : '❯ '}</text>
-            <input
-              style={{ flexGrow: 1 }}
+            <textarea
+              ref={composerRef}
+              style={{ flexGrow: 1, height: composerRows }}
               focused={!running}
               placeholder="Describe a goal…  (/ for commands)"
               placeholderColor={theme.placeholder}
@@ -433,9 +467,9 @@ export function App(props: AppProps) {
               focusedBackgroundColor={theme.inputBg}
               textColor={theme.inputFg}
               focusedTextColor={theme.inputFgFocus}
-              value={goal}
-              onInput={(v: string) => setGoal(v)}
-              onSubmit={(v: unknown) => submit(typeof v === 'string' ? v : goal)}
+              keyBindings={COMPOSER_BINDINGS}
+              onContentChange={() => setGoal(composerRef.current?.plainText ?? '')}
+              onSubmit={() => submit(composerRef.current?.plainText ?? goal)}
             />
           </box>
 
@@ -445,6 +479,7 @@ export function App(props: AppProps) {
             <Hint k="↑↓" label={paletteOpen ? 'pick' : 'runs'} />
             <Hint k="⇥" label={paletteOpen ? 'complete' : 'workflow'} />
             <Hint k="⏎" label="run" />
+            {width >= 96 ? <Hint k="⌥⏎" label="newline" /> : null}
             {!compact ? <Hint k="⇞⇟" label="scroll" /> : null}
             {!compact ? <Hint k="^F" label={full ? 'clip' : 'full text'} /> : null}
             <Hint k="esc" label={running ? 'cancel' : 'quit'} />
@@ -470,6 +505,7 @@ function HelpView(): React.ReactNode {
     ['/', 'open the command palette'],
     ['↑ ↓', 'browse runs (or pick a command)'],
     ['⇥', 'cycle workflow (or complete a command)'],
+    ['⌥ ⏎', 'newline in the composer (⏎ runs the goal)'],
     ['⇞ ⇟', 'scroll the log back and forward'],
     ['^F', 'full text — wrap results instead of clipping'],
     ['^U', 'clear the input'],

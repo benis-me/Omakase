@@ -363,3 +363,100 @@ test('log rows do not overprint each other', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('page keys scroll the log and return it to the tail', async () => {
+  // The mock input has no page keys, so this feeds the terminal's own escape
+  // sequences — the same bytes a real terminal sends.
+  const PAGE_UP = '\x1b[5~';
+  const PAGE_DOWN = '\x1b[6~';
+  const store = new Store(':memory:');
+  const dir = mkdtempSync(join(tmpdir(), 'omks-tui-scroll-'));
+  const ws = Workspace.init(dir);
+  const harness = {
+    id: 'scripted',
+    async runAgent(req: { role: string; provider: string; onActivity?: (a: unknown) => void }) {
+      if (req.role === 'worker') {
+        for (const s of ['Reading a', 'Reading b', 'Reading c']) req.onActivity?.({ kind: 'tool', summary: s, at: 0 });
+      }
+      return {
+        text: req.role === 'planner' ? 'One\nTwo\nThree' : 'done',
+        status: 'ok' as const, sessionId: 's', tokens: 1, costUsd: 0.01,
+        activities: [], durationMs: 1, provider: req.provider,
+      };
+    },
+    async listProviders() {
+      return providers;
+    },
+  };
+  try {
+    await runGoal({ goal: { text: 'scrollable run', workflow: 'goal', cwd: dir }, workspace: ws, store, harness: harness as never });
+    const setup = await testRender(
+      createElement(App, { workspace: ws, store, providers, workflows: ['goal'], onExit: () => {} }),
+      { width: 100, height: 24 },
+    );
+    await setup.renderOnce();
+    await act(async () => {
+      setup.mockInput.pressArrow('down');
+    });
+    await setup.renderOnce();
+    // The scroll indicator lives in the log panel's title; the footer has its
+    // own ↑ hint, so look only at the title row.
+    const titleRow = (frame: string) => frame.split('\n').find((l) => l.includes('run_')) ?? '';
+    const tail = setup.captureCharFrame();
+    expect(titleRow(tail)).not.toContain('↑'); // pinned to the newest row
+
+    await act(async () => {
+      setup.renderer.stdin.emit('data', Buffer.from(PAGE_UP));
+    });
+    await setup.renderOnce();
+    const scrolled = setup.captureCharFrame();
+    expect(titleRow(scrolled)).toContain('↑'); // the title says the view is held back
+    expect(scrolled).not.toBe(tail);
+
+    await act(async () => {
+      setup.renderer.stdin.emit('data', Buffer.from(PAGE_DOWN));
+    });
+    await setup.renderOnce();
+    // Paging back down lands on the tail again, where a live run keeps streaming.
+    expect(setup.captureCharFrame()).toBe(tail);
+    setup.renderer.destroy();
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('composer: ⌥⏎ adds a line, ⏎ still submits', async () => {
+  const { setup, cleanup } = await render();
+  try {
+    await act(async () => {
+      await setup.mockInput.typeText('add a healthz route');
+      // Terminals send meta+return as an escape prefix.
+      setup.renderer.stdin.emit('data', Buffer.from('\x1b\r'));
+      await setup.mockInput.typeText('and a test for it');
+    });
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    // Both lines are in the composer, so a goal is no longer a single line.
+    expect(frame).toContain('add a healthz route');
+    expect(frame).toContain('and a test for it');
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+});
+
+test('composer: ⏎ submits a command rather than inserting a newline', async () => {
+  const { setup, cleanup } = await render();
+  try {
+    await act(async () => {
+      await setup.mockInput.typeText('/help');
+      setup.mockInput.pressEnter();
+    });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain('Keys'); // the help view opened
+    setup.renderer.destroy();
+  } finally {
+    cleanup();
+  }
+});
