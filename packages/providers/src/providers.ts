@@ -1,6 +1,7 @@
 // Provider definitions — one per agent CLI. Flags verified against the live
 // binaries (claude 2.x, codex, gemini, cursor-agent) on macOS.
 
+import type { PermissionMode } from '@omakase/core';
 import type { AgentProvider, TurnContext, SpawnPlan } from './types.ts';
 import { ClaudeStreamParser, GenericJsonParser, CodexJsonParser, CursorStreamParser, TextTailParser } from './parsers.ts';
 import { augmentedPath } from './env.ts';

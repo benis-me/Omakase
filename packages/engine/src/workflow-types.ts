@@ -5,6 +5,8 @@
 import type { Goal, BudgetSnapshot, PermissionMode } from '@omakase/core';
 
 export interface AgentSpec {
+  /** What this one agent may do, overriding the run's mode. */
+  permission?: PermissionMode;
   /** Semantic role: planner | worker | reviewer | validator | ... (free-form). */
   role?: string;
   /** Short human title shown in the UI (e.g. "Build: auth"). */
