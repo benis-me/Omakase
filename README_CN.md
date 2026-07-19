@@ -127,6 +127,7 @@ run 选项
   --max-rounds <n>              限制目标循环轮数（规划 → 构建 → 验证 → 修补）
   --param k=v                   工作流参数（可重复）
   --session, -s <id>            延续一个会话       --cwd <dir>  工作目录
+  --permission <mode>           read-only | edit | bypass（默认取工作区设置）
   --save-as <name>              把这次运行固化成可复用的工作流
   --json                        每行输出一个 JSON 事件（JSONL）
 ```
@@ -224,6 +225,26 @@ resume 时会**静默地错**：第二次跑走了另一条分支，缓存却把
   provider（并发出 `harness:switched`）—— 于是 claude 挂掉不会卡死整个运行。
 - **预算：** 可以按 agent 调用数、**美元花费**或**墙钟时间**给一次运行封顶
   （`--max-agents` / `--max-usd` / `--max-time`），停下时会说明确切原因。
+
+### 权限档位
+
+"能做什么"和"由谁来做"是两条正交的轴：
+
+| 档位 | 含义 |
+| --- | --- |
+| `read-only` | 可以看，不能改 |
+| `edit` | 可以改工作目录，不必逐个动作审批 |
+| `bypass` | 完全跳过审批，连沙箱一起（默认） |
+
+每个适配器用自己的原生 flag 表达它们——`claude` 用
+`--permission-mode plan\|acceptEdits\|bypassPermissions`，`codex` 用
+`-s read-only\|workspace-write` 或它的 bypass flag。**表达不了的 provider 会拒绝这次运行**，
+而不是悄悄给出更大的权限：`gemini`、`cursor-agent`、`copilot`、`qwen` 只有一个"全开/全关"的
+开关，所以它们只能做 `bypass`。可以按运行用 `--permission` 指定，按工作区用
+`omks config set permission …`，或按单个 agent 用 `w.agent({ permission })`。
+
+这也正是卡死顾问的"只读"能成立的原因：它要求的是一个 provider 必须用自己的沙箱 flag
+兑现的档位，而在给不出这个承诺的 provider 上，它干脆不出手。
 
 ### Provider 与 Harness
 

@@ -176,7 +176,7 @@ async function evalJudge(
     title: 'Verify goal',
     prompt,
     cwd: ctx.cwd,
-    autoApprove: true,
+    permission: 'bypass',
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
   ctx.onSpend?.(res.tokens, res.costUsd);

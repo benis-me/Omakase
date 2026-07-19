@@ -2,7 +2,7 @@
 // function receives as `w`. This is the stable contract workflow authors code
 // against (mirrors the API documented in .omks/workflows/*.ts).
 
-import type { Goal, BudgetSnapshot } from '@omakase/core';
+import type { Goal, BudgetSnapshot, PermissionMode } from '@omakase/core';
 
 export interface AgentSpec {
   /** Semantic role: planner | worker | reviewer | validator | ... (free-form). */

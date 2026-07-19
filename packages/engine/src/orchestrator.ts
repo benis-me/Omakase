@@ -17,6 +17,8 @@ import {
   type RunEventType,
   type RunEventPayloadMap,
   type GoalVerdict,
+  type PermissionMode,
+  resolvePermission,
 } from '@omakase/core';
 import { RunBus, subscribeRun } from './bus.ts';
 import { SubprocessHarness, type Harness } from './harness.ts';
@@ -52,6 +54,8 @@ export interface RunGoalOptions {
   maxRounds?: number;
   /** Max concurrent agent turns. */
   maxConcurrent?: number;
+  /** What agents in this run may do (defaults to the workspace setting). */
+  permission?: PermissionMode;
   /** Host answerer for w.ask (e.g. CLI stdin, TUI prompt). */
   ask?: Answerer;
   onEvent?: (event: AnyRunEvent) => void;
@@ -263,7 +267,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
     // One object, shared with the goal: the round loop below feeds each pass its
     // gaps by mutating goal.params, which w.params must alias rather than copy.
     params: (goal.params ??= {}),
-    autoApprove: workspace.settings.autoApprove ?? true,
+    permission: opts.permission ?? resolvePermission(workspace.settings),
     defaultProvider: ctx.defaultProvider,
     providerPreference: ctx.providerPreference,
     availableProviders: ctx.availableProviders,

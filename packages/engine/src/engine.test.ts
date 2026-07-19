@@ -8,6 +8,7 @@ import { runGoal, resumeRun } from './orchestrator.ts';
 import { buildResumeState } from './resume.ts';
 import { crystallize } from './crystallize.ts';
 import { lintWorkflow } from './lint.ts';
+import { supportsPermission } from '@omakase/providers';
 import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
 import { verifyGoal } from './verify.ts';
@@ -783,7 +784,9 @@ test('advisor: a stalled loop is advised once, and the advice reaches the agents
     expect(advisorCalls).toHaveLength(1); // consulted, and only once
     // The advisor is handed the evidence, not asked to go dig for it.
     expect(advisorCalls[0]!.prompt).toContain('document the API');
-    expect(advisorCalls[0]!.autoApprove).toBe(false);
+    // Read-only is enforced through the provider's own sandbox flags now,
+    // not merely requested.
+    expect(advisorCalls[0]!.permission).toBe('read-only');
     // Its suggestion then briefs the agents that run afterwards.
     expect(seen).toContain('worker-briefed');
     // It buys a round, but a loop that stalls again still ends.
@@ -961,6 +964,40 @@ test('crystallize output passes lint, even when agents talked about the clock', 
     })!;
     expect(built.script).toContain('Math.random()'); // it really is in there, as prompt text
     expect(lintWorkflow(built.script).ok).toBe(true); // and lint knows that is text
+  } finally {
+    cleanup();
+  }
+});
+
+test('advisor: stays silent rather than run with write access it cannot drop', () => {
+  // gemini has one all-or-nothing switch, so "look but do not touch" is not
+  // something it can promise. Better no advice than an advisor able to edit the
+  // repository it was asked to diagnose.
+  expect(supportsPermission('gemini', 'read-only')).toBe(false);
+  expect(supportsPermission('claude', 'read-only')).toBe(true);
+});
+
+test('permission: a per-agent override beats the run-wide mode', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    writeFileSync(
+      join(ws.paths.workflows, 'mixed.ts'),
+      `export default async function mixed(w){
+        await w.agent({ role: 'worker', title: 'build', prompt: 'do it' });
+        await w.agent({ role: 'reviewer', title: 'review', prompt: 'look', permission: 'read-only' });
+      }\n`,
+    );
+    const harness = new FakeHarness(() => 'ok');
+    await runGoal({
+      goal: { text: 'g', workflow: 'mixed', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+      permission: 'edit',
+    });
+    // The run is allowed to edit; the reviewer explicitly is not.
+    expect(harness.calls[0]!.permission).toBe('edit');
+    expect(harness.calls[1]!.permission).toBe('read-only');
   } finally {
     cleanup();
   }

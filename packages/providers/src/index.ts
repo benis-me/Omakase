@@ -17,6 +17,7 @@ export {
 } from './registry.ts';
 
 export {
+  supportsPermission,
   claudeProvider,
   codexProvider,
   geminiProvider,

@@ -26,6 +26,7 @@ import {
   type RunEventPayloadMap,
   type AnyRunEvent,
   type BudgetSnapshot,
+  type PermissionMode,
 } from '@omakase/core';
 import type { RunBus } from './bus.ts';
 import type { Harness } from './harness.ts';
@@ -54,7 +55,7 @@ export interface RuntimeDeps {
   budget: Budget;
   signal: AbortSignal;
   params: Record<string, unknown>;
-  autoApprove: boolean;
+  permission: PermissionMode;
   defaultProvider: string | null;
   providerPreference: string[];
   availableProviders: string[];
@@ -206,7 +207,7 @@ export class WorkflowRuntime implements WorkflowContext {
                 prompt: spec.prompt,
                 ...(systemPrompt ? { systemPrompt } : {}),
                 cwd: agentCwd,
-                autoApprove: this.d.autoApprove,
+                permission: spec.permission ?? this.d.permission,
                 plannedSessionId: planned,
                 ...(spec.resumeSessionId ? { resumeSessionId: spec.resumeSessionId } : {}),
                 onActivity: (a) => this.emit('agent:activity', { callId, activity: a }),

@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useKeyboard } from '@opentui/react';
+import { PERMISSION_MODES, resolvePermission } from '@omakase/core';
 import type { Workspace, WorkspaceSettings } from '@omakase/core';
 import type { ProviderInfo } from '@omakase/providers';
 import { theme } from './render.ts';
@@ -23,7 +24,7 @@ const ROWS: Row[] = [
   { key: 'defaultProvider', label: 'Default provider', kind: 'enum', hint: 'Agent used when a run or workflow does not pin one' },
   { key: 'defaultModel', label: 'Default model', kind: 'enum', hint: 'Model for the default provider' },
   { key: 'maxAgentsPerRun', label: 'Max agents / run', kind: 'number', hint: 'Budget: how many agent turns a single run may spend' },
-  { key: 'autoApprove', label: 'Auto-approve', kind: 'bool', hint: 'Run agents fully autonomously (yolo) — required for headless work' },
+  { key: 'permission', label: 'Permission', kind: 'enum', hint: 'What agents may do: read-only · edit the workspace · bypass all approval' },
   { key: 'providerPreference', label: 'Provider order', kind: 'list', hint: 'Fallback order when a provider fails (← → rotates)' },
 ];
 
@@ -73,9 +74,13 @@ export function SettingsView(props: SettingsViewProps) {
           save({ maxAgentsPerRun: Math.min(512, Math.max(1, cur + dir * 8)) });
           break;
         }
-        case 'autoApprove':
-          save({ autoApprove: !(settings.autoApprove ?? true) });
+        case 'permission': {
+          const cur = resolvePermission(settings);
+          const i = PERMISSION_MODES.indexOf(cur);
+          const next = PERMISSION_MODES[(i + dir + PERMISSION_MODES.length) % PERMISSION_MODES.length]!;
+          save({ permission: next });
           break;
+        }
         case 'providerPreference': {
           const cur = settings.providerPreference ?? DEFAULT_ORDER;
           const next = dir === 1 ? [...cur.slice(1), cur[0]!] : [cur[cur.length - 1]!, ...cur.slice(0, -1)];
@@ -107,8 +112,8 @@ export function SettingsView(props: SettingsViewProps) {
         return settings.defaultModel ?? 'auto';
       case 'maxAgentsPerRun':
         return String(settings.maxAgentsPerRun ?? 64);
-      case 'autoApprove':
-        return (settings.autoApprove ?? true) ? 'on' : 'off';
+      case 'permission':
+        return resolvePermission(settings);
       case 'providerPreference':
         return (settings.providerPreference ?? DEFAULT_ORDER).join(' → ');
       default:

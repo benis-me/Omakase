@@ -54,7 +54,7 @@ async function checkAuth(only?: string): Promise<number> {
         title: 'auth check',
         prompt: 'Reply with exactly: OK',
         cwd: tmp,
-        autoApprove: true,
+        permission: 'bypass',
         timeoutMs: 120_000, // some CLIs (e.g. codex) are slow to cold-start
       });
       stop();

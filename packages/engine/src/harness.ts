@@ -5,7 +5,7 @@
 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { AgentActivity } from '@omakase/core';
+import type { AgentActivity, PermissionMode } from '@omakase/core';
 import { shortId } from '@omakase/core';
 import {
   getProvider,
@@ -25,7 +25,7 @@ export interface HarnessRequest {
   prompt: string;
   systemPrompt?: string;
   cwd: string;
-  autoApprove: boolean;
+  permission: PermissionMode;
   resumeSessionId?: string;
   plannedSessionId?: string;
   onActivity?: (a: AgentActivity) => void;
@@ -83,7 +83,7 @@ export class SubprocessHarness implements Harness {
     const ctx: TurnContext = {
       prompt: req.prompt,
       cwd: req.cwd,
-      autoApprove: req.autoApprove,
+      permission: req.permission,
       scratchFile: join(tmpdir(), `omks-${provider.id}-${shortId(8)}.txt`),
       ...(req.systemPrompt ? { systemPrompt: req.systemPrompt } : {}),
       ...(req.model ? { model: req.model } : {}),

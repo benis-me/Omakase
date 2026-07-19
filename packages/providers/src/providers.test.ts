@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, chmodSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentActivity } from '@omakase/core';
-import { claudeProvider, codexProvider, geminiProvider, cursorProvider } from './providers.ts';
+import { claudeProvider, codexProvider, geminiProvider, cursorProvider, supportsPermission } from './providers.ts';
 import { getProvider, commandBase } from './registry.ts';
 import { runTurn } from './runner.ts';
 import { detectProviders, detectCached, loadAgentsCache } from './detect.ts';
@@ -28,7 +28,7 @@ function ctx(overrides: Partial<TurnContext> = {}): TurnContext {
   return {
     prompt: 'do the thing',
     cwd: '/tmp/work',
-    autoApprove: true,
+    permission: 'bypass' as const,
     scratchFile: '/tmp/last.txt',
     ...overrides,
   };
@@ -242,7 +242,7 @@ test('runTurn: REAL spawn of a fake claude binary, parsed end-to-end', async () 
 
     const res = await runTurn(
       claudeProvider,
-      { prompt: 'do it', cwd: work, autoApprove: true, scratchFile: join(dir, 's.txt'), plannedSessionId: 'sess-42' },
+      { prompt: 'do it', cwd: work, permission: 'bypass' as const, scratchFile: join(dir, 's.txt'), plannedSessionId: 'sess-42' },
       { command: fake },
     );
     expect(res.status).toBe('ok');
@@ -398,3 +398,35 @@ test('BunSpawner: a multi-byte character split across stderr chunks is not corru
     rmSync(dir, { recursive: true, force: true });
   }
 }, 15000);
+
+test('permission: each mode maps to the provider’s own native flags', () => {
+  const ctx = (permission: 'read-only' | 'edit' | 'bypass') => ({
+    prompt: 'p', cwd: '/tmp', permission, scratchFile: '/tmp/s.txt',
+  }) as never;
+
+  // claude and codex can express all three, in their own vocabularies.
+  expect(claudeProvider.plan(ctx('read-only')).args).toContain('plan');
+  expect(claudeProvider.plan(ctx('edit')).args).toContain('acceptEdits');
+  expect(claudeProvider.plan(ctx('bypass')).args).toContain('bypassPermissions');
+  expect(codexProvider.plan(ctx('read-only')).args.join(' ')).toContain('-s read-only');
+  expect(codexProvider.plan(ctx('edit')).args.join(' ')).toContain('-s workspace-write');
+  expect(codexProvider.plan(ctx('bypass')).args).toContain('--dangerously-bypass-approvals-and-sandbox');
+});
+
+test('permission: a provider that cannot express a mode refuses the run', () => {
+  const ctx = (permission: 'read-only' | 'edit' | 'bypass') => ({
+    prompt: 'p', cwd: '/tmp', permission, scratchFile: '/tmp/s.txt',
+  }) as never;
+
+  // gemini has one all-or-nothing switch. Asking it to look-but-not-touch must
+  // fail loudly: silently running it with write access is the one outcome that
+  // would make the request a lie.
+  expect(() => geminiProvider.plan(ctx('read-only'))).toThrow(/cannot run in "read-only"/);
+  expect(() => geminiProvider.plan(ctx('edit'))).toThrow(/cannot run in "edit"/);
+  expect(geminiProvider.plan(ctx('bypass')).args).toContain('-y');
+
+  expect(supportsPermission('claude', 'read-only')).toBe(true);
+  expect(supportsPermission('codex', 'read-only')).toBe(true);
+  expect(supportsPermission('gemini', 'read-only')).toBe(false);
+  expect(supportsPermission('cursor-agent', 'read-only')).toBe(false);
+});

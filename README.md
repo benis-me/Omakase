@@ -147,6 +147,7 @@ RUN OPTIONS
   --max-rounds <n>              cap goal-loop rounds (plan → build → verify → fix)
   --param k=v                   workflow parameter (repeatable)
   --session, -s <id>            continue a session   --cwd <dir>  working directory
+  --permission <mode>           read-only | edit | bypass (default: workspace setting)
   --save-as <name>              keep this run as a reusable workflow
   --json                        emit one JSON event per line (JSONL)
 ```
@@ -313,6 +314,28 @@ workflow that never dispatches an agent, do not fail unless you add `--strict`.
 - **Foundation retry:** provider calls retry with exponential backoff + jitter, never on cancellation; **rate‑limit / overload** errors back off much harder and record `rateLimitedUntil`.
 - **Provider fallback:** if an agent's provider keeps failing, Omakase falls back to the next available provider (emitting `harness:switched`) — so a claude outage doesn't stall the run.
 - **Budget:** cap a run by agent calls, **USD spend**, or **wall‑clock** (`--max-agents` / `--max-usd` / `--max-time`); the loop stops with the precise reason.
+
+### Permission modes
+
+What an agent may do is separate from which provider runs it:
+
+| Mode | Meaning |
+| --- | --- |
+| `read-only` | may inspect, may not modify |
+| `edit` | may change the working directory without per-action approval |
+| `bypass` | skips approval entirely, sandbox included (the default) |
+
+Each adapter expresses these in its own native flags — `claude` via
+`--permission-mode plan\|acceptEdits\|bypassPermissions`, `codex` via
+`-s read-only\|workspace-write` or its bypass flag. **A provider that cannot
+express a mode refuses the run** rather than quietly granting more: `gemini`,
+`cursor-agent`, `copilot` and `qwen` expose a single all-or-nothing switch, so
+they can only do `bypass`. Set it per run with `--permission`, per workspace
+with `omks config set permission …`, or per agent with `w.agent({ permission })`.
+
+This is what makes the stall advisor's read-only real: it asks for a mode the
+provider must prove in its own sandbox flags, and simply does not run on a
+provider that cannot promise it.
 
 ### Providers & harnesses
 

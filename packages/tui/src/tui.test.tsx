@@ -222,7 +222,10 @@ test('settings view renders the editable workspace settings', async () => {
     expect(frame).toContain('settings');
     expect(frame).toContain('Default provider');
     expect(frame).toContain('Max agents');
-    expect(frame).toContain('Auto-approve');
+    // Permission is a three-way choice now, not an on/off toggle, and the row
+    // shows which mode the workspace resolves to.
+    expect(frame).toContain('Permission');
+    expect(frame).toContain('bypass');
     expect(frame).toContain('Provider order');
     expect(frame).toContain('change'); // footer hint
     setup.renderer.destroy();

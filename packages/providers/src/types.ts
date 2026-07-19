@@ -4,7 +4,7 @@
 // CLI headlessly, and (b) parse that CLI's output stream into activities and a
 // final result. The unified runner (runner.ts) does the spawning and streaming.
 
-import type { AgentActivity } from '@omakase/core';
+import type { PermissionMode, AgentActivity } from '@omakase/core';
 
 /** Everything a provider needs to construct one headless turn. */
 export interface TurnContext {
@@ -21,8 +21,8 @@ export interface TurnContext {
   /** A pre-minted session id the runner would like the provider to adopt
    *  (Claude supports --session-id; others ignore it and report their own). */
   plannedSessionId?: string;
-  /** Auto-approve all tool actions (yolo). Defaults true for orchestration. */
-  autoApprove: boolean;
+  /** What this turn is allowed to do. */
+  permission: PermissionMode;
   /** A scratch file path the provider may use for last-message capture. */
   scratchFile: string;
 }

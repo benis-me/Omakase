@@ -1,14 +1,14 @@
 import { createInterface } from 'node:readline';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Workspace, Store, type Goal, type SuccessCriterion } from '@omakase/core';
+import { Workspace, Store, PERMISSION_MODES, type Goal, type SuccessCriterion, type PermissionMode } from '@omakase/core';
 import { runGoal, crystallize } from '@omakase/engine';
 import { parseArgs, type ParsedArgs, flagStr, flagBool } from '../args.ts';
 import { openOrInit } from './shared.ts';
 import { print, printErr, streamPrinter, exitCodeFor, sym, c, banner } from '../ui.ts';
 
 const SPEC = {
-  value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time', 'save-as'],
+  value: ['workflow', 'provider', 'model', 'cwd', 'max-agents', 'max-rounds', 'concurrency', 'session', 'max-usd', 'max-time', 'save-as', 'permission'],
   repeatable: ['criteria', 'check', 'param'],
   alias: { w: 'workflow', p: 'provider', m: 'model', s: 'session' },
 };
@@ -117,6 +117,12 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
     return 1;
   }
 
+  const permission = flagStr(args, 'permission') as PermissionMode | undefined;
+  if (permission && !PERMISSION_MODES.includes(permission)) {
+    printErr(c.red(`--permission must be one of: ${PERMISSION_MODES.join(', ')}`));
+    return 1;
+  }
+
   const cwd = flagStr(args, 'cwd') ?? process.cwd();
   const { workspace, store, created } = openOrInit(cwd);
   if (created) print(c.dim(`Initialized workspace at ${workspace.paths.dir}`));
@@ -159,6 +165,7 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       ...(limits['max-time'] !== undefined ? { maxWallClockMs: limits['max-time'] * 1000 } : {}),
       ...(limits['max-rounds'] !== undefined ? { maxRounds: limits['max-rounds'] } : {}),
       ...(limits['concurrency'] !== undefined ? { maxConcurrent: limits['concurrency'] } : {}),
+      ...(permission ? { permission } : {}),
       ...(process.stdin.isTTY && !json ? { ask: stdinAnswerer } : {}),
       onEvent: streamPrinter(json),
     });

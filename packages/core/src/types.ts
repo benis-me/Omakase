@@ -272,6 +272,31 @@ export interface WorkspaceSettings {
   maxAgentsPerRun?: number;
   /** Ordered provider preference for auto-selection / fallback. */
   providerPreference?: string[];
-  /** Auto-approve agent actions (yolo). Defaults true for headless orchestration. */
+  /** How much an agent is allowed to do without asking. */
+  permission?: PermissionMode;
+  /** @deprecated Superseded by `permission`; still honoured when it is unset. */
   autoApprove?: boolean;
+}
+
+/**
+ * What an agent may do. Orthogonal to which provider runs it: each adapter
+ * expresses these in its own native flags, and a provider that cannot express
+ * one refuses the run rather than quietly granting more.
+ *
+ * - `read-only` — may inspect, may not modify.
+ * - `edit`      — may change the working directory without per-action approval.
+ * - `bypass`    — skips approval entirely, sandbox included.
+ */
+export type PermissionMode = 'read-only' | 'edit' | 'bypass';
+
+export const PERMISSION_MODES: PermissionMode[] = ['read-only', 'edit', 'bypass'];
+
+/**
+ * The mode a run should use. `permission` wins; otherwise the older
+ * `autoApprove` boolean is honoured so existing workspaces keep behaving
+ * exactly as they did.
+ */
+export function resolvePermission(settings: { permission?: PermissionMode; autoApprove?: boolean }): PermissionMode {
+  if (settings.permission) return settings.permission;
+  return settings.autoApprove === false ? 'read-only' : 'bypass';
 }

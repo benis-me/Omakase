@@ -30,7 +30,7 @@ export const claudeProvider: AgentProvider = {
       '--verbose',
       '--include-partial-messages',
     ];
-    if (ctx.autoApprove) args.push('--permission-mode', 'bypassPermissions');
+    args.push(...permissionArgs('claude', ctx.permission));
     if (ctx.systemPrompt) args.push('--append-system-prompt', ctx.systemPrompt);
     if (ctx.model) args.push('--model', ctx.model);
     if (ctx.resumeSessionId) args.push('--resume', ctx.resumeSessionId);
@@ -61,8 +61,7 @@ export const codexProvider: AgentProvider = {
       '-o',
       ctx.scratchFile,
     ];
-    if (ctx.autoApprove) args.push('--dangerously-bypass-approvals-and-sandbox');
-    else args.push('-s', 'workspace-write');
+    args.push(...permissionArgs('codex', ctx.permission));
     if (ctx.model) args.push('-m', ctx.model);
     args.push(withSystem(ctx)); // prompt as final positional
     return { args, outputFormat: 'codex-json', lastMessageFile: ctx.scratchFile };
@@ -84,7 +83,7 @@ export const geminiProvider: AgentProvider = {
   apiKeyEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
   plan(ctx): SpawnPlan {
     const args = ['-o', 'stream-json'];
-    if (ctx.autoApprove) args.push('-y');
+    args.push(...permissionArgs('gemini', ctx.permission));
     if (ctx.model) args.push('-m', ctx.model);
     if (ctx.resumeSessionId) args.push('-r', ctx.resumeSessionId);
     args.push(withSystem(ctx)); // positional query
@@ -109,7 +108,7 @@ export const cursorProvider: AgentProvider = {
   apiKeyEnv: ['CURSOR_API_KEY'],
   plan(ctx): SpawnPlan {
     const args = ['-p', '--output-format', 'stream-json'];
-    if (ctx.autoApprove) args.push('-f');
+    args.push(...permissionArgs('cursor-agent', ctx.permission));
     if (ctx.model) args.push('--model', ctx.model);
     if (ctx.resumeSessionId) args.push('--resume', ctx.resumeSessionId);
     args.push(withSystem(ctx)); // positional prompt
@@ -130,7 +129,7 @@ export const copilotProvider: AgentProvider = {
   seedModels: ['gpt-5', 'claude-sonnet-4'],
   plan(ctx): SpawnPlan {
     const args = ['--output-format', 'json'];
-    if (ctx.autoApprove) args.push('--allow-all-tools');
+    args.push(...permissionArgs('copilot', ctx.permission));
     if (ctx.model) args.push('--model', ctx.model);
     return { args, stdin: withSystem(ctx), outputFormat: 'text-tail' };
   },
@@ -144,7 +143,7 @@ export const qwenProvider: AgentProvider = {
   seedModels: ['qwen3-coder-plus'],
   plan(ctx): SpawnPlan {
     const args: string[] = [];
-    if (ctx.autoApprove) args.push('--yolo');
+    args.push(...permissionArgs('qwen', ctx.permission));
     if (ctx.model) args.push('-m', ctx.model);
     args.push('-p', withSystem(ctx));
     return { args, outputFormat: 'text-tail' };
@@ -159,6 +158,7 @@ export const opencodeProvider: AgentProvider = {
   seedModels: [],
   plan(ctx): SpawnPlan {
     const args = ['run'];
+    args.push(...permissionArgs('opencode', ctx.permission));
     if (ctx.model) args.push('--model', ctx.model);
     args.push(withSystem(ctx));
     return { args, outputFormat: 'text-tail' };
@@ -167,6 +167,52 @@ export const opencodeProvider: AgentProvider = {
 };
 
 // --- model discovery helpers ----------------------------------------------
+
+/**
+ * How each CLI spells a permission mode. `null` means the CLI has no faithful
+ * way to express it — and that is answered with an error rather than a quiet
+ * downgrade, because the failure mode of guessing here is an agent editing a
+ * repository it was supposed to be reading.
+ */
+type PermissionArgs = Partial<Record<PermissionMode, string[] | null>>;
+
+const PERMISSIONS: Record<string, PermissionArgs> = {
+  claude: {
+    'read-only': ['--permission-mode', 'plan'],
+    edit: ['--permission-mode', 'acceptEdits'],
+    bypass: ['--permission-mode', 'bypassPermissions'],
+  },
+  codex: {
+    'read-only': ['-s', 'read-only'],
+    edit: ['-s', 'workspace-write'],
+    bypass: ['--dangerously-bypass-approvals-and-sandbox'],
+  },
+  // The rest expose one all-or-nothing switch: either every tool action is
+  // pre-approved or each one is prompted for, which headless cannot answer.
+  // Only `bypass` is expressible; asking for anything narrower fails closed.
+  gemini: { 'read-only': null, edit: null, bypass: ['-y'] },
+  'cursor-agent': { 'read-only': null, edit: null, bypass: ['-f'] },
+  copilot: { 'read-only': null, edit: null, bypass: ['--allow-all-tools'] },
+  qwen: { 'read-only': null, edit: null, bypass: ['--yolo'] },
+  opencode: { 'read-only': null, edit: null, bypass: [] },
+};
+
+/** True when this provider can honour the mode as written. */
+export function supportsPermission(providerId: string, mode: PermissionMode): boolean {
+  const table = PERMISSIONS[providerId];
+  if (!table) return mode === 'bypass';
+  return Array.isArray(table[mode]);
+}
+
+/** The argv for a mode, or a thrown error naming what could not be honoured. */
+function permissionArgs(providerId: string, mode: PermissionMode): string[] {
+  const args = PERMISSIONS[providerId]?.[mode];
+  if (Array.isArray(args)) return args;
+  throw new Error(
+    `${providerId} cannot run in "${mode}" mode: it has no flag that expresses it. ` +
+      `Use a provider that does (claude, codex), or --permission bypass if that is genuinely what you want.`,
+  );
+}
 
 const PROBE_TIMEOUT_MS = 3000;
 /** CSI/OSC escapes and stray control bytes, as emitted by a banner or spinner. */

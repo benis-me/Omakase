@@ -13,6 +13,7 @@
 // delay at most, never the run.
 
 import { extractJson, type AnyRunEvent } from '@omakase/core';
+import { supportsPermission } from '@omakase/providers';
 import type { Harness } from './harness.ts';
 
 /** What the advisor is told, and what the run can show it. */
@@ -137,14 +138,15 @@ export function parseAdvice(text: string): Advice | null {
  * Ask one advisor what to try next. Never throws: a failed or empty consult
  * simply yields null and the loop carries on to its own ending.
  *
- * The advisor runs without auto-approval — it is handed the evidence in its
- * prompt and has no reason to touch the workspace. That is a conservative
- * setting rather than a guarantee: the harness has no tool allow-list yet, so
- * this cannot *enforce* read-only the way a sandboxed permission mode would.
+ * It runs read-only, and that is enforced rather than hoped for: the provider
+ * is asked for a mode it must express in its own sandbox flags, and one that
+ * cannot say "look but do not touch" is not asked at all. Better no advice than
+ * an advisor with write access to the repository it is diagnosing.
  */
 export async function consultAdvisor(s: StallSituation, o: ConsultOptions): Promise<Advice | null> {
   try {
     if (o.signal?.aborted) return null;
+    if (!supportsPermission(o.provider, 'read-only')) return null;
     const res = await o.harness.runAgent({
       provider: o.provider,
       ...(o.model ? { model: o.model } : {}),
@@ -152,7 +154,7 @@ export async function consultAdvisor(s: StallSituation, o: ConsultOptions): Prom
       title: 'Advise on the stall',
       prompt: buildPrompt(s),
       cwd: o.cwd,
-      autoApprove: false,
+      permission: 'read-only',
       timeoutMs: o.timeoutMs ?? ADVISOR_TIMEOUT_MS,
       ...(o.signal ? { signal: o.signal } : {}),
     });

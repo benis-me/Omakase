@@ -2,7 +2,7 @@ import { parseArgs } from '../args.ts';
 import { openContext } from '../context.ts';
 import { print, printErr, c } from '../ui.ts';
 
-const KEYS = ['defaultProvider', 'defaultModel', 'maxAgentsPerRun', 'autoApprove', 'providerPreference'] as const;
+const KEYS = ['defaultProvider', 'defaultModel', 'maxAgentsPerRun', 'autoApprove', 'permission', 'providerPreference'] as const;
 
 export async function cmdConfig(rawArgs: string[]): Promise<number> {
   const sub = rawArgs[0] ?? 'list';

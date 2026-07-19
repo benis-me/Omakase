@@ -6,6 +6,7 @@ import { Store } from './store.ts';
 import { Workspace } from './workspace.ts';
 import { Budget } from './budget.ts';
 import { runId, sessionId } from './ids.ts';
+import { resolvePermission } from './types.ts';
 import { bulletLines, slugify, truncate, extractJson } from './util.ts';
 import type { RunRecord } from './types.ts';
 
@@ -202,4 +203,15 @@ test('util: extractJson pulls balanced JSON out of prose/fences', () => {
   // Braces inside strings must not end the object early.
   expect(extractJson<{ s: string }>('{"s": "a } b"}')).toEqual({ s: 'a } b' });
   expect(extractJson<Record<string, unknown>>('no json here')).toBe(null);
+});
+
+test('permission: existing workspaces keep the behaviour they had', () => {
+  // `autoApprove` predates modes. A workspace that never heard of `permission`
+  // must not quietly change what its agents are allowed to do on upgrade.
+  expect(resolvePermission({ autoApprove: true })).toBe('bypass');
+  expect(resolvePermission({})).toBe('bypass'); // the old default was true
+  expect(resolvePermission({ autoApprove: false })).toBe('read-only');
+  // Once set, the explicit mode wins over the legacy flag.
+  expect(resolvePermission({ permission: 'edit', autoApprove: true })).toBe('edit');
+  expect(resolvePermission({ permission: 'read-only', autoApprove: true })).toBe('read-only');
 });
