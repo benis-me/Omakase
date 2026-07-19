@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { discoverWorkflows, findWorkflow, loadWorkflow, runGoal, MockHarness, type WorkflowMeta } from '@omakase/engine';
+import { lintWorkflow, discoverWorkflows, findWorkflow, loadWorkflow, runGoal, MockHarness, type WorkflowMeta } from '@omakase/engine';
 import { Store, slugify } from '@omakase/core';
 import { createEventRenderer } from '../ui.ts';
 import { parseArgs, flagBool, flagStr, type ParsedArgs } from '../args.ts';
@@ -33,13 +33,15 @@ export async function cmdWorkflow(rawArgs: string[]): Promise<number> {
       return runWorkflow(rest);
     case 'test':
       return testWorkflow(rest);
+    case 'lint':
+      return lintCmd(parseArgs(rest, {}));
     case 'edit':
     case 'path':
       return editWorkflow(parseArgs(rest, {}));
     case 'version':
       return versionWorkflow(parseArgs(rest, { value: ['bump'] }));
     default:
-      printErr(`Unknown workflow command: ${sub}. Try: list, show, new, run, edit, version`);
+      printErr(`Unknown workflow command: ${sub}. Try: list, show, new, run, test, lint, edit, version`);
       return 1;
   }
 }
@@ -266,4 +268,47 @@ function notFound(name: string): number {
 function exists(path: string): number {
   printErr(c.yellow(`Already exists: ${path}`));
   return 1;
+}
+
+/**
+ * `omks workflow lint [name]` — check workspace workflows for the things that
+ * break replay. An error means resume would serve a cached result to a call
+ * that never asked for it, so it exits non-zero; advisories do not, unless
+ * --strict is given. (A linter that can never fail a build is a linter nobody
+ * can gate on.)
+ */
+function lintCmd(args: ParsedArgs): number {
+  const { workspace } = openContext();
+  const strict = flagBool(args, 'strict');
+  const only = args.positionals[0];
+  const all = discoverWorkflows({ workspace: workspace.paths.workflows }).filter(
+    (m) => m.scope !== 'builtin' && (!only || m.name === only),
+  );
+  if (all.length === 0) {
+    printErr(only ? c.red(`No workspace workflow named "${only}".`) : c.dim('No workspace workflows to lint.'));
+    return only ? 1 : 0;
+  }
+
+  let errors = 0;
+  let warnings = 0;
+  for (const meta of all) {
+    const { findings } = lintWorkflow(readFileSync(meta.entry, 'utf8'));
+    if (findings.length === 0) {
+      print(`${sym.ok} ${c.cyan(meta.name)} ${c.dim('clean')}`);
+      continue;
+    }
+    print(`${findings.some((f) => f.level === 'error') ? sym.fail : c.yellow('!')} ${c.cyan(meta.name)} ${c.dim(meta.entry)}`);
+    for (const f of findings) {
+      if (f.level === 'error') errors++;
+      else warnings++;
+      const tag = f.level === 'error' ? c.red('error') : c.yellow('warn ');
+      print(`  ${tag} ${c.dim(`${f.line}:`)} ${f.message} ${c.dim(`[${f.rule}]`)}`);
+    }
+  }
+
+  const parts = [errors ? c.red(`${errors} error(s)`) : '', warnings ? c.yellow(`${warnings} warning(s)`) : '']
+    .filter(Boolean)
+    .join(' · ');
+  if (parts) print(`\n${parts}`);
+  return errors > 0 || (strict && warnings > 0) ? 1 : 0;
 }

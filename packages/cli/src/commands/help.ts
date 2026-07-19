@@ -25,6 +25,7 @@ ${cmd('workflow show <name>', 'show a workflow’s docs')}
 ${cmd('workflow new <name>', 'scaffold a new workflow (--flat for a single file)')}
 ${cmd('workflow run <name> "<goal>"', 'run a specific workflow')}
 ${cmd('workflow test <name>', 'dry-run a workflow with a mock harness (no cost)')}
+  ${cmd('workflow lint [name]', 'check workflows for things that break resume')}
 ${cmd('workflow version <name>', 'show / --bump patch|minor|major')}
 
 ${h('AGENTS & CONFIG')}

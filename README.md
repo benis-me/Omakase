@@ -122,6 +122,7 @@ WORKFLOWS  (reusable, versioned, skills-like)
   workflow new <name> [--flat]  scaffold a new workflow
   workflow run <name> "<goal>"  run a specific workflow
   workflow test <name>          dry-run against a mock harness (no spend)
+  workflow lint [name]          check for things that break resume (--strict)
   workflow edit <name>          print the entry path ($(omks workflow edit x))
   workflow version <name>       show / --bump patch|minor|major
 
@@ -295,6 +296,15 @@ the engine watched the execution rather than asking a model to reconstruct it.
 Built‑ins: **goal** (default), **auto** (prompt self‑orchestration — the model designs its own DAG), **mission**, **tdd**, **review**, **research**, **parallel**, **solo**.
 
 **Isolating parallel agents.** Agents in `parallel`/`pipeline` share the run's working directory by default. When branches are independent, give each its own folder with `w.subdir(name)` + `agent({ cwd })` so they never edit the same files — the built‑in **parallel** workflow does exactly this.
+
+**Workflows must be replayable.** `agent()` results are cached by the call's
+*structural position*, which is what makes resume work across `parallel` and
+`pipeline` — and what makes a workflow that branches on `Math.random()` or the
+clock quietly wrong on resume: the second run takes a different branch and the
+cache hands it an answer to a question it never asked. `omks workflow lint`
+rejects those calls (exit 1); pass timestamps and randomness in through
+`--param` instead, where they are recorded with the run. Advisories, like a
+workflow that never dispatches an agent, do not fail unless you add `--strict`.
 
 ### Goal‑loop, verification, resume & retry
 

@@ -102,6 +102,7 @@ omks "<目标>"                   用默认工作流运行一个目标
   workflow new <name> [--flat]  脚手架生成新工作流
   workflow run <name> "<目标>"  运行指定工作流
   workflow test <name>          用 mock harness 空跑（不花钱）
+  workflow lint [name]          检查会破坏 resume 的写法（--strict）
   workflow edit <name>          打印入口文件路径（$(omks workflow edit x)）
   workflow version <name>       查看 / --bump patch|minor|major
 
@@ -203,6 +204,12 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 **隔离并行的 agent。** `parallel`/`pipeline` 里的 agent 默认共用同一个工作目录。
 当各分支互不相干时，用 `w.subdir(name)` + `agent({ cwd })` 给每个分支一个自己的目录，
 它们就不会改到同一批文件 —— 内置的 **parallel** 工作流正是这么做的。
+
+**工作流必须可重放。** `agent()` 的结果是按调用的**结构位置**缓存的——这正是 resume 能跨
+`parallel`/`pipeline` 工作的原因，也意味着一个按 `Math.random()` 或时钟分支的工作流在
+resume 时会**静默地错**：第二次跑走了另一条分支，缓存却把答案喂给了一个它从没问过的问题。
+`omks workflow lint` 会把这类调用判为错误（exit 1）；时间戳和随机性请通过 `--param` 传进来，
+那样它们会跟着运行一起被记录。像"工作流从不派发 agent"这种只是建议，不加 `--strict` 不会失败。
 
 ### 目标循环、验证、续跑与重试
 

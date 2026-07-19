@@ -7,6 +7,7 @@ import type { ProviderInfo } from '@omakase/providers';
 import { runGoal, resumeRun } from './orchestrator.ts';
 import { buildResumeState } from './resume.ts';
 import { crystallize } from './crystallize.ts';
+import { lintWorkflow } from './lint.ts';
 import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
 import { verifyGoal } from './verify.ts';
@@ -883,6 +884,83 @@ test('crystallize: refuses runs with nothing to save, and survives odd prompts',
     // The hostile characters reached the agent intact, not mangled by escaping.
     expect(harness.calls[0]!.prompt).toContain('`code`');
     expect(harness.calls[0]!.prompt).toContain('${injected}');
+  } finally {
+    cleanup();
+  }
+});
+
+test('lint: flags real nondeterminism, ignores it in comments and strings', () => {
+  const src = [
+    '// name: x   Math.random() here is prose, not code',
+    "const a = 'Date.now() in a string';",
+    'const b = `a prompt telling an agent to avoid Math.random()`;',
+    '/* Date.now() in a block comment */',
+    'const real = Math.random();',
+    'const stamp = Date.now();',
+    'await w.agent({ role: "worker", title: "t", prompt: "p" });',
+  ].join('\n');
+  const { findings, ok } = lintWorkflow(src);
+  const errors = findings.filter((f) => f.level === 'error');
+  // Exactly the two real calls, on their real lines — the four decoys are quiet.
+  expect(errors).toHaveLength(2);
+  expect(errors[0]!.line).toBe(5);
+  expect(errors[0]!.rule).toBe('no-random');
+  expect(errors[1]!.line).toBe(6);
+  expect(errors[1]!.rule).toBe('no-clock');
+  expect(ok).toBe(false);
+});
+
+test('lint: an interpolation is code, so it is still checked', () => {
+  // The literal parts of a template are text, but ${...} is not — a workflow
+  // cannot smuggle a clock read through it.
+  const { findings } = lintWorkflow('const p = `run at ${Date.now()} ok`;\nawait w.agent({});');
+  expect(findings.some((f) => f.rule === 'no-clock' && f.level === 'error')).toBe(true);
+});
+
+test('lint: a clean workflow passes; a silent one is only advised', () => {
+  const clean = "await w.phase('Go', async () => { await w.agent({ role: 'worker', title: 't', prompt: 'p' }); });";
+  expect(lintWorkflow(clean).findings).toHaveLength(0);
+
+  // Doing nothing is suspicious but legal — it must not fail a build on its own.
+  const silent = "w.log('hello');";
+  const res = lintWorkflow(silent);
+  expect(res.ok).toBe(true);
+  expect(res.findings.some((f) => f.level === 'warning' && f.rule === 'no-dispatch')).toBe(true);
+});
+
+test('lint: every built-in workflow is clean', () => {
+  // The rules exist to protect resume; the workflows omakase ships must obey them.
+  for (const meta of discoverWorkflows()) {
+    const { findings } = lintWorkflow(readFileSync(meta.entry, 'utf8'));
+    const errors = findings.filter((f) => f.level === 'error');
+    expect({ workflow: meta.name, errors }).toEqual({ workflow: meta.name, errors: [] });
+  }
+});
+
+test('crystallize output passes lint, even when agents talked about the clock', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // The two features have to agree: --save-as embeds prompts as template
+    // literals, and lint treats a template body as text. Otherwise a run whose
+    // agents merely *discussed* Math.random() would emit a workflow that its
+    // own linter rejects.
+    const harness = new FakeHarness((req) =>
+      req.role === 'planner' ? 'Audit Math.random() calls\nAudit Date.now() calls' : 'done',
+    );
+    const out = await runGoal({
+      goal: { text: 'audit timing code', workflow: 'goal', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+    });
+    const built = crystallize({
+      name: 'gen',
+      goalText: 'audit timing code',
+      events: store.getEvents(out.runId),
+      sourceWorkflow: 'goal',
+    })!;
+    expect(built.script).toContain('Math.random()'); // it really is in there, as prompt text
+    expect(lintWorkflow(built.script).ok).toBe(true); // and lint knows that is text
   } finally {
     cleanup();
   }
