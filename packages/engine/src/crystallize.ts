@@ -15,6 +15,8 @@ import { slugify, type AnyRunEvent } from '@omakase/core';
 
 interface Step {
   role: string;
+  /** Its result was the plan itself — a decision this file now hard-codes. */
+  designedThePlan?: boolean;
   title: string;
   provider: string;
   prompt: string;
@@ -34,6 +36,23 @@ export interface Crystallized {
 }
 
 const MAX_STEPS = 40;
+
+/**
+ * Did this agent's reply hand back an orchestration plan? `auto` asks a planner
+ * for `{"steps":[…]}` and then executes it; once that shape is written into
+ * source, asking for it again is a turn spent on a decision that is already made.
+ */
+function looksLikePlan(text: string): boolean {
+  if (!text || !text.includes('"steps"')) return false;
+  const m = /\{[\s\S]*\}/.exec(text);
+  if (!m) return false;
+  try {
+    const o = JSON.parse(m[0]) as { steps?: unknown };
+    return Array.isArray(o.steps) && o.steps.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** A prompt in source has to survive being pasted into a template literal. */
 function escapeTemplate(s: string): string {
@@ -146,6 +165,10 @@ export function crystallize(opts: {
       const s = open.get(e.payload.callId);
       if (s) {
         s.end = e.seq;
+        // An agent whose answer *was* the plan has already done its job: the
+        // shape it chose is what gets written out below. Re-running it in the
+        // saved workflow would spend a turn per run on output nothing reads.
+        s.designedThePlan = e.type === 'agent:completed' && looksLikePlan(e.payload.text);
         steps.push(s);
         open.delete(e.payload.callId);
       }
@@ -153,9 +176,10 @@ export function crystallize(opts: {
   }
   // An agent still open at the end (a cancel) still describes a real step.
   for (const s of open.values()) steps.push(s);
-  if (steps.length === 0) return null;
 
-  const kept = steps.slice(0, MAX_STEPS);
+  const planners = steps.filter((s) => s.designedThePlan).length;
+  const kept = steps.filter((s) => !s.designedThePlan).slice(0, MAX_STEPS);
+  if (kept.length === 0) return null;
   const phases: string[] = [];
   for (const s of kept) if (!phases.includes(s.phase)) phases.push(s.phase);
 
@@ -221,6 +245,10 @@ export function crystallize(opts: {
     `---\n\n` +
     `# ${name}\n\n` +
     `Saved from a \`${opts.sourceWorkflow}\` run with \`omks run --save-as ${name}\`.\n\n` +
+    (planners
+      ? `The planning turn that designed this shape is deliberately not included — ` +
+        `the plan it produced is the structure written below.\n\n`
+      : '') +
     `## Shape\n\n` +
     phases.map((p) => `- **${p || 'main'}** — ${kept.filter((s) => s.phase === p).map((s) => s.title).join(', ')}`).join('\n') +
     `\n\n## Notes\n\n` +

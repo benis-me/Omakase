@@ -1002,3 +1002,35 @@ test('permission: a per-agent override beats the run-wide mode', async () => {
     cleanup();
   }
 });
+
+test('crystallize: the turn that designed the plan is not saved into it', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // `auto` pays a planner to choose a shape, then executes it. Once that shape
+    // is written into source the decision is fixed, so keeping the planner would
+    // spend a turn per run on output nothing reads — which is exactly what the
+    // first real --save-as produced.
+    const harness = new FakeHarness((req) =>
+      req.role === 'planner'
+        ? '{"steps":[{"id":"a","role":"worker","title":"Do it","prompt":"work","dependsOn":[]}]}'
+        : 'done',
+    );
+    const out = await runGoal({
+      goal: { text: 'ship the thing', workflow: 'auto', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+    });
+    const built = crystallize({
+      name: 'saved',
+      goalText: 'ship the thing',
+      events: store.getEvents(out.runId),
+      sourceWorkflow: 'auto',
+    })!;
+    expect(built.script).not.toContain("role: 'planner'");
+    expect(built.script).toContain("title: 'Do it'"); // the work it planned is kept
+    expect(built.doc).toContain('planning turn'); // and the omission is stated
+  } finally {
+    cleanup();
+  }
+});

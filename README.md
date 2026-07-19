@@ -31,7 +31,7 @@ Every agent CLI is a silo. Omakase is the layer above them:
 - **Dynamic Workflows.** Orchestration is code — small Bun/TypeScript files with a tiny `w` API (`phase`, `agent`, `parallel`, `pipeline`, `loopUntil`). They're **reusable, versioned, and used like Skills**: the more you write, the more capable Omakase gets.
 - **Goal‑loop.** Define success criteria (a command that must exit 0, a file that must exist, or a natural‑language rubric judged by an agent). Omakase loops — plan → build → **verify** → fix — until they pass or a budget stops it. The verifier keeps autonomous runs honest instead of self‑declaring victory.
 - **Durable.** Every run is an append‑only event log in SQLite. Interrupted? `omks resume <id>` replays completed work from cache and continues. Flaky provider? Foundation retry with backoff.
-- **Multi‑harness.** The engine talks to a `Harness` interface; the default drives subprocess CLIs, but ACP/in‑process harnesses slot in behind the same seam.
+- **One seam for agent runtimes.** The engine talks to a `Harness` interface rather than to CLIs directly. Two implementations ship today — subprocess (the real one) and mock (for `workflow test`); an ACP or in‑process harness would slot in behind the same seam, but that is a design affordance, not something built yet.
 
 ---
 
