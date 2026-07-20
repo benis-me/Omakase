@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectProviders, loadAgentsCache, saveAgentsCache } from '@omakase/providers';
-import { SubprocessHarness } from '@omakase/engine';
+import { SubprocessHarness, discoverAgents } from '@omakase/engine';
 import { parseArgs } from '../args.ts';
 import { tryOpenContext } from '../context.ts';
 import { print, c, sym, spinner } from '../ui.ts';
@@ -80,5 +80,23 @@ function renderProviders(providers: Awaited<ReturnType<typeof detectProviders>>)
   }
   const n = providers.filter((p) => p.available).length;
   print(c.dim(`\n${n} provider(s) available`));
+  renderAgentDefinitions();
   return 0;
+}
+
+/** Named agents the workspace defines — the other half of "which agent runs this". */
+function renderAgentDefinitions(): void {
+  const ctx = tryOpenContext();
+  if (!ctx) return;
+  const defs = discoverAgents(ctx.workspace.paths.agents);
+  if (defs.length === 0) return;
+  print(c.bold('\nAgent definitions') + c.dim('  .omks/agents/'));
+  for (const d of defs) {
+    const bits = [d.role, d.provider, d.model, d.permission, d.isolate ? 'isolated' : '']
+      .filter(Boolean)
+      .join(' · ');
+    print(`  ${c.cyan(d.name.padEnd(20))} ${c.dim(bits)}`);
+    if (d.description) print(`  ${' '.repeat(20)} ${c.dim(d.description)}`);
+  }
+  print(c.dim(`\nUse one with ${'`'}w.agent({ as: '${defs[0]!.name}', ... })${'`'}`));
 }

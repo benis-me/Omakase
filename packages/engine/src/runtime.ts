@@ -34,6 +34,7 @@ import { withRetry, FatalError } from './retry.ts';
 import { isRateLimit } from '@omakase/providers';
 import { Semaphore } from './semaphore.ts';
 import { isGitRepo, createWorktree, commitAndMerge, removeWorktree, GitSerializer } from './isolate.ts';
+import { applyAgentDefinition, type AgentDefinition } from './agents.ts';
 import type {
   WorkflowContext,
   AgentSpec,
@@ -56,6 +57,8 @@ export interface RuntimeDeps {
   signal: AbortSignal;
   params: Record<string, unknown>;
   permission: PermissionMode;
+  /** Named agent definitions discovered in the workspace. */
+  agentDefinitions?: AgentDefinition[];
   defaultProvider: string | null;
   providerPreference: string[];
   availableProviders: string[];
@@ -79,6 +82,7 @@ export class WorkflowRuntime implements WorkflowContext {
   readonly cwd: string;
   readonly params: Record<string, unknown>;
   readonly providers: string[];
+  readonly agentNames: string[];
   readonly signal: AbortSignal;
 
   private readonly d: RuntimeDeps;
@@ -94,6 +98,7 @@ export class WorkflowRuntime implements WorkflowContext {
     this.cwd = deps.cwd;
     this.params = deps.params;
     this.providers = deps.availableProviders;
+    this.agentNames = (deps.agentDefinitions ?? []).map((d) => d.name);
     this.signal = deps.signal;
     this.sem = new Semaphore(deps.maxConcurrent ?? 6);
     this.resumeCache = deps.resumeCache ?? new Map();
@@ -136,16 +141,42 @@ export class WorkflowRuntime implements WorkflowContext {
 
   // --- agent --------------------------------------------------------------
 
-  async agent(spec: AgentSpec): Promise<AgentResult> {
+  async agent(rawSpec: AgentSpec): Promise<AgentResult> {
     const stepKey = this.allocStepKey();
 
-    // Resume: return cached result without re-running or re-charging.
+    // Resume: return cached result without re-running or re-charging. Done
+    // before resolving a definition, so editing `.omks/agents/` between a run
+    // and its resume cannot shift which cached result answers this call.
     const cached = this.resumeCache.get(stepKey);
     if (cached) {
-      this.log(`↺ cached: ${spec.title}`);
+      this.log(`↺ cached: ${rawSpec.title}`);
       return cached;
     }
 
+    const spec = this.resolveSpec(rawSpec);
+
+    // A step that asked for its own working copy gets one, and the rest of this
+    // call runs against it — which is what lets parallel writers stop colliding.
+    if (spec.isolate && !spec.cwd) {
+      return await this.isolate(slugify(spec.title) || 'agent', (isolatedCwd) =>
+        this.dispatchAgent({ ...spec, isolate: false, cwd: isolatedCwd }, stepKey),
+      );
+    }
+    return this.dispatchAgent(spec, stepKey);
+  }
+
+  /** Fold in a named definition from `.omks/agents/`, if the call asked for one. */
+  private resolveSpec(spec: AgentSpec): AgentSpec {
+    if (!spec.as) return spec;
+    const def = this.d.agentDefinitions?.find((d) => d.name === spec.as);
+    if (!def) {
+      this.log(`no agent definition named "${spec.as}" — using the call as written`);
+      return spec;
+    }
+    return applyAgentDefinition(spec, def);
+  }
+
+  private async dispatchAgent(spec: AgentSpec, stepKey: string): Promise<AgentResult> {
     const candidates = this.providerCandidates(spec.provider);
     const callId = agentCallId();
     const role = spec.role ?? 'worker';
@@ -175,7 +206,8 @@ export class WorkflowRuntime implements WorkflowContext {
       attempt: 1,
     });
 
-    const systemPrompt = spec.systemPrompt ?? this.d.systemPromptFor(spec);
+    const base = spec.systemPrompt ?? this.d.systemPromptFor(spec);
+    const systemPrompt = spec.guidance && base ? `${base}\n\n${spec.guidance}` : (base ?? spec.guidance);
     const agentCwd = this.resolveAgentCwd(spec.cwd);
     let lastError = 'agent failed';
     let aborted = false;

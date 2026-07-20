@@ -8,6 +8,7 @@ import { runGoal, resumeRun } from './orchestrator.ts';
 import { buildResumeState } from './resume.ts';
 import { crystallize } from './crystallize.ts';
 import { lintWorkflow } from './lint.ts';
+import { parseAgentDefinition } from './agents.ts';
 import { supportsPermission } from '@omakase/providers';
 import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
@@ -1032,5 +1033,106 @@ test('crystallize: the turn that designed the plan is not saved into it', async 
     expect(built.doc).toContain('planning turn'); // and the omission is stated
   } finally {
     cleanup();
+  }
+});
+
+test('agent definitions: a named agent supplies defaults the call can override', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    // .omks/agents/ has always been created and never read. A definition is how
+    // a "role" stops being just a paragraph of prompt.
+    writeFileSync(
+      join(ws.paths.agents, 'strict-reviewer.md'),
+      `---\nname: strict-reviewer\ndescription: Reviews and never edits\nrole: reviewer\nprovider: codex\npermission: read-only\n---\nBe unsparing. Cite files.\n`,
+    );
+    writeFileSync(
+      join(ws.paths.workflows, 'usesdef.ts'),
+      `export default async function usesdef(w){
+        await w.agent({ as: 'strict-reviewer', title: 'Review', prompt: 'look' });
+        await w.agent({ as: 'strict-reviewer', title: 'Review on claude', prompt: 'look', provider: 'claude' });
+      }\n`,
+    );
+    const harness = new FakeHarness(() => 'ok');
+    await runGoal({ goal: { text: 'g', workflow: 'usesdef', cwd: ws.root }, workspace: ws, store, harness });
+
+    const [first, second] = harness.calls;
+    // The definition fills in role, provider and permission…
+    expect(first!.role).toBe('reviewer');
+    expect(first!.provider).toBe('codex');
+    expect(first!.permission).toBe('read-only');
+    expect(first!.systemPrompt).toContain('Be unsparing'); // and its guidance
+    // …but the call site keeps the last word.
+    expect(second!.provider).toBe('claude');
+  } finally {
+    cleanup();
+  }
+});
+
+test('agent definitions: an unknown name warns and runs the call as written', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    writeFileSync(
+      join(ws.paths.workflows, 'missingdef.ts'),
+      `export default async function missingdef(w){
+        await w.agent({ as: 'nobody', role: 'worker', title: 'Go', prompt: 'do it' });
+      }\n`,
+    );
+    const harness = new FakeHarness(() => 'ok');
+    const out = await runGoal({ goal: { text: 'g', workflow: 'missingdef', cwd: ws.root }, workspace: ws, store, harness });
+    // A typo in a definition name must not take the run down with it.
+    expect(out.status).toBe('succeeded');
+    expect(harness.calls[0]!.role).toBe('worker');
+    const logs = store.getEvents(out.runId).filter((e) => e.type === 'log').map((e) => e.payload.message);
+    expect(logs.some((m) => m.includes('no agent definition named "nobody"'))).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('agent definitions: parseAgentDefinition ignores junk and needs a name', () => {
+  expect(parseAgentDefinition('no frontmatter here', '/x.md')).toBeNull();
+  const def = parseAgentDefinition(
+    `---\nname: Odd Name!\npermission: nonsense\nisolate: yes\n---\nbody\n`,
+    '/x.md',
+  )!;
+  expect(def.name).toBe('odd-name'); // slugified into something addressable
+  expect(def.permission).toBeUndefined(); // an invalid mode is dropped, not trusted
+  expect(def.isolate).toBe(true);
+  expect(def.guidance).toBe('body');
+});
+
+test('isolate: parallel writers get their own tree instead of one shared cwd', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-iso-'));
+  try {
+    // The hazard the grok-build run would have hit with two parallel *writers*:
+    // a self-designed DAG could not ask for separation, so both would edit the
+    // same files. A step can now say so, and the engine hands it a worktree.
+    Bun.spawnSync(['git', 'init', '-q', '.'], { cwd: dir });
+    Bun.spawnSync(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+    const ws = Workspace.init(dir);
+    const store = new Store(':memory:');
+    writeFileSync(
+      join(ws.paths.workflows, 'twowriters.ts'),
+      `export default async function twowriters(w){
+        await w.parallel([
+          () => w.agent({ role: 'worker', title: 'left', prompt: 'x', isolate: true }),
+          () => w.agent({ role: 'worker', title: 'right', prompt: 'y', isolate: true }),
+        ]);
+      }\n`,
+    );
+    const seen: string[] = [];
+    const harness = new FakeHarness((req) => {
+      seen.push(req.cwd);
+      return 'ok';
+    });
+    const out = await runGoal({ goal: { text: 'g', workflow: 'twowriters', cwd: dir }, workspace: ws, store, harness });
+    expect(out.status).toBe('succeeded');
+    expect(seen).toHaveLength(2);
+    // Two different directories, and neither is the shared run cwd.
+    expect(seen[0]).not.toBe(seen[1]);
+    expect(seen).not.toContain(dir);
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -44,6 +44,7 @@ export { buildResumeState, type ResumeState } from './resume.ts';
 export { Journal } from './journal.ts';
 export { crystallize, type Crystallized } from './crystallize.ts';
 export { lintWorkflow, codeOnly, type Finding, type LintResult } from './lint.ts';
+export { discoverAgents, parseAgentDefinition, applyAgentDefinition, type AgentDefinition } from './agents.ts';
 export { makeSystemPromptFactory } from './prompt.ts';
 
 export {

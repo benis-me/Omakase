@@ -273,7 +273,7 @@ The `w` API:
 | Method | Purpose |
 | --- | --- |
 | `w.phase(name, fn)` | group work into a named, logged phase |
-| `w.agent({role,title,prompt,provider?,model?,systemPrompt?,cwd?})` | run one agent turn → `{text,status,sessionId,provider,tokens,costUsd}` |
+| `w.agent({role,title,prompt,as?,isolate?,permission?,provider?,model?,systemPrompt?,cwd?})` | run one agent turn → `{text,status,sessionId,provider,tokens,costUsd}` |
 | `w.parallel([...])` | run thunks concurrently (bounded), await all |
 | `w.pipeline(items, ...stages)` | stage each item independently — no barrier |
 | `w.loopUntil(fn, {maxRounds})` | loop until `fn` returns `[]` |
@@ -282,7 +282,7 @@ The `w` API:
 | `w.spawn(provider, prompt, title?)` | one-shot turn on a named provider |
 | `w.budget()` · `w.log()` · `w.requestReport()` · `w.updateWiki()` | accounting, logging, reports, knowledge |
 | `w.subdir(name)` · `w.isolate(label, fn)` | isolate parallel agents (subdir; or a git worktree that merges back) |
-| `w.recall(limit)` · `w.providers` | accumulated knowledge; available agents (for routing) |
+| `w.recall(limit)` · `w.providers` · `w.agentNames` | accumulated knowledge; available providers; defined agents |
 | `w.goal` · `w.params` · `w.cwd` · `w.signal` | the goal, `--param` values, working dir, cancellation |
 
 Workflows live either as a flat `<name>.ts` or a **skills‑like folder** with `WORKFLOW.md` (frontmatter incl. a SEMVER `version`) + `workflow.ts` + optional `references/`. Workspace workflows shadow built‑ins of the same name, so you can customize anything. `omks workflow version <name> --bump minor` snapshots and bumps. See [`examples/workflows/ship-feature/`](examples/workflows/ship-feature) for a real folder‑format workflow using `isolate` + provider routing + `recall`. Validate a workflow without spending anything: `omks workflow test <name>`.
@@ -296,7 +296,29 @@ the engine watched the execution rather than asking a model to reconstruct it.
 
 Built‑ins: **goal** (default), **auto** (prompt self‑orchestration — the model designs its own DAG), **mission**, **tdd**, **review**, **research**, **parallel**, **solo**.
 
-**Isolating parallel agents.** Agents in `parallel`/`pipeline` share the run's working directory by default. When branches are independent, give each its own folder with `w.subdir(name)` + `agent({ cwd })` so they never edit the same files — the built‑in **parallel** workflow does exactly this.
+**Named agents.** A markdown file in `.omks/agents/` describes *who* runs a step —
+its role, provider, model, permission and whether it needs its own working copy:
+
+```markdown
+---
+name: strict-reviewer
+description: Reviews against the goal and never edits
+role: reviewer
+provider: codex
+permission: read-only
+---
+Be unsparing. Cite files.
+```
+
+`w.agent({ as: 'strict-reviewer', title, prompt })` adopts those defaults, and
+anything the call states itself still wins. `omks agent list` shows what a
+workspace defines; the `auto` planner is told the names and may pick one per step.
+
+**Isolating parallel agents.** Agents in `parallel`/`pipeline` share the run's working directory by default, which is fine
+until two of them write. `agent({ isolate: true })` gives that agent its own git worktree,
+merged back when it finishes; `w.subdir(name)` + `agent({ cwd })` is the lighter, non-git
+version the built‑in **parallel** workflow uses. A self-designed `auto` plan can set
+`"isolate": true` on any step that writes alongside another writer.
 
 **Workflows must be replayable.** `agent()` results are cached by the call's
 *structural position*, which is what makes resume work across `parallel` and

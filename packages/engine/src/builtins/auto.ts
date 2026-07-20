@@ -11,6 +11,10 @@ interface PlanStep {
   title?: string;
   prompt: string;
   provider?: string;
+  /** A named definition from `.omks/agents/`. */
+  agent?: string;
+  /** Ask for a private working copy — the way two writers avoid each other. */
+  isolate?: boolean;
   dependsOn?: string[];
 }
 interface Plan {
@@ -18,6 +22,7 @@ interface Plan {
 }
 
 export default async function auto(w: WorkflowContext): Promise<void> {
+  const agentNames = w.agentNames;
   // Learn from plans that worked in this workspace before.
   const priorRecipes = w
     .recall(30)
@@ -33,8 +38,13 @@ export default async function auto(w: WorkflowContext): Promise<void> {
         (priorRecipes.length
           ? `Plans that worked before in this workspace (use as inspiration, adapt to THIS goal):\n${priorRecipes.map((r) => r.body).join('\n')}\n`
           : '') +
-        `{"steps":[{"id":"s1","role":"worker","title":"short title","prompt":"what this agent must do","provider":"","dependsOn":[]}]}\n` +
+        `{"steps":[{"id":"s1","role":"worker","title":"short title","prompt":"what this agent must do","provider":"","agent":"","isolate":false,"dependsOn":[]}]}\n` +
         `Rules: 2–6 steps; use dependsOn (step ids) to order work — independent steps run in parallel; ` +
+        `set "isolate": true on any step that WRITES FILES and runs in parallel with another writer — ` +
+        `it then gets its own working copy, merged back when it finishes (read-only steps do not need it); ` +
+        (agentNames.length
+          ? `you may set "agent" to one of the workspace's defined agents: ${agentNames.join(', ')}. `
+          : '') +
         `role ∈ planner|worker|reviewer|validator|researcher. ` +
         (w.providers.length > 1
           ? `Optionally set "provider" to route a step to the best agent from: ${w.providers.join(', ')} (omit to use the default). `
@@ -80,6 +90,9 @@ export default async function auto(w: WorkflowContext): Promise<void> {
                 role: s.role ?? 'worker',
                 title: s.title ?? s.id,
                 prompt,
+                ...(s.agent ? { as: s.agent } : {}),
+                // Steps that run together and both write need separate trees.
+                ...(s.isolate ? { isolate: true } : {}),
                 ...(s.provider && w.providers.includes(s.provider) ? { provider: s.provider } : {}),
               });
             }),

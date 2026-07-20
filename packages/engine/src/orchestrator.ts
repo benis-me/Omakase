@@ -26,6 +26,7 @@ import { WorkflowRuntime } from './runtime.ts';
 import { findWorkflow, loadWorkflow, type WorkflowMeta } from './workflows.ts';
 import { verifyGoal, type VerifyResult } from './verify.ts';
 import { consultAdvisor, advicePreamble } from './advisor.ts';
+import { discoverAgents } from './agents.ts';
 import { makeSystemPromptFactory } from './prompt.ts';
 import { buildResumeState } from './resume.ts';
 import { Journal } from './journal.ts';
@@ -268,6 +269,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
     // gaps by mutating goal.params, which w.params must alias rather than copy.
     params: (goal.params ??= {}),
     permission: opts.permission ?? resolvePermission(workspace.settings),
+    agentDefinitions: discoverAgents(workspace.paths.agents),
     defaultProvider: ctx.defaultProvider,
     providerPreference: ctx.providerPreference,
     availableProviders: ctx.availableProviders,

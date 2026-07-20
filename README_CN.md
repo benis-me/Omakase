@@ -186,7 +186,7 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 | 方法 | 用途 |
 | --- | --- |
 | `w.phase(name, fn)` | 把一段工作归入一个命名的、会被记录的阶段 |
-| `w.agent({role,title,prompt,provider?,model?,systemPrompt?,cwd?})` | 跑一次 agent → `{text,status,sessionId,provider,tokens,costUsd}` |
+| `w.agent({role,title,prompt,as?,isolate?,permission?,provider?,model?,systemPrompt?,cwd?})` | 跑一次 agent → `{text,status,sessionId,provider,tokens,costUsd}` |
 | `w.parallel([...])` | 并发跑一组 thunk（有上限），全部等待 |
 | `w.pipeline(items, ...stages)` | 每个条目各自穿过所有阶段 —— 没有屏障 |
 | `w.loopUntil(fn, {maxRounds})` | 循环直到 `fn` 返回 `[]` |
@@ -195,16 +195,36 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 | `w.spawn(provider, prompt, title?)` | 在指定 provider 上跑一次性调用 |
 | `w.budget()` · `w.log()` · `w.requestReport()` · `w.updateWiki()` | 计量、日志、报告、知识沉淀 |
 | `w.subdir(name)` · `w.isolate(label, fn)` | 隔离并行 agent（子目录；或用完即合并的 git worktree） |
-| `w.recall(limit)` · `w.providers` | 沉淀下来的知识；可用的 agent（用于路由） |
+| `w.recall(limit)` · `w.providers` · `w.agentNames` | 沉淀的知识；可用 provider；已定义的 agent |
 | `w.goal` · `w.params` · `w.cwd` · `w.signal` | 目标、`--param` 值、工作目录、取消信号 |
 
 工作流可以是一个扁平的 `<name>.ts`，也可以是**像 Skills 那样的文件夹**：`WORKFLOW.md`
 （frontmatter 里带 SEMVER `version`）+ `workflow.ts` + 可选的 `references/`。
 `omks workflow version <name> --bump minor` 会先存快照再升版本。
 
+**具名 agent。** `.omks/agents/` 下的一个 markdown 文件描述"这一步由谁来跑"——它的
+role、provider、model、权限，以及是否需要自己的一份工作副本：
+
+```markdown
+---
+name: strict-reviewer
+description: 对着目标做评审，从不改文件
+role: reviewer
+provider: codex
+permission: read-only
+---
+不留情面。引用具体文件。
+```
+
+`w.agent({ as: 'strict-reviewer', title, prompt })` 会采用这些默认值，而调用处自己写明的
+字段依然优先。`omks agent list` 会列出工作区定义了哪些；`auto` 的 planner 也会被告知这些
+名字，可以按步选用。
+
 **隔离并行的 agent。** `parallel`/`pipeline` 里的 agent 默认共用同一个工作目录。
-当各分支互不相干时，用 `w.subdir(name)` + `agent({ cwd })` 给每个分支一个自己的目录，
-它们就不会改到同一批文件 —— 内置的 **parallel** 工作流正是这么做的。
+这在都只读时没问题，一旦有两个要写就会撞车。`agent({ isolate: true })` 会给这个 agent
+一份自己的 git worktree，跑完再合并回来；`w.subdir(name)` + `agent({ cwd })` 是不依赖 git
+的轻量版，内置的 **parallel** 工作流用的就是它。`auto` 自己设计的计划也可以在任何一个
+"与别的写入者并行"的步骤上标 `"isolate": true`。
 
 **工作流必须可重放。** `agent()` 的结果是按调用的**结构位置**缓存的——这正是 resume 能跨
 `parallel`/`pipeline` 工作的原因，也意味着一个按 `Math.random()` 或时钟分支的工作流在

@@ -24,6 +24,15 @@ export interface AgentSpec {
   /** Run this agent in a specific directory (absolute, or relative to the run
    *  cwd). Use with w.subdir(...) to isolate parallel agents from each other. */
   cwd?: string;
+  /** Adopt a named definition from `.omks/agents/` — its provider, model,
+   *  permission, isolation and guidance become the defaults for this call. */
+  as?: string;
+  /** Give this agent its own working copy (a git worktree, merged back when it
+   *  finishes) instead of the shared tree. The way to keep parallel writers
+   *  from editing the same files. */
+  isolate?: boolean;
+  /** Extra system-prompt guidance, contributed by a definition. */
+  guidance?: string;
 }
 
 export interface AgentResult {
@@ -70,6 +79,8 @@ export interface WorkflowContext {
   /** Free-form parameters passed to the workflow. */
   readonly params: Record<string, unknown>;
   /** Available provider ids (for routing steps to specific agents). */
+  /** Names of the agent definitions in `.omks/agents/` (usable as `agent({ as })`). */
+  readonly agentNames: string[];
   readonly providers: string[];
   /** Abort signal — respect it in long loops. */
   readonly signal: AbortSignal;
