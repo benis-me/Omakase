@@ -1,18 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { lintWorkflow, discoverWorkflows, findWorkflow, loadWorkflow, runGoal, MockHarness, type WorkflowMeta } from '@omakase/engine';
-import { Store, slugify } from '@omakase/core';
+import { Store, Workspace, slugify } from '@omakase/core';
 import { createEventRenderer } from '../ui.ts';
 import { parseArgs, flagBool, flagStr, type ParsedArgs } from '../args.ts';
-import { openOrInit } from './shared.ts';
-import { openContext, tryOpenContext } from '../context.ts';
-import { cmdRun } from './run.ts';
+import { openContext } from '../context.ts';
+import { cmdRun, saveRunAsWorkflow } from './run.ts';
 import { print, printErr, c, sym } from '../ui.ts';
 
 /** Read-only discover dirs — tolerant of running outside a workspace. */
-function discoverDirs() {
-  const ctx = tryOpenContext();
-  return ctx ? { workspace: ctx.workspace.paths.workflows } : {};
+function discoverDirs(cwd: string = process.cwd()) {
+  const workspace = Workspace.find(cwd);
+  return workspace ? { workspace: workspace.paths.workflows } : {};
 }
 
 export async function cmdWorkflow(rawArgs: string[]): Promise<number> {
@@ -22,32 +21,35 @@ export async function cmdWorkflow(rawArgs: string[]): Promise<number> {
     case undefined:
     case 'list':
     case 'ls':
-      return listWorkflows();
+      return listWorkflows(parseArgs(rest, { value: ['cwd'] }));
     case 'show':
     case 'view':
-      return showWorkflow(parseArgs(rest, {}));
+      return showWorkflow(parseArgs(rest, { value: ['cwd'] }));
     case 'new':
     case 'create':
-      return newWorkflow(parseArgs(rest, { alias: {} }));
+      return newWorkflow(parseArgs(rest, { value: ['cwd'] }));
     case 'run':
       return runWorkflow(rest);
+    case 'save':
+    case 'crystallize':
+      return saveWorkflow(parseArgs(rest, { value: ['as', 'cwd'] }));
     case 'test':
-      return testWorkflow(rest);
+      return testWorkflow(parseArgs(rest, { value: ['cwd'] }));
     case 'lint':
-      return lintCmd(parseArgs(rest, {}));
+      return lintCmd(parseArgs(rest, { value: ['cwd'] }));
     case 'edit':
     case 'path':
-      return editWorkflow(parseArgs(rest, {}));
+      return editWorkflow(parseArgs(rest, { value: ['cwd'] }));
     case 'version':
-      return versionWorkflow(parseArgs(rest, { value: ['bump'] }));
+      return versionWorkflow(parseArgs(rest, { value: ['bump', 'cwd'] }));
     default:
-      printErr(`Unknown workflow command: ${sub}. Try: list, show, new, run, test, lint, edit, version`);
+      printErr(`Unknown workflow command: ${sub}. Try: list, show, new, run, save, test, lint, edit, version`);
       return 1;
   }
 }
 
-function listWorkflows(): number {
-  const metas = discoverWorkflows(discoverDirs());
+function listWorkflows(args: ParsedArgs): number {
+  const metas = discoverWorkflows(discoverDirs(flagStr(args, 'cwd')));
   print(c.bold('\nWorkflows') + c.dim(`  (${metas.length})`));
   const nameW = Math.max(8, ...metas.map((m) => m.name.length));
   for (const m of metas) {
@@ -64,7 +66,7 @@ function listWorkflows(): number {
 function showWorkflow(args: ParsedArgs): number {
   const name = args.positionals[0];
   if (!name) return usage('omks workflow show <name>');
-  const meta = findWorkflow(name, discoverDirs());
+  const meta = findWorkflow(name, discoverDirs(flagStr(args, 'cwd')));
   if (!meta) return notFound(name);
   print(`\n${c.bold(c.cyan(meta.name))} ${c.dim('v' + meta.version)}  ${meta.scope === 'builtin' ? c.dim('built-in') : c.green('workspace')}`);
   print(`  ${meta.description}`);
@@ -80,9 +82,9 @@ function showWorkflow(args: ParsedArgs): number {
 
 function newWorkflow(args: ParsedArgs): number {
   const rawName = args.positionals[0];
-  if (!rawName) return usage('omks workflow new <name> [--flat]');
+  if (!rawName) return usage('omks workflow new <name> [--flat] [--cwd path]');
   const name = slugify(rawName);
-  const ws = openContext().workspace;
+  const ws = Workspace.require(flagStr(args, 'cwd') ?? process.cwd());
   mkdirSync(ws.paths.workflows, { recursive: true });
   const flat = flagBool(args, 'flat');
   const fnName = name.replace(/-([a-z])/g, (_m, ch) => ch.toUpperCase());
@@ -110,12 +112,24 @@ async function runWorkflow(rest: string[]): Promise<number> {
   return cmdRun(rest.slice(1), { workflow: name });
 }
 
+/** Save any completed run later, after inspecting it, instead of deciding up front. */
+function saveWorkflow(args: ParsedArgs): number {
+  const runId = args.positionals[0];
+  const name = flagStr(args, 'as') ?? args.positionals[1];
+  if (!runId || !name) return usage('omks workflow save <run-id> <name> [--cwd path]');
+  const { workspace, store } = openContext(flagStr(args, 'cwd') ?? process.cwd());
+  try {
+    return saveRunAsWorkflow(name, runId, workspace, store, false) ? 0 : 1;
+  } finally {
+    store.close();
+  }
+}
+
 /** Dry-run a workflow with a deterministic mock harness — no cost, no providers. */
-async function testWorkflow(rest: string[]): Promise<number> {
-  const name = rest[0];
-  if (!name) return usage('omks workflow test <name> ["<goal>"]');
-  const ctx = tryOpenContext();
-  const workspace = ctx?.workspace;
+async function testWorkflow(args: ParsedArgs): Promise<number> {
+  const name = args.positionals[0];
+  if (!name) return usage('omks workflow test <name> ["<goal>"] [--cwd path]');
+  const workspace = Workspace.find(flagStr(args, 'cwd') ?? process.cwd());
   if (!workspace) {
     printErr(c.red('Run inside a workspace (omks init) to test workflows.'));
     return 1;
@@ -123,7 +137,7 @@ async function testWorkflow(rest: string[]): Promise<number> {
   const meta = findWorkflow(name, { workspace: workspace.paths.workflows });
   if (!meta) return notFound(name);
 
-  const goalText = rest.slice(1).join(' ').trim() || 'test goal';
+  const goalText = args.positionals.slice(1).join(' ').trim() || 'test goal';
   const store = new Store(':memory:'); // never persisted
   const harness = new MockHarness();
   print(`${sym.arrow} ${c.bold('test')} ${c.cyan(name)} ${c.dim('· mock harness, no cost')}\n`);
@@ -148,7 +162,7 @@ async function testWorkflow(rest: string[]): Promise<number> {
 function editWorkflow(args: ParsedArgs): number {
   const name = args.positionals[0];
   if (!name) return usage('omks workflow edit <name>');
-  const meta = findWorkflow(name, discoverDirs());
+  const meta = findWorkflow(name, discoverDirs(flagStr(args, 'cwd')));
   if (!meta) return notFound(name);
   print(meta.entry); // print path so `$(omks workflow edit x)` opens it
   return 0;
@@ -156,8 +170,8 @@ function editWorkflow(args: ParsedArgs): number {
 
 function versionWorkflow(args: ParsedArgs): number {
   const name = args.positionals[0];
-  if (!name) return usage('omks workflow version <name> [--bump patch|minor|major]');
-  const ws = openContext().workspace;
+  if (!name) return usage('omks workflow version <name> [--bump patch|minor|major] [--cwd path]');
+  const ws = Workspace.require(flagStr(args, 'cwd') ?? process.cwd());
   const meta = findWorkflow(name, { workspace: ws.paths.workflows });
   if (!meta) return notFound(name);
   const bump = flagStr(args, 'bump');
@@ -278,7 +292,7 @@ function exists(path: string): number {
  * can gate on.)
  */
 function lintCmd(args: ParsedArgs): number {
-  const { workspace } = openContext();
+  const workspace = Workspace.require(flagStr(args, 'cwd') ?? process.cwd());
   const strict = flagBool(args, 'strict');
   const only = args.positionals[0];
   const all = discoverWorkflows({ workspace: workspace.paths.workflows }).filter(

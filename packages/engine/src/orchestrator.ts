@@ -271,6 +271,9 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
     permission: opts.permission ?? resolvePermission(workspace.settings),
     agentDefinitions: discoverAgents(workspace.paths.agents),
     defaultProvider: ctx.defaultProvider,
+    ...(goal.provider ? { pinnedProvider: goal.provider } : {}),
+    ...(goal.model ? { pinnedModel: goal.model } : {}),
+    ...(workspace.settings.defaultModel ? { defaultModel: workspace.settings.defaultModel } : {}),
     providerPreference: ctx.providerPreference,
     availableProviders: ctx.availableProviders,
     systemPromptFor: makeSystemPromptFactory({ goal, memory: workspace.readMemory() }),
@@ -392,6 +395,7 @@ async function execute(ctx: ExecCtx, resuming: boolean): Promise<RunOutcome> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     status = ctx.signal.aborted ? 'cancelled' : 'failed';
+    budgetStop ??= ctx.budget.deniedReason();
     store.updateRun(run.id, { error: msg });
     emit('log', { level: 'error', message: `Workflow error: ${msg}` });
     if (err instanceof FatalError) emit('log', { level: 'error', message: 'Fatal — not retrying.' });

@@ -31,7 +31,7 @@ import {
 import type { RunBus } from './bus.ts';
 import type { Harness } from './harness.ts';
 import { withRetry, FatalError } from './retry.ts';
-import { isRateLimit } from '@omakase/providers';
+import { isRateLimit, supportsPermission } from '@omakase/providers';
 import { Semaphore } from './semaphore.ts';
 import { isGitRepo, createWorktree, commitAndMerge, removeWorktree, GitSerializer } from './isolate.ts';
 import { applyAgentDefinition, type AgentDefinition } from './agents.ts';
@@ -60,6 +60,12 @@ export interface RuntimeDeps {
   /** Named agent definitions discovered in the workspace. */
   agentDefinitions?: AgentDefinition[];
   defaultProvider: string | null;
+  /** Explicit `omks run --provider`; workflow hints cannot override it. */
+  pinnedProvider?: string;
+  /** Explicit `omks run --model`; workflow and named-agent hints cannot override it. */
+  pinnedModel?: string;
+  /** Workspace fallback used only when a step/agent does not choose a model. */
+  defaultModel?: string;
   providerPreference: string[];
   availableProviders: string[];
   systemPromptFor: (spec: AgentSpec) => string | undefined;
@@ -75,6 +81,33 @@ export interface RuntimeDeps {
   maxConcurrent?: number;
   /** Retry attempts per agent call. */
   maxAttempts?: number;
+}
+
+interface AgentExecutionMetadata {
+  agentName: string | null;
+  permission: PermissionMode;
+  isolated: boolean;
+  sourcePrompt: string;
+  workflowStepId: string | null;
+  dependsOn: string[];
+}
+
+/**
+ * Retries repair transient foundations, not deterministic configuration.
+ * Authentication, unsupported flags/modes and broken MCP configuration do not
+ * improve after 400 ms; retrying them only burns time before provider fallback.
+ */
+export function isRetriableAgentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    /(?:unauth(?:enticated|orized)?|forbidden|not logged in|login required|api key|auth method|disabled.*subscription access|subscription access.*disabled)/i.test(message) ||
+    /(?:invalid_request_error|requires a newer version|please upgrade|model.*(?:not supported|unavailable)|(?:not supported|unavailable).*model|unexpected argument|unknown (?:argument|option)|unrecognized (?:argument|option))/i.test(message) ||
+    /(?:cannot run in ["'][^"']+["'] mode|no flag that expresses it)/i.test(message) ||
+    /error during discovery for MCP server/i.test(message)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export class WorkflowRuntime implements WorkflowContext {
@@ -154,15 +187,23 @@ export class WorkflowRuntime implements WorkflowContext {
     }
 
     const spec = this.resolveSpec(rawSpec);
+    const metadata: AgentExecutionMetadata = {
+      agentName: rawSpec.as ?? null,
+      permission: spec.permission ?? this.d.permission,
+      isolated: Boolean(spec.isolate),
+      sourcePrompt: rawSpec.workflowStep?.sourcePrompt ?? rawSpec.prompt,
+      workflowStepId: rawSpec.workflowStep?.id ?? null,
+      dependsOn: [...(rawSpec.workflowStep?.dependsOn ?? [])],
+    };
 
     // A step that asked for its own working copy gets one, and the rest of this
     // call runs against it — which is what lets parallel writers stop colliding.
     if (spec.isolate && !spec.cwd) {
       return await this.isolate(slugify(spec.title) || 'agent', (isolatedCwd) =>
-        this.dispatchAgent({ ...spec, isolate: false, cwd: isolatedCwd }, stepKey),
+        this.dispatchAgent({ ...spec, isolate: false, cwd: isolatedCwd }, stepKey, metadata),
       );
     }
-    return this.dispatchAgent(spec, stepKey);
+    return this.dispatchAgent(spec, stepKey, metadata);
   }
 
   /** Fold in a named definition from `.omks/agents/`, if the call asked for one. */
@@ -176,10 +217,15 @@ export class WorkflowRuntime implements WorkflowContext {
     return applyAgentDefinition(spec, def);
   }
 
-  private async dispatchAgent(spec: AgentSpec, stepKey: string): Promise<AgentResult> {
-    const candidates = this.providerCandidates(spec.provider);
+  private async dispatchAgent(
+    spec: AgentSpec,
+    stepKey: string,
+    metadata: AgentExecutionMetadata,
+  ): Promise<AgentResult> {
+    const candidates = this.providerCandidates(this.d.pinnedProvider ?? spec.provider, metadata.permission);
     const callId = agentCallId();
     const role = spec.role ?? 'worker';
+    const selectedModel = this.d.pinnedModel ?? spec.model ?? this.d.defaultModel;
 
     if (candidates.length === 0) {
       this.emit('agent:failed', { callId, stepKey, error: 'no provider available', attempt: 1 });
@@ -201,9 +247,15 @@ export class WorkflowRuntime implements WorkflowContext {
       role,
       title: spec.title,
       provider: candidates[0]!,
-      model: spec.model ?? null,
+      model: selectedModel ?? null,
       prompt: spec.prompt,
       attempt: 1,
+      agentName: metadata.agentName,
+      permission: metadata.permission,
+      isolated: metadata.isolated,
+      sourcePrompt: metadata.sourcePrompt,
+      workflowStepId: metadata.workflowStepId,
+      dependsOn: metadata.dependsOn,
     });
 
     const base = spec.systemPrompt ?? this.d.systemPromptFor(spec);
@@ -215,6 +267,10 @@ export class WorkflowRuntime implements WorkflowContext {
     // Try each candidate provider in turn; on failure, fall back to the next.
     for (let pi = 0; pi < candidates.length; pi++) {
       const provider = candidates[pi]!;
+      // A model id belongs to the provider it was selected for. Carrying e.g.
+      // `gpt-5` into a Claude fallback replaces one useful fallback with a
+      // deterministic model-not-found error.
+      const providerModel = pi === 0 ? selectedModel : undefined;
       if (this.signal.aborted) {
         aborted = true;
         break;
@@ -233,13 +289,13 @@ export class WorkflowRuntime implements WorkflowContext {
             const r = await this.sem.run(() =>
               this.d.harness.runAgent({
                 provider,
-                ...(spec.model ? { model: spec.model } : {}),
+                ...(providerModel ? { model: providerModel } : {}),
                 role,
                 title: spec.title,
                 prompt: spec.prompt,
                 ...(systemPrompt ? { systemPrompt } : {}),
                 cwd: agentCwd,
-                permission: spec.permission ?? this.d.permission,
+                permission: metadata.permission,
                 plannedSessionId: planned,
                 ...(spec.resumeSessionId ? { resumeSessionId: spec.resumeSessionId } : {}),
                 onActivity: (a) => this.emit('agent:activity', { callId, activity: a }),
@@ -252,6 +308,7 @@ export class WorkflowRuntime implements WorkflowContext {
           {
             maxAttempts: this.d.maxAttempts ?? 3,
             signal: this.signal,
+            isRetriable: isRetriableAgentError,
             isRateLimited: (err) => isRateLimit(err instanceof Error ? err.message : String(err)),
             onRetry: ({ attempt, delayMs, rateLimited }) => {
               if (rateLimited) this.d.store.updateRun(this.d.runId, { rateLimitedUntil: Date.now() + delayMs });
@@ -301,7 +358,7 @@ export class WorkflowRuntime implements WorkflowContext {
   }
 
   /** Ordered provider candidates: the selected one, then fallbacks (bounded). */
-  private providerCandidates(explicit?: string): string[] {
+  private providerCandidates(explicit: string | undefined, permission: PermissionMode): string[] {
     const avail = this.d.availableProviders;
     const first = this.selectProvider(explicit);
     if (!first) return [];
@@ -313,7 +370,18 @@ export class WorkflowRuntime implements WorkflowContext {
         rest.push(p);
       }
     }
-    return [first, ...rest].slice(0, 3);
+    const ordered = [first, ...rest];
+    const compatible = ordered.filter((p) => this.permissionSupported(p, permission));
+    // An explicitly pinned provider should fail loudly before fallback if it
+    // cannot honour the mode. Incompatible incidental fallbacks are skipped.
+    if (explicit && first === explicit && !this.permissionSupported(first, permission)) {
+      return [first, ...compatible.filter((p) => p !== first)].slice(0, 3);
+    }
+    return compatible.slice(0, 3);
+  }
+
+  private permissionSupported(provider: string, permission: PermissionMode): boolean {
+    return this.d.harness.supportsPermission?.(provider, permission) ?? supportsPermission(provider, permission);
   }
 
   spawn(provider: string, prompt: string, title = 'agent'): Promise<AgentResult> {

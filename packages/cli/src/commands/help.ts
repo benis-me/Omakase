@@ -24,9 +24,11 @@ ${cmd('workflow list', 'list available workflows')}
 ${cmd('workflow show <name>', 'show a workflow’s docs')}
 ${cmd('workflow new <name>', 'scaffold a new workflow (--flat for a single file)')}
 ${cmd('workflow run <name> "<goal>"', 'run a specific workflow')}
+${cmd('workflow save <run> <name>', 'turn an inspected successful run into source')}
 ${cmd('workflow test <name>', 'dry-run a workflow with a mock harness (no cost)')}
-  ${cmd('workflow lint [name]', 'check workflows for things that break resume')}
+${cmd('workflow lint [name]', 'check workflows for things that break resume')}
 ${cmd('workflow version <name>', 'show / --bump patch|minor|major')}
+${cmd('workflow <cmd> --cwd <dir>', 'target another workspace')}
 
 ${h('AGENTS & CONFIG')}
 ${cmd('agent list', 'show installed agent CLIs')}
@@ -45,7 +47,7 @@ ${h('RUN OPTIONS')}
   ${c.dim('--check "<cmd>"          success check: passes when the command exits 0 (repeatable)')}
   ${c.dim('--criteria "<text>"      natural-language success criterion, judged (repeatable)')}
   ${c.dim('--max-agents <n>         cap agent calls   --concurrency <n>  parallelism')}
-  ${c.dim('--max-usd <n>            cap total spend   --max-time <sec>   wall-clock budget')}
+  ${c.dim('--max-usd <n>            cap reported USD* --max-time <sec>   wall-clock budget')}
   ${c.dim('--param k=v              workflow parameter (repeatable)   --session <id>  continue')}
   ${c.dim('--cwd <dir>              working directory   --json  emit JSONL events')}
 

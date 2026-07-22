@@ -11,7 +11,7 @@
 // It crystallises any run, not only `auto`: the engine watched the execution,
 // so nothing has to be re-derived by asking a model to guess what happened.
 
-import { slugify, type AnyRunEvent } from '@omakase/core';
+import { slugify, type AnyRunEvent, type PermissionMode } from '@omakase/core';
 
 interface Step {
   role: string;
@@ -19,7 +19,13 @@ interface Step {
   designedThePlan?: boolean;
   title: string;
   provider: string;
+  model: string | null;
+  agentName: string | null;
+  permission: PermissionMode | null;
+  isolated: boolean;
   prompt: string;
+  workflowStepId: string | null;
+  dependsOn: string[];
   phase: string;
   start: number;
   end: number;
@@ -104,18 +110,66 @@ function waves(steps: Step[]): Step[][] {
 }
 
 /** The `w.agent({...})` call as individual lines, so callers can indent it. */
-function agentCallLines(s: Step): string[] {
+function agentCallLines(s: Step, contextVar?: string): string[] {
+  const contextSuffix = contextVar
+    ? ` + (${contextVar}.length ? '\\n\\n--- Context from earlier steps ---\\n' + ${contextVar}.join('\\n\\n') : '')`
+    : '';
   const out = [
     `w.agent({`,
     `  role: '${escapeSingle(s.role)}',`,
+    ...(s.agentName ? [`  as: '${escapeSingle(s.agentName)}',`] : []),
     `  title: '${escapeSingle(s.title)}',`,
     // The prompt is a template literal and may be many lines; its interior is
     // left flush so the text an agent receives is not reindented.
-    `  prompt: \`${s.prompt}\`,`,
+    `  prompt: \`${s.prompt}\`${contextSuffix},`,
   ];
+  if (s.workflowStepId) {
+    out.push(
+      `  workflowStep: {`,
+      `    id: '${escapeSingle(s.workflowStepId)}',`,
+      `    dependsOn: ${JSON.stringify(s.dependsOn)},`,
+      `    sourcePrompt: \`${s.prompt}\`,`,
+      `  },`,
+    );
+  }
   if (s.provider) out.push(`  provider: '${escapeSingle(s.provider)}',`);
+  if (s.model) out.push(`  model: '${escapeSingle(s.model)}',`);
+  if (s.permission) out.push(`  permission: '${s.permission}',`);
+  if (s.isolated) out.push(`  isolate: true,`);
   out.push(`})`);
   return out;
+}
+
+function requireStepLine(step: Step, resultVar: string): string {
+  const label = step.workflowStepId ?? step.title;
+  return `if (${resultVar}.status !== 'ok') throw new Error(${JSON.stringify(`Step ${label} failed: `)} + ${resultVar}.text);`;
+}
+
+/** Exact DAG waves when a dynamic orchestrator recorded step identities. */
+function dependencyWaves(steps: Step[]): Step[][] | null {
+  if (steps.length === 0 || steps.some((s) => !s.workflowStepId)) return null;
+  const ids = new Set(steps.map((s) => s.workflowStepId!));
+  if (ids.size !== steps.length) return null;
+  if (steps.some((s) => s.dependsOn.some((id) => !ids.has(id)))) return null;
+
+  const remaining = new Set(steps);
+  const completed = new Set<string>();
+  const out: Step[][] = [];
+  while (remaining.size) {
+    const ready = [...remaining].filter((s) => s.dependsOn.every((id) => completed.has(id)));
+    if (ready.length === 0) return null; // cycle: do not invent a different graph
+    out.push(ready);
+    for (const step of ready) {
+      remaining.delete(step);
+      completed.add(step.workflowStepId!);
+    }
+  }
+  return out;
+}
+
+function safeVariable(id: string, index: number): string {
+  const clean = id.replace(/[^a-zA-Z0-9_$]/g, '_');
+  return `step_${/^\d/.test(clean) ? '_' : ''}${clean || 'result'}_${index}`;
 }
 
 /** Indent only the lines this generator owns — never the inside of a prompt. */
@@ -149,33 +203,42 @@ export function crystallize(opts: {
   for (const e of opts.events) {
     if (e.type === 'phase:started') phase = e.payload.name;
     else if (e.type === 'agent:started') {
-      // A retried agent re-announces itself; keep the first sighting so the
-      // saved workflow has one step per intended call, not one per attempt.
-      if (open.has(e.payload.callId) || steps.some((s) => s.title === e.payload.title && s.phase === phase)) continue;
+      if (open.has(e.payload.callId)) continue;
       open.set(e.payload.callId, {
         role: e.payload.role,
         title: e.payload.title,
         provider: e.payload.provider,
-        prompt: generalize(e.payload.prompt, opts.goalText),
+        model: e.payload.model,
+        agentName: e.payload.agentName ?? null,
+        permission: e.payload.permission ?? null,
+        isolated: e.payload.isolated ?? false,
+        // A dynamic workflow can append prior results to the actual prompt. Its
+        // source prompt is the reusable part; the data flow is rebuilt below.
+        prompt: generalize(e.payload.sourcePrompt ?? e.payload.prompt, opts.goalText),
+        workflowStepId: e.payload.workflowStepId ?? null,
+        dependsOn: [...(e.payload.dependsOn ?? [])],
         phase,
         start: e.seq,
         end: Number.MAX_SAFE_INTEGER,
       });
-    } else if (e.type === 'agent:completed' || e.type === 'agent:failed') {
+    } else if (e.type === 'agent:completed') {
       const s = open.get(e.payload.callId);
       if (s) {
         s.end = e.seq;
         // An agent whose answer *was* the plan has already done its job: the
         // shape it chose is what gets written out below. Re-running it in the
         // saved workflow would spend a turn per run on output nothing reads.
-        s.designedThePlan = e.type === 'agent:completed' && looksLikePlan(e.payload.text);
+        s.designedThePlan = looksLikePlan(e.payload.text);
         steps.push(s);
         open.delete(e.payload.callId);
       }
+    } else if (e.type === 'agent:failed') {
+      // A failed or cancelled call is evidence, not a proven recipe step. In
+      // particular, never paste its error string into a future workflow.
+      open.delete(e.payload.callId);
     }
   }
-  // An agent still open at the end (a cancel) still describes a real step.
-  for (const s of open.values()) steps.push(s);
+  // Open calls belong to interrupted runs and are deliberately not reusable.
 
   const planners = steps.filter((s) => s.designedThePlan).length;
   const kept = steps.filter((s) => !s.designedThePlan).slice(0, MAX_STEPS);
@@ -185,19 +248,51 @@ export function crystallize(opts: {
 
   const body: string[] = [];
   for (const p of phases) {
-    const grouped = waves(kept.filter((s) => s.phase === p));
+    const phaseSteps = kept.filter((s) => s.phase === p);
+    const exactWaves = dependencyWaves(phaseSteps);
+    const grouped = exactWaves ?? waves(phaseSteps);
+    const resultVars = new Map<Step, string>();
+    phaseSteps.forEach((step, index) =>
+      resultVars.set(step, safeVariable(step.workflowStepId ?? `result_${index}`, index)),
+    );
     const emit: string[] = [];
+    if (exactWaves) emit.push(`const stepResults = new Map<string, string>();`);
     for (const wave of grouped) {
+      const contextVars = new Map<Step, string>();
+      if (exactWaves) {
+        for (const step of wave) {
+          if (step.dependsOn.length === 0) continue;
+          const contextVar = `context_${resultVars.get(step)!}`;
+          contextVars.set(step, contextVar);
+          emit.push(
+            `const ${contextVar} = ${JSON.stringify(step.dependsOn)}.map((id) => stepResults.get(id)).filter((value): value is string => Boolean(value));`,
+          );
+        }
+      }
       if (wave.length === 1) {
-        const [head, ...rest] = agentCallLines(wave[0]!);
-        emit.push(`await ${head}`, ...rest.slice(0, -1), `});`);
+        const step = wave[0]!;
+        const [head, ...rest] = agentCallLines(step, contextVars.get(step));
+        const resultVar = resultVars.get(step)!;
+        const prefix = `const ${resultVar} = await `;
+        emit.push(`${prefix}${head}`, ...rest.slice(0, -1), `});`);
+        emit.push(requireStepLine(step, resultVar));
+        if (exactWaves) {
+          emit.push(`stepResults.set('${escapeSingle(step.workflowStepId!)}', ${resultVar}.text);`);
+        }
       } else {
-        emit.push(`await w.parallel([`);
+        const lhs = `const [${wave.map((s) => resultVars.get(s)!).join(', ')}] = `;
+        emit.push(`${lhs}await w.parallel([`);
         for (const s of wave) {
-          const call = indentCode(agentCallLines(s), '    ');
+          const call = indentCode(agentCallLines(s, contextVars.get(s)), '    ');
           emit.push(`  () =>`, ...call.slice(0, -1), `    }),`);
         }
         emit.push(`]);`);
+        for (const step of wave) emit.push(requireStepLine(step, resultVars.get(step)!));
+        if (exactWaves) {
+          for (const step of wave) {
+            emit.push(`stepResults.set('${escapeSingle(step.workflowStepId!)}', ${resultVars.get(step)!}.text);`);
+          }
+        }
       }
     }
     if (p) {
@@ -215,7 +310,9 @@ export function crystallize(opts: {
   body.push('  await w.loopUntil(async () => {');
   body.push('    const { met, gaps } = await w.goalMet();');
   body.push('    if (met || gaps.length === 0) return [];');
-  body.push("    await w.parallel(gaps.map((g) => () => w.agent({ role: 'worker', title: 'Fix gap', prompt: `Fix this gap so the goal is satisfied:\\n${g}` })));");
+  body.push("    const fixes = await w.parallel(gaps.map((g) => () => w.agent({ role: 'worker', title: 'Fix gap', prompt: `Fix this gap so the goal is satisfied:\\n${g}` })));");
+  body.push("    const failedFix = fixes.find((fix) => fix.status !== 'ok');");
+  body.push("    if (failedFix) throw new Error(`Gap fix failed: ${failedFix.text}`);");
   body.push('    return gaps;');
   body.push('  }, { maxRounds: 2 });');
 
@@ -235,7 +332,7 @@ export function crystallize(opts: {
     `\n` +
     `export default async function ${fnName}(w: WorkflowContext): Promise<void> {\n` +
     body.join('\n') +
-    `\n\n  w.requestReport({ kind: 'final', title: '${escapeSingle(name)} complete', summary: \`Ran ${kept.length} step(s) against: \${w.goal.text}\` });\n` +
+    `\n\n  w.requestReport({ kind: 'final', title: '${escapeSingle(name)} complete', summary: '${escapeSingle(name)} completed ${kept.length} step(s).' });\n` +
     `}\n`;
 
   const doc =

@@ -33,6 +33,17 @@ export interface AgentSpec {
   isolate?: boolean;
   /** Extra system-prompt guidance, contributed by a definition. */
   guidance?: string;
+  /**
+   * Provenance supplied by a dynamic orchestrator. The agent receives `prompt`;
+   * crystallisation keeps `sourcePrompt` plus the dependency ids so runtime
+   * output is wired back in on the next run instead of pasted into source.
+   * Ordinary hand-written workflows do not need to set this.
+   */
+  workflowStep?: {
+    id: string;
+    dependsOn?: string[];
+    sourcePrompt: string;
+  };
 }
 
 export interface AgentResult {

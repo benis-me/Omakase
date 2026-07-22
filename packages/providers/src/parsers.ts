@@ -267,7 +267,9 @@ export class CodexJsonParser implements StreamParser {
   private tokens = 0;
   private costUsd = 0;
   private errored = false;
+  private errorText = '';
   private rawTail: string[] = [];
+  private announcedTools = new Set<string>();
 
   onLine(line: string): AgentActivity[] {
     const obj = tryJson(line);
@@ -292,12 +294,24 @@ export class CodexJsonParser implements StreamParser {
         const itype = item.type;
         if (itype === 'command_execution') {
           const cmd = firstLine(item.command);
-          if (cmd && obj.type !== 'item.updated') out.push(act('tool', `Running ${cmd}`, 'Bash'));
+          const key = typeof item.id === 'string' ? `command:${item.id}` : null;
+          if (
+            cmd &&
+            obj.type !== 'item.updated' &&
+            (key ? !this.announcedTools.has(key) : true)
+          ) {
+            if (key) this.announcedTools.add(key);
+            out.push(act('tool', `Running ${cmd}`, 'Bash'));
+          }
         } else if (itype === 'file_change') {
           const changes = Array.isArray(item.changes) ? item.changes : [];
-          for (const ch of changes) {
-            const path = ch?.path ?? ch?.file;
-            if (path) out.push(act('tool', `${ch?.kind === 'delete' ? 'Deleting' : 'Editing'} ${path}`, 'Edit'));
+          const key = typeof item.id === 'string' ? `file:${item.id}` : null;
+          if (key ? !this.announcedTools.has(key) : obj.type === 'item.completed') {
+            if (key) this.announcedTools.add(key);
+            for (const ch of changes) {
+              const path = ch?.path ?? ch?.file;
+              if (path) out.push(act('tool', `${ch?.kind === 'delete' ? 'Deleting' : 'Editing'} ${path}`, 'Edit'));
+            }
           }
         } else if (itype === 'agent_message' && obj.type === 'item.completed') {
           const t = firstString(item, ['text', 'message', 'content']);
@@ -315,12 +329,19 @@ export class CodexJsonParser implements StreamParser {
       }
       case 'turn.completed': {
         const u = obj.usage ?? {};
-        this.tokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cached_input_tokens ?? 0);
+        // Codex reports cached_input_tokens as a subset of input_tokens, not
+        // an additional bucket. Prefer its explicit total when available and
+        // otherwise mirror Codex's total_tokens = input + output contract.
+        this.tokens = u.total_tokens ?? (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
         break;
       }
       case 'error':
         this.errored = true;
-        out.push(act('notice', firstString(obj, ['message', 'error']) ?? 'error'));
+        this.errorText =
+          firstString(obj, ['message']) ??
+          (typeof obj.error === 'string' ? obj.error : firstString(obj.error ?? {}, ['message', 'detail', 'type'])) ??
+          'error';
+        out.push(act('notice', this.errorText));
         break;
     }
     return out;
@@ -331,7 +352,7 @@ export class CodexJsonParser implements StreamParser {
     if (input.lastMessageFileContent && input.lastMessageFileContent.trim()) {
       text = input.lastMessageFileContent.trim();
     }
-    if (!text) text = this.rawTail.join('\n').trim().slice(-2000);
+    if (!text) text = this.errorText || this.rawTail.join('\n').trim().slice(-2000);
     return {
       text,
       status: input.exitCode === 0 && !this.errored ? 'ok' : 'error',

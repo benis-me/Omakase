@@ -5,6 +5,7 @@
 // disable-model-invocation: false
 import type { WorkflowContext } from '../workflow-types.ts';
 import { bulletLines } from '@omakase/core';
+import { requireAgents } from './shared.ts';
 
 const DIMENSIONS = [
   { key: 'correctness', prompt: 'Find correctness bugs and logic errors.' },
@@ -23,6 +24,7 @@ export default async function review(w: WorkflowContext): Promise<void> {
         }),
       ),
     );
+    requireAgents(perDim, 'Review dimension');
     return perDim.flatMap((r) => bulletLines(r.text).map((f) => ({ dim: 'finding', text: f })));
   });
 
@@ -36,6 +38,7 @@ export default async function review(w: WorkflowContext): Promise<void> {
         }),
       ),
     );
+    requireAgents(verdicts, 'Finding verification');
     return verdicts.filter((v) => /^\s*REAL\b/i.test(v.text.trim())).map((v) => v.text);
   });
 

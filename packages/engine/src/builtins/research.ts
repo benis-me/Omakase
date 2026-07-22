@@ -4,6 +4,7 @@
 // when_to_use: To research a topic or codebase question before acting.
 import type { WorkflowContext } from '../workflow-types.ts';
 import { bulletLines } from '@omakase/core';
+import { requireAgent, requireAgents } from './shared.ts';
 
 export default async function research(w: WorkflowContext): Promise<void> {
   const subs = await w.phase('Decompose', async () => {
@@ -12,11 +13,11 @@ export default async function research(w: WorkflowContext): Promise<void> {
       title: 'Sub-questions',
       prompt: `Break this research question into 3–5 focused sub-questions, one per line:\n\n${w.goal.text}`,
     });
-    return bulletLines(res.text).slice(0, 5);
+    return bulletLines(requireAgent(res, 'Research planner').text).slice(0, 5);
   });
 
   const notes = await w.phase('Investigate', async () => {
-    return w.parallel(
+    return requireAgents(await w.parallel(
       subs.map((q) => () =>
         w.agent({
           role: 'researcher',
@@ -24,7 +25,7 @@ export default async function research(w: WorkflowContext): Promise<void> {
           prompt: `Investigate and answer precisely, with evidence/sources:\n${q}`,
         }),
       ),
-    );
+    ), 'Research');
   });
 
   await w.phase('Synthesize', async () => {
@@ -35,6 +36,7 @@ export default async function research(w: WorkflowContext): Promise<void> {
         `Synthesize these findings into a single, well-organized answer to: ${w.goal.text}\n\n` +
         notes.map((n, i) => `## Finding ${i + 1}\n${n.text}`).join('\n\n'),
     });
+    requireAgent(synthesis, 'Synthesis');
     w.updateWiki({ title: `Research: ${w.goal.text.slice(0, 60)}`, body: synthesis.text });
     w.requestReport({ kind: 'final', title: 'Research complete', summary: synthesis.text.slice(0, 400) });
   });

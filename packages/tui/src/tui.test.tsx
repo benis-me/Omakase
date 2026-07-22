@@ -56,7 +56,7 @@ test('TUI renders the redesigned shell', async () => {
     expect(frame).toContain('commands'); // footer hints ("/ commands")
     expect(frame).toContain('❯'); // prompt caret
     expect(frame).toContain('╭'); // rounded panels are drawn
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -74,7 +74,7 @@ test('legibility: the canvas is painted and never inherits the terminal', async 
     const known = [theme.canvas, theme.panel, theme.panelAlt, theme.inputBg, theme.accent];
     const bgs = spans.filter((s) => s.text.trim().length > 0);
     expect(bgs.some((s) => known.some((k) => isColor(s.bg, k)))).toBe(true);
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -90,7 +90,7 @@ test('legibility: the prompt placeholder has an explicit, readable colour', asyn
     // Explicitly coloured (bug #1: it used to inherit → invisible on light bg).
     expect(isColor(ph!.fg, theme.placeholder)).toBe(true);
     expect(isColor(ph!.bg, theme.inputBg)).toBe(true);
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -106,7 +106,7 @@ test('legibility: panel borders and the focused input border are explicit', asyn
     expect(corners.some((s) => isColor(s.fg, theme.border))).toBe(true);
     // The idle input carries the single accent focus cue.
     expect(corners.some((s) => isColor(s.fg, theme.borderFocus))).toBe(true);
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -120,7 +120,7 @@ test('input: typing "/" opens the command palette with matches', async () => {
     expect(frame).toContain('/workflow');
     expect(frame).toContain('/settings');
     expect(frame).toContain('/quit');
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -135,7 +135,7 @@ test('input: palette filters by prefix and shows argument suggestions', async ()
     expect(frame).toContain('auto');
     expect(frame).toContain('tdd');
     expect(frame).not.toContain('/quit'); // narrowed to the exact command
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -155,7 +155,7 @@ test('input: /cancel says so when there is nothing to cancel', async () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain('nothing to cancel');
     expect(frame).toContain('esc or ^C'); // points at the keys that do cancel
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -203,7 +203,7 @@ test('runs: selecting a stored run reads its events once, not on every re-render
     });
     await setup.renderOnce();
     expect(reads).toBe(afterSelect);
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -228,7 +228,7 @@ test('settings view renders the editable workspace settings', async () => {
     expect(frame).toContain('bypass');
     expect(frame).toContain('Provider order');
     expect(frame).toContain('change'); // footer hint
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -360,7 +360,7 @@ test('log rows do not overprint each other', async () => {
     // What is on screen must be exactly the newest N rows, in order. Budgeting
     // more rows than the panel holds shows up here as skipped or blended lines.
     expect(painted).toEqual(expected.slice(expected.length - painted.length));
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -422,7 +422,7 @@ test('page keys scroll the log and return it to the tail', async () => {
     await setup.renderOnce();
     // Paging back down lands on the tail again, where a live run keeps streaming.
     expect(setup.captureCharFrame()).toBe(tail);
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -443,7 +443,7 @@ test('composer: ⌥⏎ adds a line, ⏎ still submits', async () => {
     // Both lines are in the composer, so a goal is no longer a single line.
     expect(frame).toContain('add a healthz route');
     expect(frame).toContain('and a test for it');
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }
@@ -458,7 +458,7 @@ test('composer: ⏎ submits a command rather than inserting a newline', async ()
     });
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain('Keys'); // the help view opened
-    setup.renderer.destroy();
+    await act(async () => setup.renderer.destroy());
   } finally {
     cleanup();
   }

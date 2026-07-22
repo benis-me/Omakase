@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grok-build 与 Omakase：谁是 agent，谁是编排层</title>
+<style>
+  :root {
+    --bg: #fcfaf6;
+    --fg: #181714;
+    --muted: #6e665d;
+    --accent: #b24a22;
+    --code-bg: rgba(178, 74, 34, 0.1);
+    --code-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+    --rule: rgba(178, 74, 34, 0.42);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131210;
+      --fg: #ece6dd;
+      --muted: #b3aba2;
+      --accent: #ff8a5a;
+      --code-bg: rgba(255, 138, 90, 0.14);
+      --code-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+      --rule: rgba(255, 138, 90, 0.42);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC",
+      "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.75;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 84px 28px 96px; }
+  header { margin-bottom: 58px; }
+  .eyebrow {
+    margin: 0 0 14px;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0 0 18px;
+    font-size: clamp(30px, 6vw, 42px);
+    line-height: 1.26;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+  .lede { margin: 0; font-size: 18px; }
+  section { margin-top: 48px; }
+  h2 {
+    margin: 0 0 16px;
+    font-size: 15px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+  h3 { margin: 0 0 10px; font-size: 22px; line-height: 1.35; }
+  p { margin: 0 0 14px; font-size: 17px; }
+  .grid { display: grid; gap: 22px; }
+  .kicker { margin: 0 0 8px; color: var(--muted); font-size: 14px; font-weight: 600; }
+  .tail {
+    margin-top: 54px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 18px;
+  }
+  .note { margin-top: 12px; color: var(--muted); font-size: 14px; }
+  code {
+    font-family: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 0.08em 0.38em;
+    border-radius: 4px;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">grok-build × Omakase</p>
+    <h1>它们都在让 AI 干活，但解决的是两层不同的问题。</h1>
+    <p class="lede">一句话结论：<strong>grok-build 自己就是 coding agent</strong>；<strong>Omakase 编排的是外部 agent CLI</strong>。</p>
+  </header>
+
+  <section>
+    <h2>两者各是什么</h2>
+    <div class="grid">
+      <article>
+        <h3>grok-build</h3>
+        <p><code>grok-build/README.md</code> 直接把它定义成 terminal-based AI coding agent；同一份仓库布局又把 <code>xai-grok-shell</code> 写成 Agent runtime，把 <code>xai-grok-tools</code> 写成工具实现，把 <code>xai-grok-pager</code> 写成 TUI。证据落点：<code>grok-build/README.md</code>。</p>
+      </article>
+      <article>
+        <h3>Omakase</h3>
+        <p>它识别并拉起外部 agent CLI，把每一轮调用接进 workflow；provider 负责单轮执行，engine 再在 harness 与 orchestrator 上组织 verify loop。它的重心是流程编排。证据落点：在 Omakase 源码中，<code>README.md</code>、<code>packages/providers/src/runner.ts</code>、<code>packages/engine/src/harness.ts</code>、<code>packages/engine/src/orchestrator.ts</code>。</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>三组关键对比</h2>
+    <div class="grid">
+      <article>
+        <p class="kicker">1. 谁真正掌握执行权</p>
+        <p><strong>grok-build</strong> 的 <code>Agent</code> 是真实运行时对象，内部直接持有 <code>ToolBridge</code>、<code>system_prompt</code>、compaction policy 与 hosted tools；<code>README.md</code> 也把 <code>xai-grok-shell</code> 明写成 Agent runtime。证据落点：<code>grok-build/crates/codegen/xai-grok-agent/src/agent.rs</code>、<code>grok-build/crates/codegen/xai-grok-tools/src/bridge.rs</code>、<code>grok-build/README.md</code>。<strong>Omakase</strong> 则把执行权交给外部 provider，自身负责 workflow runtime 与 provider fallback。证据落点：在 Omakase 源码中，<code>packages/providers/src/registry.ts</code>、<code>packages/providers/src/runner.ts</code>。</p>
+      </article>
+
+      <article>
+        <p class="kicker">2. tools 与 subagent 属于谁</p>
+        <p><strong>grok-build</strong> 的工具是第一方内建实现，<code>register_all()</code> 会把 <code>bash</code>、<code>read_file</code>、<code>grep</code>、<code>search_replace</code>、<code>task</code>、<code>web_search</code> 等标准工具接进同一套 toolset；subagent resolution 也由单独 crate 处理。证据落点：<code>grok-build/crates/codegen/xai-grok-tools/src/implementations/grok_build/mod.rs</code>、<code>grok-build/crates/codegen/xai-grok-subagent-resolution/src/lib.rs</code>。<strong>Omakase</strong> 这一层更像是反复调用外部 agent，再把结果纳入 workflow；从本文列出的路径看，工具能力主要仍归属下层 CLI。</p>
+      </article>
+
+      <article>
+        <p class="kicker">3. 产品重心放在哪一层</p>
+        <p><strong>grok-build</strong> 的重心更偏向单个 agent 本体：同仓库、同产品闭环内同时覆盖 ACP 与原生 TUI。证据落点：<code>grok-build/crates/codegen/xai-acp-lib/src/lib.rs</code>、<code>grok-build/crates/codegen/xai-grok-pager/src/lib.rs</code>、<code>grok-build/Cargo.toml</code>。<strong>Omakase</strong> 的重心则更偏向 orchestration：verify、resume、crystallize 与 TUI 都围绕流程治理与复用展开。证据落点：在 Omakase 源码中，<code>packages/engine/src/verify.ts</code>、<code>packages/engine/src/crystallize.ts</code>、<code>packages/tui/src/launch.ts</code>。</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>各自更强在哪</h2>
+    <p>grok-build 更强在单个 agent 的完整度：runtime、tools、subagent、ACP 与原生 TUI 都在一个 Rust 本体里。</p>
+    <p>Omakase 更强在 orchestration：它把已有 agent CLI 组织成可验证、可恢复、可沉淀为 workflow 的执行系统。</p>
+  </section>
+
+  <p class="tail">如果你要一个自己写、自己调工具、自己带终端界面的 agent，看 grok-build；如果你要一个把不同 agent 组织成稳定 workflow 的底座，看 Omakase。</p>
+  <p class="note">本文只依据工作区内两份 findings 与定点核实的源码路径写成，未对 <code>./grok-build/</code> 做全量扫描。</p>
+</main>
+</body>
+</html>

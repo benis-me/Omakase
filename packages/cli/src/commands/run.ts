@@ -67,40 +67,45 @@ function parseParams(pairs: string[]): Record<string, unknown> {
  * again. Refuses to clobber an existing name — a saved workflow is source you
  * may have edited since, and silently overwriting it would lose that.
  */
-function saveRunAsWorkflow(
+export function saveRunAsWorkflow(
   saveAs: string,
   runId: string,
-  goalText: string,
   workspace: Workspace,
   store: Store,
   json: boolean,
-): void {
+): boolean {
   const run = store.getRun(runId);
+  if (!run || run.status !== 'succeeded') {
+    if (!json) printErr(c.yellow(`Not saved: only a succeeded run can become a reusable workflow.`));
+    return false;
+  }
   const built = crystallize({
     name: saveAs,
-    goalText,
+    goalText: run.goal.text,
     events: store.getEvents(runId),
     sourceWorkflow: run?.workflow ?? 'goal',
   });
   if (!built) {
     printErr(c.yellow(`Not saved: the run had no agent steps to crystallise.`));
-    return;
+    return false;
   }
   const dir = join(workspace.paths.workflows, built.name);
   if (existsSync(dir)) {
     printErr(c.yellow(`Not saved: a workflow named "${built.name}" already exists at ${dir}.`));
-    return;
+    return false;
   }
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'workflow.ts'), built.script);
   writeFileSync(join(dir, 'WORKFLOW.md'), built.doc);
   if (!json) {
+    const phaseLabel = built.phases.filter(Boolean).join(' → ');
     print(
-      `\n${sym.ok} Saved as workflow ${c.cyan(built.name)} ${c.dim(`(${built.stepCount} step(s)${built.phases.length ? ` · ${built.phases.join(' → ')}` : ''})`)}\n` +
+      `\n${sym.ok} Saved as workflow ${c.cyan(built.name)} ${c.dim(`(${built.stepCount} step(s)${phaseLabel ? ` · ${phaseLabel}` : ''})`)}\n` +
         c.dim(`  ${dir}\n  run it: `) +
         c.cyan(`omks run "<goal>" -w ${built.name}`),
     );
   }
+  return true;
 }
 
 export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }): Promise<number> {
@@ -170,7 +175,7 @@ export async function cmdRun(rawArgs: string[], preset?: { workflow?: string }):
       onEvent: streamPrinter(json),
     });
     const saveAs = flagStr(args, 'save-as');
-    if (saveAs) saveRunAsWorkflow(saveAs, outcome.runId, goalText, workspace, store, json);
+    if (saveAs) saveRunAsWorkflow(saveAs, outcome.runId, workspace, store, json);
     if (!json) {
       const sid = store.getRun(outcome.runId)?.sessionId;
       print(c.dim(`\nrun ${outcome.runId}${sid ? ` · session ${sid}` : ''} · resume: omks resume ${outcome.runId}`));

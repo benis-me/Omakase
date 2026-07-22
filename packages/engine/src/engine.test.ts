@@ -14,6 +14,8 @@ import { discoverWorkflows, findWorkflow } from './workflows.ts';
 import { parseFrontmatter, parseCommentMeta } from './frontmatter.ts';
 import { verifyGoal } from './verify.ts';
 import { SubprocessHarness, MockHarness, type Harness, type HarnessRequest, type HarnessResult } from './harness.ts';
+import { isRetriableAgentError } from './runtime.ts';
+import { makeSystemPromptFactory } from './prompt.ts';
 
 class FakeHarness implements Harness {
   readonly id = 'fake';
@@ -55,6 +57,16 @@ test('discover: built-in workflows are found', () => {
   const goalMeta = findWorkflow('goal');
   expect(goalMeta?.version).toBe('0.1.0');
   expect(goalMeta?.description).toContain('goal');
+});
+
+test('prompt: an agent is bounded to its current workflow step', () => {
+  const system = makeSystemPromptFactory({
+    goal: { text: 'build the entire product' },
+    memory: '',
+  })({ role: 'researcher', title: 'Map one module', prompt: 'inspect module A' });
+  expect(system).toContain('Complete only the task message for this turn');
+  expect(system).toContain('overarching goal below is context');
+  expect(system).toContain('Do not invoke omks or another AI-agent CLI');
 });
 
 test('runGoal: solo workflow completes and logs events', async () => {
@@ -502,6 +514,33 @@ test('auto: routes a step to the provider chosen by the orchestrator', async () 
   }
 });
 
+test('auto: an explicit run provider overrides plan and named-agent provider hints', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    writeFileSync(
+      join(ws.paths.agents, 'claude-worker.md'),
+      `---\nname: claude-worker\nrole: worker\nprovider: claude\n---\nwork\n`,
+    );
+    const plan = JSON.stringify({
+      steps: [
+        { id: 'a', role: 'worker', title: 'Pinned', prompt: 'work', provider: 'claude', agent: 'claude-worker', dependsOn: [] },
+      ],
+    });
+    const harness = new FakeHarness((req) => (req.title === 'Design the plan' ? plan : 'ok'));
+    const out = await runGoal({
+      goal: { text: 'x', workflow: 'auto', cwd: ws.root, provider: 'codex' },
+      workspace: ws,
+      store,
+      harness,
+    });
+    expect(out.status).toBe('succeeded');
+    expect(harness.calls.every((call) => call.provider === 'codex')).toBe(true);
+    expect(harness.calls[0]!.prompt).toContain('pins provider "codex"');
+  } finally {
+    cleanup();
+  }
+});
+
 test('accumulation: auto records a recipe and recalls it next time', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {
@@ -603,6 +642,117 @@ test('fallback: switches to the next provider when the first fails', async () =>
     cleanup();
   }
 }, 15000);
+
+test('retry: deterministic setup/auth errors fail over without repeating', () => {
+  expect(isRetriableAgentError(new Error('Your organization has disabled Claude subscription access'))).toBe(false);
+  expect(isRetriableAgentError(new Error("error: unexpected argument '-o' found"))).toBe(false);
+  expect(isRetriableAgentError(new Error("gemini cannot run in 'read-only' mode: no flag that expresses it"))).toBe(false);
+  expect(isRetriableAgentError(new Error("Error during discovery for MCP server 'codegraph'"))).toBe(false);
+  expect(isRetriableAgentError(new Error('connection reset by peer'))).toBe(true);
+});
+
+test('model: --model reaches the selected provider but is not leaked into fallback providers', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const harness = new FakeHarness((req) =>
+      req.provider === 'codex' ? { status: 'error' as const, text: 'unauthorized: login required' } : 'fallback ok',
+    );
+    const out = await runGoal({
+      goal: { text: 'x', workflow: 'solo', cwd: ws.root, provider: 'codex', model: 'gpt-5' },
+      workspace: ws,
+      store,
+      harness,
+    });
+    expect(out.status).toBe('succeeded');
+    expect(harness.calls.map((c) => [c.provider, c.model])).toEqual([
+      ['codex', 'gpt-5'],
+      ['claude', undefined],
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+test('model precedence: CLI pin beats workflow hints; workspace default fills an unset model', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    ws.updateSettings({ defaultModel: 'workspace-default' });
+    writeFileSync(
+      join(ws.paths.workflows, 'model-hint.ts'),
+      `export default async function modelHint(w) {
+        const result = await w.agent({ role: 'worker', title: 'hinted', prompt: 'x', model: 'workflow-hint' });
+        if (result.status !== 'ok') throw new Error(result.text);
+      }\n`,
+    );
+    const pinnedHarness = new FakeHarness(() => 'ok');
+    const pinned = await runGoal({
+      goal: { text: 'x', workflow: 'model-hint', cwd: ws.root, model: 'cli-pin' },
+      workspace: ws,
+      store,
+      harness: pinnedHarness,
+    });
+    expect(pinned.status).toBe('succeeded');
+    expect(pinnedHarness.calls[0]?.model).toBe('cli-pin');
+
+    const defaultHarness = new FakeHarness(() => 'ok');
+    const withDefault = await runGoal({
+      goal: { text: 'x', workflow: 'solo', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: defaultHarness,
+    });
+    expect(withDefault.status).toBe('succeeded');
+    expect(defaultHarness.calls[0]?.model).toBe('workspace-default');
+  } finally {
+    cleanup();
+  }
+});
+
+test('built-ins: no required agent failure can become a green run', async () => {
+  for (const workflow of ['goal', 'auto', 'mission', 'tdd', 'review', 'research', 'parallel', 'solo']) {
+    const { ws, store, cleanup } = tmpWorkspace();
+    try {
+      const harness = new FakeHarness(() => ({ status: 'error' as const, text: 'unauthorized: login required' }));
+      const out = await runGoal({ goal: { text: 'x', workflow, cwd: ws.root }, workspace: ws, store, harness });
+      expect({ workflow, status: out.status }).toEqual({ workflow, status: 'failed' });
+      expect(store.listReports(out.runId).some((r) => r.kind === 'final')).toBe(false);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('auto: a failed dependency blocks its dependents and fails the workflow', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    const harness = new FakeHarness((req) => {
+      if (req.role === 'planner') {
+        return JSON.stringify({
+          steps: [
+            { id: 'source', role: 'researcher', title: 'Source', prompt: 'inspect', dependsOn: [] },
+            { id: 'write', role: 'worker', title: 'Write', prompt: 'write it', dependsOn: ['source'] },
+          ],
+        });
+      }
+      if (req.title === 'Source') return { status: 'error' as const, text: 'unauthorized: login required' };
+      return 'DEPENDENT MUST NOT RUN';
+    });
+    const out = await runGoal({
+      goal: { text: 'make a report', workflow: 'auto', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness,
+    });
+    expect(out.status).toBe('failed');
+    expect(harness.calls.filter((c) => c.title === 'Source')).toHaveLength(2); // one per compatible provider, no retries
+    expect(harness.calls.some((c) => c.title === 'Write')).toBe(false);
+    expect(store.getRun(out.runId)!.error).toContain('failed: source');
+    const logs = store.getEvents(out.runId).filter((e) => e.type === 'log').map((e) => e.payload.message);
+    expect(logs.some((m) => m.includes('Skipped write'))).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
 
 test('MockHarness: drives every built-in workflow to success (no cost)', async () => {
   for (const wf of ['goal', 'auto', 'mission', 'tdd', 'review', 'research', 'parallel', 'solo']) {
@@ -1034,6 +1184,127 @@ test('crystallize: the turn that designed the plan is not saved into it', async 
   } finally {
     cleanup();
   }
+});
+
+test('crystallize: preserves a dynamic DAG and named-agent safety without freezing runtime output', async () => {
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    writeFileSync(
+      join(ws.paths.agents, 'strict-reviewer.md'),
+      `---\nname: strict-reviewer\nrole: reviewer\nprovider: codex\npermission: read-only\nisolate: true\n---\nCite exact evidence.\n`,
+    );
+    const planner = JSON.stringify({
+      steps: [
+        { id: 'source', role: 'researcher', title: 'Gather evidence', prompt: 'inspect audit one', dependsOn: [] },
+        { id: 'review', role: 'reviewer', title: 'Review evidence', prompt: 'review it', agent: 'strict-reviewer', dependsOn: ['source'] },
+      ],
+    });
+    const firstHarness = new FakeHarness((req) => {
+      if (req.role === 'planner') return planner;
+      if (req.title === 'Gather evidence') return 'RUNTIME OUTPUT MUST NOT BE FROZEN';
+      return 'approved';
+    });
+    const first = await runGoal({
+      goal: { text: 'audit one', workflow: 'auto', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: firstHarness,
+    });
+    expect(first.status).toBe('succeeded');
+
+    const started = store.getEvents(first.runId).filter((e) => e.type === 'agent:started');
+    const gather = started.find((e) => e.payload.title === 'Gather evidence')!;
+    const review = started.find((e) => e.payload.title === 'Review evidence')!;
+    expect(gather.payload).toMatchObject({ workflowStepId: 'source', dependsOn: [], sourcePrompt: 'inspect audit one' });
+    expect(review.payload).toMatchObject({
+      workflowStepId: 'review',
+      dependsOn: ['source'],
+      agentName: 'strict-reviewer',
+      permission: 'read-only',
+      isolated: true,
+      sourcePrompt: 'review it',
+    });
+    expect(review.payload.prompt).toContain('RUNTIME OUTPUT MUST NOT BE FROZEN');
+
+    const built = crystallize({
+      name: 'safe-review',
+      goalText: 'audit one',
+      events: store.getEvents(first.runId),
+      sourceWorkflow: 'auto',
+    })!;
+    expect(built.script).not.toContain('RUNTIME OUTPUT MUST NOT BE FROZEN');
+    expect(built.script).toContain("as: 'strict-reviewer'");
+    expect(built.script).toContain("permission: 'read-only'");
+    expect(built.script).toContain('isolate: true');
+    expect(built.script).toContain('stepResults');
+    expect(built.script).toContain("workflowStep: {");
+    expect(built.script).toContain("id: 'review'");
+    expect(built.script).toContain("dependsOn: [\"source\"]");
+    expect(built.script).toContain("status !== 'ok'");
+
+    const dir = join(ws.paths.workflows, built.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'workflow.ts'), built.script);
+    writeFileSync(join(dir, 'WORKFLOW.md'), built.doc);
+    const replay = new FakeHarness((req) => (req.title === 'Gather evidence' ? 'FRESH EVIDENCE' : 'approved'));
+    const second = await runGoal({
+      goal: { text: 'audit two', workflow: built.name, cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: replay,
+    });
+    expect(second.status).toBe('succeeded');
+    const replayReview = replay.calls.find((c) => c.title === 'Review evidence')!;
+    expect(replayReview.prompt).toContain('FRESH EVIDENCE');
+    expect(replayReview.prompt).not.toContain('RUNTIME OUTPUT MUST NOT BE FROZEN');
+    expect(replayReview.permission).toBe('read-only');
+    expect(replay.calls.find((c) => c.title === 'Gather evidence')!.prompt).toContain('audit two');
+
+    const replayStarted = store.getEvents(second.runId).filter((e) => e.type === 'agent:started');
+    expect(replayStarted.find((e) => e.payload.title === 'Gather evidence')!.payload).toMatchObject({
+      workflowStepId: 'source',
+      dependsOn: [],
+      sourcePrompt: 'inspect audit two',
+    });
+    expect(replayStarted.find((e) => e.payload.title === 'Review evidence')!.payload).toMatchObject({
+      workflowStepId: 'review',
+      dependsOn: ['source'],
+      agentName: 'strict-reviewer',
+      permission: 'read-only',
+    });
+    expect(store.getRun(second.runId)?.summary).toBe('safe-review completed 2 step(s).');
+
+    // A saved recipe is not allowed to coast past a failed prerequisite into
+    // a stale verifier result. The generated guard must stop the DAG here.
+    const failedReplay = new FakeHarness((req) =>
+      req.title === 'Gather evidence'
+        ? { status: 'error' as const, text: 'model not supported' }
+        : 'must not run',
+    );
+    const failed = await runGoal({
+      goal: { text: 'audit three', workflow: built.name, cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: failedReplay,
+    });
+    expect(failed.status).toBe('failed');
+    expect(failedReplay.calls.some((c) => c.title === 'Review evidence')).toBe(false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('crystallize: failed and interrupted calls are never saved as proven steps', () => {
+  const events = [
+    { runId: 'r', seq: 1, type: 'phase:started', payload: { name: 'Go', index: 0 }, createdAt: 0 },
+    {
+      runId: 'r', seq: 2, type: 'agent:started',
+      payload: { callId: 'a1', stepKey: 's', role: 'worker', title: 'broken', provider: 'claude', model: null, prompt: 'p', attempt: 1 },
+      createdAt: 0,
+    },
+    { runId: 'r', seq: 3, type: 'agent:failed', payload: { callId: 'a1', stepKey: 's', error: 'boom', attempt: 1 }, createdAt: 0 },
+  ] as never;
+  expect(crystallize({ name: 'broken', goalText: 'goal', events, sourceWorkflow: 'auto' })).toBeNull();
 });
 
 test('agent definitions: a named agent supplies defaults the call can override', async () => {

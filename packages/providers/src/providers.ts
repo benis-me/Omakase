@@ -48,8 +48,8 @@ export const codexProvider: AgentProvider = {
   id: 'codex',
   command: 'codex',
   label: 'Codex CLI',
-  seedModels: ['gpt-5', 'o4-mini'],
-  fastModel: 'o4-mini',
+  seedModels: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
+  fastModel: 'gpt-5.4-mini',
   apiKeyEnv: ['OPENAI_API_KEY', 'OPENAI_ORG_ID'],
   plan(ctx): SpawnPlan {
     const head = ctx.resumeSessionId ? ['exec', 'resume', ctx.resumeSessionId] : ['exec'];
@@ -248,7 +248,7 @@ async function probeJsonModels(command: string, argv: string[]): Promise<string[
     if (out == null) return [];
     const data = JSON.parse(out);
     const list = Array.isArray(data) ? data : (data.models ?? data.data ?? []);
-    return list.map((m: any) => (typeof m === 'string' ? m : m.id ?? m.name)).filter(Boolean);
+    return list.map((m: any) => (typeof m === 'string' ? m : m.slug ?? m.id ?? m.name)).filter(Boolean);
   } catch {
     return [];
   }

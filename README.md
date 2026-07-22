@@ -101,6 +101,11 @@ export class RateLimiter {
 The point isn't that an agent wrote code — it's that Omakase **planned it, ran it
 in parallel, and refused to finish until `bun test` actually passed.**
 
+For a larger research-and-publication run, see the real
+[Grok-Build × Omakase case study](examples/case-studies/grok-build-vs-omakase/):
+`auto` designed a research → Chinese design → read-only critique → revision DAG,
+verified the standalone HTML, crystallized it, then replayed it without a planner.
+
 ---
 
 ## Command reference
@@ -121,10 +126,12 @@ WORKFLOWS  (reusable, versioned, skills-like)
   workflow show <name>          show a workflow’s docs
   workflow new <name> [--flat]  scaffold a new workflow
   workflow run <name> "<goal>"  run a specific workflow
+  workflow save <runId> <name>  save an inspected successful run as source
   workflow test <name>          dry-run against a mock harness (no spend)
   workflow lint [name]          check for things that break resume (--strict)
   workflow edit <name>          print the entry path ($(omks workflow edit x))
   workflow version <name>       show / --bump patch|minor|major
+  workflow <cmd> --cwd <dir>    target another workspace
 
 AGENTS & CONFIG
   agent list                    show installed agent CLIs
@@ -143,7 +150,7 @@ RUN OPTIONS
   --check "<cmd>"               success check: command must exit 0 (repeatable)
   --criteria "<text>"           natural-language criterion, judged (repeatable)
   --max-agents <n>              cap agent calls   --concurrency <n>  parallelism
-  --max-usd <n>                 cap total spend   --max-time <sec>   wall-clock budget
+  --max-usd <n>                 cap reported USD* --max-time <sec>   wall-clock budget
   --max-rounds <n>              cap goal-loop rounds (plan → build → verify → fix)
   --param k=v                   workflow parameter (repeatable)
   --session, -s <id>            continue a session   --cwd <dir>  working directory
@@ -293,6 +300,9 @@ the agents that ran in parallel, and their prompts with the original goal swappe
 for `${w.goal.text}`. This is the accumulation loop — a good one-off orchestration
 becomes something you can run again, and edit. It works for any workflow, because
 the engine watched the execution rather than asking a model to reconstruct it.
+Prefer to inspect the result first? `omks workflow save <runId> api-audit` performs
+the same crystallization later. Generated workflows retain named-agent permissions
+and DAG dependencies, stop on failed prerequisites, and keep their run summaries concise.
 
 Built‑ins: **goal** (default), **auto** (prompt self‑orchestration — the model designs its own DAG), **mission**, **tdd**, **review**, **research**, **parallel**, **solo**.
 
@@ -335,7 +345,7 @@ workflow that never dispatches an agent, do not fail unless you add `--strict`.
 - **Resume:** each `agent()` call is keyed by a deterministic structural path and its result is journaled. `omks resume <id>` replays finished calls from cache and re‑drives the rest — robust even across `parallel`/`pipeline`.
 - **Foundation retry:** provider calls retry with exponential backoff + jitter, never on cancellation; **rate‑limit / overload** errors back off much harder and record `rateLimitedUntil`.
 - **Provider fallback:** if an agent's provider keeps failing, Omakase falls back to the next available provider (emitting `harness:switched`) — so a claude outage doesn't stall the run.
-- **Budget:** cap a run by agent calls, **USD spend**, or **wall‑clock** (`--max-agents` / `--max-usd` / `--max-time`); the loop stops with the precise reason.
+- **Budget:** cap a run by agent calls, **reported USD spend**, or **wall‑clock** (`--max-agents` / `--max-usd` / `--max-time`); the loop stops with the precise reason. `--max-usd` requires cost telemetry from the provider — subscription-backed CLIs such as Codex may report tokens without a dollar amount, so `$0` means “not reported”, not “free”.
 
 ### Permission modes
 

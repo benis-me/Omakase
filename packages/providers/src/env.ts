@@ -9,10 +9,14 @@ import { commonBinDirs } from '@omakase/core';
  * still find `codex`, `gemini`, etc.
  */
 export function augmentedPath(base = process.env.PATH ?? ''): string {
-  const extra = [dirname(process.execPath), ...commonBinDirs()];
+  // The active runtime stays first (global CLIs are often installed beside
+  // Bun), then honour the user's shell selection before trying fallback dirs.
+  // Putting ~/.npm-global ahead of PATH selected an obsolete Codex 0.38 even
+  // while the shell had Codex 0.133 active through nvm.
+  const candidates = [dirname(process.execPath), ...base.split(':'), ...commonBinDirs()];
   const seen = new Set<string>();
   const parts: string[] = [];
-  for (const p of [...extra, ...base.split(':')]) {
+  for (const p of candidates) {
     if (p && !seen.has(p)) {
       seen.add(p);
       parts.push(p);

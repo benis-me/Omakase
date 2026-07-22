@@ -2,8 +2,9 @@
 // description: Plan several features, build + review each independently in a pipeline, then loop-until-dry on remaining gaps.
 // version: 0.1.0
 // when_to_use: Larger efforts with multiple independent features to build and validate.
-import type { WorkflowContext } from '../workflow-types.ts';
+import type { WorkflowContext, AgentResult } from '../workflow-types.ts';
 import { bulletLines } from '@omakase/core';
+import { requireAgent, requireAgents } from './shared.ts';
 
 export default async function mission(w: WorkflowContext): Promise<void> {
   const features = await w.phase('Plan', async () => {
@@ -12,14 +13,14 @@ export default async function mission(w: WorkflowContext): Promise<void> {
       title: 'Plan features',
       prompt: `List 3 to 6 independently buildable features for this goal, one per line:\n\n${w.goal.text}`,
     });
-    return bulletLines(res.text).slice(0, 6);
+    return bulletLines(requireAgent(res, 'Feature planner').text).slice(0, 6);
   });
 
   const left = w.budget();
   w.log(`Building ${features.length} feature(s); ${left.remainingAgents} agent calls left.`);
 
   await w.phase('Build', async () => {
-    await w.pipeline(
+    const reviewed = await w.pipeline(
       features,
       (_v, feature) =>
         w.agent({
@@ -27,13 +28,16 @@ export default async function mission(w: WorkflowContext): Promise<void> {
           title: `Build: ${String(feature).slice(0, 48)}`,
           prompt: `Implement this feature, writing tests first:\n${feature}`,
         }),
-      (built, feature) =>
-        w.agent({
+      (built, feature) => {
+        const result = requireAgent(built as AgentResult, `Build ${String(feature)}`);
+        return w.agent({
           role: 'reviewer',
           title: `Review: ${String(feature).slice(0, 48)}`,
-          prompt: `Review against the feature and list gaps:\n${feature}\n\n${(built as { text: string }).text}`,
-        }),
+          prompt: `Review against the feature and list gaps:\n${feature}\n\n${result.text}`,
+        });
+      },
     );
+    requireAgents(reviewed as AgentResult[], 'Review');
   });
 
   await w.phase('Validate', async () => {
@@ -46,12 +50,14 @@ export default async function mission(w: WorkflowContext): Promise<void> {
             'Independently judge correctness and completeness of the work so far. ' +
             'List concrete remaining gaps as bullets, or reply DONE. Do NOT implement fixes.',
         });
+        requireAgent(verdict, 'Validator');
         if (/\bDONE\b/i.test(verdict.text)) return [];
         const gaps = bulletLines(verdict.text);
         if (!gaps.length) return [];
-        await w.parallel(
+        const fixes = await w.parallel(
           gaps.map((gap) => () => w.agent({ role: 'worker', title: 'Fix', prompt: `Fix this gap:\n${gap}` })),
         );
+        requireAgents(fixes, 'Gap repair');
         return gaps;
       },
       { maxRounds: 3 },

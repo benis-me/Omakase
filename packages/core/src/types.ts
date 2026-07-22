@@ -167,6 +167,17 @@ export interface RunEventPayloadMap {
     model: string | null;
     prompt: string;
     attempt: number;
+    /** Named `.omks/agents/` definition used by this call, when any. */
+    agentName?: string | null;
+    /** Effective permission after run defaults and a named definition merge. */
+    permission?: PermissionMode;
+    /** Whether this call actually ran in a private working copy. */
+    isolated?: boolean;
+    /** Clean prompt before dependency results were appended at runtime. */
+    sourcePrompt?: string;
+    /** Dynamic-plan identity used to reconstruct the original DAG. */
+    workflowStepId?: string | null;
+    dependsOn?: string[];
   };
   'agent:activity': { callId: AgentCallId; activity: AgentActivity };
   'agent:completed': {

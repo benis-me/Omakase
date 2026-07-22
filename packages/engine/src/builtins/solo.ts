@@ -3,6 +3,7 @@
 // version: 0.1.0
 // when_to_use: Small, self-contained tasks that don't need decomposition.
 import type { WorkflowContext } from '../workflow-types.ts';
+import { requireAgent } from './shared.ts';
 
 export default async function solo(w: WorkflowContext): Promise<void> {
   const res = await w.agent({
@@ -10,6 +11,7 @@ export default async function solo(w: WorkflowContext): Promise<void> {
     title: 'Do the task',
     prompt: w.goal.text,
   });
+  requireAgent(res, 'Task agent');
   w.requestReport({
     kind: 'final',
     title: 'Done',

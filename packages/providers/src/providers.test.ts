@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { AgentActivity } from '@omakase/core';
 import { claudeProvider, codexProvider, geminiProvider, cursorProvider, supportsPermission } from './providers.ts';
 import { getProvider, commandBase } from './registry.ts';
@@ -9,6 +9,7 @@ import { runTurn } from './runner.ts';
 import { detectProviders, detectCached, loadAgentsCache } from './detect.ts';
 import { GenericJsonParser, CodexJsonParser, isRateLimit } from './parsers.ts';
 import { BunSpawner, type ProcessSpawner, type SpawnRequest, type SpawnResult } from './spawn.ts';
+import { augmentedPath } from './env.ts';
 import type { TurnContext } from './types.ts';
 
 class FakeSpawner implements ProcessSpawner {
@@ -66,6 +67,12 @@ test('codex: plan uses exec + cwd flag + last-message file', () => {
 test('codex: resume prepends resume subcommand', () => {
   const plan = codexProvider.plan(ctx({ resumeSessionId: 'thread-7' }));
   expect(plan.args.slice(0, 3)).toEqual(['exec', 'resume', 'thread-7']);
+});
+
+test('PATH: the active shell wins over fallback global install directories', () => {
+  const parts = augmentedPath('/active/bin:/second/bin').split(':');
+  expect(parts.slice(0, 3)).toEqual([dirname(process.execPath), '/active/bin', '/second/bin']);
+  expect(new Set(parts).size).toBe(parts.length);
 });
 
 test('gemini: yolo + stream-json + positional prompt', () => {
@@ -180,7 +187,7 @@ test('CodexJsonParser: thread id + command activity + usage; -o file wins for fi
     ...p.onLine('{"type":"item.completed","item":{"type":"command_execution","command":"bun test","exit_code":0}}'),
     ...p.onLine('{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.ts","kind":"modify"}]}}'),
     ...p.onLine('{"type":"item.completed","item":{"type":"agent_message","text":"stream answer"}}'),
-    ...p.onLine('{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}'),
+    ...p.onLine('{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":7,"output_tokens":20}}'),
   ];
   const r = p.finalize({ exitCode: 0, stderrTail: '', lastMessageFileContent: 'FINAL FROM FILE' });
   expect(r.providerSessionId).toBe('th-1');
@@ -188,6 +195,20 @@ test('CodexJsonParser: thread id + command activity + usage; -o file wins for fi
   expect(r.text).toBe('FINAL FROM FILE'); // -o file is authoritative
   expect(acts.some((a) => a.tool === 'Bash')).toBe(true);
   expect(acts.some((a) => a.tool === 'Edit' && a.summary.includes('a.ts'))).toBe(true);
+});
+
+test('CodexJsonParser: cached input is already included in input tokens', () => {
+  const p = new CodexJsonParser();
+  p.onLine('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":25,"total_tokens":125}}');
+  const r = p.finalize({ exitCode: 0, stderrTail: '' });
+  expect(r.tokens).toBe(125);
+});
+
+test('CodexJsonParser: started/completed updates announce one tool action', () => {
+  const p = new CodexJsonParser();
+  const started = p.onLine('{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"bun test"}}');
+  const completed = p.onLine('{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"bun test"}}');
+  expect([...started, ...completed].filter((a) => a.tool === 'Bash')).toHaveLength(1);
 });
 
 test('CodexJsonParser: falls back to agent_message text when no -o file', () => {
@@ -209,9 +230,10 @@ test('isRateLimit detects common overload/limit phrases', () => {
 
 test('CodexJsonParser: error event marks the result as error', () => {
   const p = new CodexJsonParser();
-  p.onLine('{"type":"error","message":"boom"}');
+  p.onLine('{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"model not supported"}}');
   const r = p.finalize({ exitCode: 0, stderrTail: '' });
   expect(r.status).toBe('error');
+  expect(r.text).toBe('model not supported');
 });
 
 // A fake `claude` binary: emits claude stream-json, echoes --session-id, and
@@ -293,6 +315,20 @@ process.exit(Number(process.env.FAKE_EXIT_CODE ?? '1'));
 const FAKE_CURSOR_MODELS_BODY = `
 process.stdout.write('\\x1b[1mgpt-5\\x1b[0m\\n\\nsonnet-4\\n  \\u2500\\u2500\\u2500\\u2500  \\nsonnet-4-thinking\\n');
 `;
+
+test('codex: model discovery reads the catalog slug field', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-models-'));
+  try {
+    const fake = writeFakeBin(
+      dir,
+      'fake-codex-models.ts',
+      `process.stdout.write(JSON.stringify({models:[{slug:'gpt-new'},{slug:'gpt-mini'}]}));`,
+    );
+    expect(await codexProvider.discoverModels!(fake)).toEqual(['gpt-new', 'gpt-mini']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('cursor: a sign-in banner with a non-zero exit yields no models', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'omks-models-'));

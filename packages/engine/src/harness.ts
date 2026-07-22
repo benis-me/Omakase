@@ -12,6 +12,7 @@ import {
   runTurn,
   detectAvailable,
   detectCached,
+  supportsPermission as providerSupportsPermission,
   type ProcessSpawner,
   type TurnContext,
   type ProviderInfo,
@@ -48,6 +49,8 @@ export interface Harness {
   readonly id: string;
   runAgent(req: HarnessRequest): Promise<HarnessResult>;
   listProviders(): Promise<ProviderInfo[]>;
+  /** A custom Harness can model permissions differently from subprocess CLIs. */
+  supportsPermission?(provider: string, permission: PermissionMode): boolean;
 }
 
 export interface SubprocessHarnessOptions {
@@ -65,6 +68,10 @@ export interface SubprocessHarnessOptions {
 export class SubprocessHarness implements Harness {
   readonly id = 'subprocess';
   constructor(private opts: SubprocessHarnessOptions = {}) {}
+
+  supportsPermission(provider: string, permission: PermissionMode): boolean {
+    return providerSupportsPermission(provider, permission);
+  }
 
   async runAgent(req: HarnessRequest): Promise<HarnessResult> {
     const provider = getProvider(req.provider);
@@ -125,6 +132,10 @@ export class MockHarness implements Harness {
   readonly id = 'mock';
   readonly calls: HarnessRequest[] = [];
   constructor(private responder?: (req: HarnessRequest) => string) {}
+
+  supportsPermission(_provider: string, _permission: PermissionMode): boolean {
+    return true;
+  }
 
   async runAgent(req: HarnessRequest): Promise<HarnessResult> {
     this.calls.push(req);

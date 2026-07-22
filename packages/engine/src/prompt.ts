@@ -36,6 +36,13 @@ export function makeSystemPromptFactory(deps: PromptDeps): (spec: AgentSpec) => 
     // should see it — including the ones in workflows that never look at params.
     const advice = deps.goal.params?.advice;
     const adviceBlock = typeof advice === 'string' && advice.trim() ? `\n\n## ${advice.trim()}` : '';
-    return `You are an Omakase agent operating autonomously in a shared working directory.\nRole: ${role}.\n${guidance}${goalBlock}${adviceBlock}${memoryBlock}\n\nWork decisively. When done, summarize what you did in a few lines.`;
+    const boundary =
+      `\n\n## Assignment boundary\n` +
+      `You are one step in an Omakase-owned workflow. Complete only the task message for this turn; ` +
+      `the overarching goal below is context, not a request to take over later steps. Do not invoke ` +
+      `omks or another AI-agent CLI, spawn subagents, or coordinate the rest of the workflow unless ` +
+      `this turn's task message explicitly requires testing that CLI. Return your result to Omakase ` +
+      `so dependent steps can consume it.`;
+    return `You are an Omakase agent operating autonomously in a shared working directory.\nRole: ${role}.\n${guidance}${boundary}${goalBlock}${adviceBlock}${memoryBlock}\n\nWork decisively within this assignment. When done, summarize what you did in a few lines.`;
   };
 }

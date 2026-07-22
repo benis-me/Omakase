@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Workspace, Store } from '@omakase/core';
-import type { Harness, HarnessRequest, HarnessResult } from '@omakase/engine';
+import { runGoal, type Harness, type HarnessRequest, type HarnessResult } from '@omakase/engine';
 import type { ProviderInfo } from '@omakase/providers';
 import { McpServer } from './mcp.ts';
 import { cmdWorkflow } from './commands/workflow.ts';
@@ -180,6 +180,56 @@ test('mcp: notifications/cancelled aborts the tool call it names', async () => {
 });
 
 // --- workflow version --------------------------------------------------------
+
+test('workflow save: crystallizes an inspected completed run after the fact', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-wf-save-'));
+  const ws = Workspace.init(dir);
+  const store = new Store(ws.paths.db);
+  const previous = process.cwd();
+  try {
+    const out = await runGoal({
+      goal: { text: 'audit the API', workflow: 'solo', cwd: ws.root },
+      workspace: ws,
+      store,
+      harness: new FakeHarness(),
+    });
+    process.chdir(dir);
+
+    expect(await cmdWorkflow(['save', out.runId, 'api-audit'])).toBe(0);
+    const source = readFileSync(join(ws.paths.workflows, 'api-audit', 'workflow.ts'), 'utf8');
+    expect(source).toContain("status !== 'ok'");
+    expect(source).toContain("summary: 'api-audit completed 1 step(s).'");
+  } finally {
+    process.chdir(previous);
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workflow lint/test: --cwd resolves that workspace instead of silently using process.cwd()', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omks-wf-cwd-'));
+  const ws = Workspace.init(dir);
+  writeFileSync(
+    join(ws.paths.workflows, 'cwd-flow.ts'),
+    `// name: cwd-flow
+// description: Proves workflow commands resolve an explicit workspace.
+// version: 0.1.0
+import type { WorkflowContext } from '@omakase/engine';
+export default async function cwdFlow(w: WorkflowContext): Promise<void> {
+  const result = await w.agent({ role: 'worker', title: 'Test cwd', prompt: w.goal.text });
+  if (result.status !== 'ok') throw new Error(result.text);
+  w.requestReport({ kind: 'final', title: 'Done', summary: 'cwd workflow completed.' });
+}
+`,
+  );
+  try {
+    expect(process.cwd()).not.toBe(dir);
+    expect(await cmdWorkflow(['lint', 'cwd-flow', '--cwd', dir])).toBe(0);
+    expect(await cmdWorkflow(['test', 'cwd-flow', '--cwd', dir])).toBe(0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function workflowCtx(version: string) {
   const dir = mkdtempSync(join(tmpdir(), 'omks-wf-'));

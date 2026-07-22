@@ -81,6 +81,11 @@ export class RateLimiter {
 
 重点不是"agent 写了代码",而是 Omakase **替你规划、并行执行、并且在 `bun test` 真正通过之前拒绝收工**。
 
+更复杂的研究与发布案例见
+[Grok-Build × Omakase 真实案例](examples/case-studies/grok-build-vs-omakase/)：`auto` 自行设计
+“研究 → 中文设计 → 只读批评 → 定稿”DAG，校验单文件 HTML，固化为工作流，并在不再调用 planner
+的情况下完成复用运行。
+
 ---
 
 ## 内置指令
@@ -101,10 +106,12 @@ omks "<目标>"                   用默认工作流运行一个目标
   workflow show <name>          查看某工作流文档
   workflow new <name> [--flat]  脚手架生成新工作流
   workflow run <name> "<目标>"  运行指定工作流
+  workflow save <runId> <name>  把审阅过的成功运行固化为源码
   workflow test <name>          用 mock harness 空跑（不花钱）
   workflow lint [name]          检查会破坏 resume 的写法（--strict）
   workflow edit <name>          打印入口文件路径（$(omks workflow edit x)）
   workflow version <name>       查看 / --bump patch|minor|major
+  workflow <cmd> --cwd <dir>    指向另一个工作区
 
 Agent 与配置
   agent list                    显示已安装的 Agent CLI
@@ -123,7 +130,7 @@ run 选项
   --check "<cmd>"               成功校验：命令退出码须为 0（可重复）
   --criteria "<text>"           自然语言标准，由 Agent 判定（可重复）
   --max-agents <n>              限制 agent 调用数   --concurrency <n>  并发数
-  --max-usd <n>                 限制总花费         --max-time <sec>   墙钟时间上限
+  --max-usd <n>                 限制已上报 USD*    --max-time <sec>   墙钟时间上限
   --max-rounds <n>              限制目标循环轮数（规划 → 构建 → 验证 → 修补）
   --param k=v                   工作流参数（可重复）
   --session, -s <id>            延续一个会话       --cwd <dir>  工作目录
@@ -177,7 +184,9 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 东西写进 `.omks/workflows/api-audit/`，是真正的源码：跑过的阶段、并行跑的那几个 agent、
 以及它们的 prompt（其中原来的目标被替换成 `${w.goal.text}`）。这就是"越用积累越多"的那个
 闭环——一次不错的临时编排，变成可以再跑、也可以改的东西。它对任何工作流都有效，因为引擎是
-**看着执行发生的**，不需要再让模型去复原。
+**看着执行发生的**，不需要再让模型去复原。想先审阅运行结果再决定是否保留，可以执行
+`omks workflow save <runId> api-audit`。固化结果会保留命名 Agent 的权限和 DAG 依赖，前置步骤
+失败时立即终止，并使用简洁的运行摘要。
 
 内置工作流：**goal**（默认）、**auto**（提示词自编排 —— 由模型自己设计 DAG）、**mission**、**tdd**、**review**、**research**、**parallel**、**solo**。工作区里的同名工作流会覆盖内置版本。用 `omks workflow test <name>` 可以不花钱地验证一个工作流的形状。
 
@@ -243,8 +252,10 @@ resume 时会**静默地错**：第二次跑走了另一条分支，缓存却把
   **限流 / 过载**类错误会退避得更狠，并记下 `rateLimitedUntil`。
 - **Provider 回退：** 某个 agent 的 provider 一直失败时，Omakase 会换到下一个可用的
   provider（并发出 `harness:switched`）—— 于是 claude 挂掉不会卡死整个运行。
-- **预算：** 可以按 agent 调用数、**美元花费**或**墙钟时间**给一次运行封顶
-  （`--max-agents` / `--max-usd` / `--max-time`），停下时会说明确切原因。
+- **预算：** 可以按 agent 调用数、**已上报的美元花费**或**墙钟时间**给一次运行封顶
+  （`--max-agents` / `--max-usd` / `--max-time`），停下时会说明确切原因。`--max-usd`
+  依赖 Provider 返回费用遥测；Codex 这类订阅制 CLI 可能只返回 token、不返回美元金额，因此 `$0`
+  表示“未上报”，不表示“免费”。
 
 ### 权限档位
 

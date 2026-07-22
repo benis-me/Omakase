@@ -2,8 +2,9 @@
 // description: General goal achiever — plan, build steps in a pipeline, then validate and fix until the goal's success criteria are met. The default workflow.
 // version: 0.1.0
 // when_to_use: Any open-ended objective where you want Omakase to plan and drive it to completion.
-import type { WorkflowContext } from '../workflow-types.ts';
+import type { WorkflowContext, AgentResult } from '../workflow-types.ts';
 import { bulletLines } from '@omakase/core';
+import { requireAgent, requireAgents } from './shared.ts';
 
 export default async function goal(w: WorkflowContext): Promise<void> {
   const steps = await w.phase('Plan', async () => {
@@ -24,11 +25,11 @@ export default async function goal(w: WorkflowContext): Promise<void> {
 
   if (steps.length === 0) {
     w.log('No steps planned; doing it in one pass.');
-    await w.agent({ role: 'worker', title: 'Do it', prompt: w.goal.text });
+    requireAgent(await w.agent({ role: 'worker', title: 'Do it', prompt: w.goal.text }), 'Fallback agent');
   } else {
     w.log(`Planned ${steps.length} step(s).`);
     await w.phase('Build', async () => {
-      await w.pipeline(
+      const reviewed = await w.pipeline(
         steps,
         (_v, step) =>
           w.agent({
@@ -36,15 +37,18 @@ export default async function goal(w: WorkflowContext): Promise<void> {
             title: `Build: ${String(step).slice(0, 48)}`,
             prompt: `Implement this step fully in the working directory:\n\n${step}\n\nOverall goal: ${w.goal.text}`,
           }),
-        (built, step) =>
-          w.agent({
+        (built, step) => {
+          const result = requireAgent(built as AgentResult, `Build ${String(step)}`);
+          return w.agent({
             role: 'reviewer',
             title: `Review: ${String(step).slice(0, 48)}`,
             prompt:
               `Review the implementation of this step against the goal and list concrete gaps as bullets ` +
-              `(or "none"). Step:\n${step}\n\nWhat was done:\n${(built as { text: string }).text}`,
-          }),
+              `(or "none"). Step:\n${step}\n\nWhat was done:\n${result.text}`,
+          });
+        },
       );
+      requireAgents(reviewed as AgentResult[], 'Review');
     });
   }
 
@@ -58,7 +62,7 @@ export default async function goal(w: WorkflowContext): Promise<void> {
         }
         if (check.gaps.length === 0) return [];
         w.log(`Round ${round + 1}: fixing ${check.gaps.length} gap(s).`);
-        await w.parallel(
+        const fixes = await w.parallel(
           check.gaps.map((gap) => () =>
             w.agent({
               role: 'worker',
@@ -67,6 +71,7 @@ export default async function goal(w: WorkflowContext): Promise<void> {
             }),
           ),
         );
+        requireAgents(fixes, 'Gap repair');
         return check.gaps;
       },
       { maxRounds: 3 },
