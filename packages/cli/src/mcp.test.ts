@@ -197,8 +197,16 @@ test('workflow save: crystallizes an inspected completed run after the fact', as
 
     expect(await cmdWorkflow(['save', out.runId, 'api-audit'])).toBe(0);
     const source = readFileSync(join(ws.paths.workflows, 'api-audit', 'workflow.ts'), 'utf8');
+    const docPath = join(ws.paths.workflows, 'api-audit', 'WORKFLOW.md');
     expect(source).toContain("status !== 'ok'");
     expect(source).toContain("summary: 'api-audit completed 1 step(s).'");
+    expect(readFileSync(docPath, 'utf8')).toContain('version: 0.1.0');
+    expect(await cmdWorkflow(['version', 'api-audit', '--bump', 'minor'])).toBe(0);
+    expect(readFileSync(docPath, 'utf8')).toContain('version: 0.2.0');
+    expect(readFileSync(join(ws.paths.workflows, 'api-audit', 'workflow.ts'), 'utf8')).toContain('// version: 0.2.0');
+    const snapshot = join(ws.paths.workflows, '.versions', 'api-audit@0.1.0');
+    expect(readFileSync(join(snapshot, 'WORKFLOW.md'), 'utf8')).toContain('version: 0.1.0');
+    expect(readFileSync(join(snapshot, 'workflow.ts'), 'utf8')).toContain('// version: 0.1.0');
   } finally {
     process.chdir(previous);
     store.close();

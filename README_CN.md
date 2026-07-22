@@ -209,7 +209,7 @@ export default async function ship(w: WorkflowContext): Promise<void> {
 
 工作流可以是一个扁平的 `<name>.ts`，也可以是**像 Skills 那样的文件夹**：`WORKFLOW.md`
 （frontmatter 里带 SEMVER `version`）+ `workflow.ts` + 可选的 `references/`。
-`omks workflow version <name> --bump minor` 会先存快照再升版本。
+`omks workflow version <name> --bump minor` 会先存快照再升版本；文件夹工作流会完整快照源码、文档与 `references/`。
 
 **具名 agent。** `.omks/agents/` 下的一个 markdown 文件描述"这一步由谁来跑"——它的
 role、provider、model、权限，以及是否需要自己的一份工作副本：

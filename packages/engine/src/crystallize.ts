@@ -317,7 +317,8 @@ export function crystallize(opts: {
   body.push('  }, { maxRounds: 2 });');
 
   const fnName = name.replace(/[^a-zA-Z0-9]+(.)?/g, (_, c: string | undefined) => (c ? c.toUpperCase() : '')) || 'crystallized';
-  const description = `Crystallised from a ${opts.sourceWorkflow} run: ${phases.join(' → ') || 'single pass'} across ${kept.length} agent step(s).`;
+  const article = /^[aeiou]/i.test(opts.sourceWorkflow) ? 'an' : 'a';
+  const description = `Crystallised from ${article} ${opts.sourceWorkflow} run: ${phases.join(' → ') || 'single pass'} across ${kept.length} agent step(s).`;
 
   const script =
     `// name: ${name}\n` +
@@ -339,9 +340,11 @@ export function crystallize(opts: {
     `---\n` +
     `name: ${name}\n` +
     `description: ${description}\n` +
+    `version: 0.1.0\n` +
+    `when_to_use: For goals shaped like the one this was saved from.\n` +
     `---\n\n` +
     `# ${name}\n\n` +
-    `Saved from a \`${opts.sourceWorkflow}\` run with \`omks run --save-as ${name}\`.\n\n` +
+    `Saved from ${article} \`${opts.sourceWorkflow}\` run with \`omks run --save-as ${name}\`.\n\n` +
     (planners
       ? `The planning turn that designed this shape is deliberately not included — ` +
         `the plan it produced is the structure written below.\n\n`

@@ -292,7 +292,7 @@ The `w` API:
 | `w.recall(limit)` · `w.providers` · `w.agentNames` | accumulated knowledge; available providers; defined agents |
 | `w.goal` · `w.params` · `w.cwd` · `w.signal` | the goal, `--param` values, working dir, cancellation |
 
-Workflows live either as a flat `<name>.ts` or a **skills‑like folder** with `WORKFLOW.md` (frontmatter incl. a SEMVER `version`) + `workflow.ts` + optional `references/`. Workspace workflows shadow built‑ins of the same name, so you can customize anything. `omks workflow version <name> --bump minor` snapshots and bumps. See [`examples/workflows/ship-feature/`](examples/workflows/ship-feature) for a real folder‑format workflow using `isolate` + provider routing + `recall`. Validate a workflow without spending anything: `omks workflow test <name>`.
+Workflows live either as a flat `<name>.ts` or a **skills‑like folder** with `WORKFLOW.md` (frontmatter incl. a SEMVER `version`) + `workflow.ts` + optional `references/`. Workspace workflows shadow built‑ins of the same name, so you can customize anything. `omks workflow version <name> --bump minor` snapshots and bumps; folder workflows snapshot the complete folder, including docs and references. See [`examples/workflows/ship-feature/`](examples/workflows/ship-feature) for a real folder‑format workflow using `isolate` + provider routing + `recall`. Validate a workflow without spending anything: `omks workflow test <name>`.
 
 **Keeping a run.** `omks run "…" --workflow auto --save-as api-audit` writes what
 just executed into `.omks/workflows/api-audit/` as real source: the phases it ran,

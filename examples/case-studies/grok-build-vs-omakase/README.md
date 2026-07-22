@@ -11,5 +11,9 @@ CLI:
 
 The successful run was crystallized into `zh-report-v2` and replayed without a
 planning turn. The replay preserved the named agents, permission boundary and
-DAG dependencies. See [report-zh.html](report-zh.html) for the final standalone
-artifact; it has no external scripts, fonts, images, or network dependencies.
+DAG dependencies. The generated v0.1.0 workflow is preserved in
+[`workflow/`](workflow/); it expects `findings-grok.md`, `findings-omakase.md`
+and a `grok-build/` checkout in the target workspace.
+
+See [report-zh.html](report-zh.html) for the final standalone artifact; it has
+no external scripts, fonts, images, or network dependencies.

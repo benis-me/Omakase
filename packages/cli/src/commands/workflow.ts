@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { lintWorkflow, discoverWorkflows, findWorkflow, loadWorkflow, runGoal, MockHarness, type WorkflowMeta } from '@omakase/engine';
 import { Store, Workspace, slugify } from '@omakase/core';
 import { createEventRenderer } from '../ui.ts';
@@ -193,7 +193,14 @@ function versionWorkflow(args: ParsedArgs): number {
   // Snapshot the current entry, then rewrite the version in place.
   const snapDir = join(ws.paths.workflows, '.versions');
   mkdirSync(snapDir, { recursive: true });
-  copyFileSync(meta.entry, join(snapDir, `${name}@${meta.version}.ts`));
+  if (meta.docPath) {
+    // Folder workflows may carry references and other supporting files. A
+    // version that snapshots only workflow.ts cannot faithfully be restored.
+    cpSync(dirname(meta.entry), join(snapDir, `${name}@${meta.version}`), { recursive: true });
+  } else {
+    // Keep the existing flat-workflow layout backwards compatible.
+    copyFileSync(meta.entry, join(snapDir, `${name}@${meta.version}.ts`));
+  }
   rewriteVersion(meta, next);
   print(`${sym.ok} ${c.cyan(name)} ${c.dim('v' + meta.version)} ${c.dim('→')} ${c.bold('v' + next)}  ${c.dim('(snapshot saved)')}`);
   return 0;
@@ -220,7 +227,8 @@ function rewriteVersion(meta: WorkflowMeta, next: string): void {
   if (meta.docPath && existsSync(meta.docPath)) {
     const md = readFileSync(meta.docPath, 'utf8').replace(/^version:.*$/m, `version: ${next}`);
     writeFileSync(meta.docPath, md);
-  } else {
+  }
+  if (existsSync(meta.entry)) {
     const src = readFileSync(meta.entry, 'utf8').replace(/^\/\/\s*version:.*$/m, `// version: ${next}`);
     writeFileSync(meta.entry, src);
   }

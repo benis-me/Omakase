@@ -807,6 +807,34 @@ test('example: ship-feature (folder format) loads and runs with a mock harness',
   }
 });
 
+test('case study: the crystallized Grok report workflow remains executable', async () => {
+  const exampleDir = join(import.meta.dir, '..', '..', '..', 'examples', 'case-studies', 'grok-build-vs-omakase', 'workflow');
+  const { ws, store, cleanup } = tmpWorkspace();
+  try {
+    cpSync(exampleDir, join(ws.paths.workflows, 'zh-report-v2'), { recursive: true });
+    const meta = findWorkflow('zh-report-v2', { workspace: ws.paths.workflows });
+    expect(meta?.version).toBe('0.1.0');
+
+    const harness = new MockHarness();
+    const out = await runGoal({ goal: { text: 'compare two systems', workflow: 'zh-report-v2', cwd: ws.root }, workspace: ws, store, harness });
+    expect(out.status).toBe('succeeded');
+    expect(harness.calls).toHaveLength(4);
+    expect(harness.calls.find((call) => call.title === '只读审阅内容与版式克制性')?.permission).toBe('read-only');
+    const steps = store
+      .getEvents(out.runId)
+      .filter((event) => event.type === 'agent:started')
+      .map((event) => ({ id: event.payload.workflowStepId, dependsOn: event.payload.dependsOn }));
+    expect(steps).toEqual([
+      { id: 's1', dependsOn: [] },
+      { id: 's2', dependsOn: ['s1'] },
+      { id: 's3', dependsOn: ['s2'] },
+      { id: 's4', dependsOn: ['s3'] },
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
 test('ask: uses the answerer, journals the answer, and replays it on resume', async () => {
   const { ws, store, cleanup } = tmpWorkspace();
   try {
@@ -976,6 +1004,8 @@ test('crystallize: a run is saved as a workflow that runs again', async () => {
     expect(built.script).toContain('${w.goal.text}');
     expect(built.script).toContain('w.parallel('); // the concurrent build steps
     expect(built.doc).toContain('name: api-audit');
+    expect(built.doc).toContain('version: 0.1.0');
+    expect(built.doc).toContain('when_to_use:');
 
     // The real assertion: write it where a workflow lives and run it.
     const dir = join(ws.paths.workflows, 'api-audit');
